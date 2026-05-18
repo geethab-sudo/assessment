@@ -1,0 +1,240 @@
+"""
+LLM calls via Groq (OpenAI-compatible Chat Completions API) with JSON responses.
+Get a key at https://console.groq.com/keys — set GROQ_API_KEY in .env
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+from dotenv import load_dotenv
+from openai import APIStatusError, OpenAI
+
+# Ensure `.env` is loaded when this module is imported (project root = parent of `services/`)
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
+
+# Groq OpenAI-compatible base URL (not the OpenAI Responses API)
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
+_client: OpenAI | None = None
+
+
+def _normalize_groq_key(raw: str | None) -> str | None:
+    """Strip whitespace and optional surrounding quotes often pasted by mistake."""
+    if raw is None:
+        return None
+    key = raw.strip().strip('"').strip("'").strip()
+    return key or None
+
+
+def groq_key_configured() -> bool:
+    """True if a non-empty GROQ_API_KEY is present after normalization."""
+    return _normalize_groq_key(os.environ.get("GROQ_API_KEY")) is not None
+
+
+def _get_client() -> OpenAI:
+    global _client
+    if _client is None:
+        api_key = _normalize_groq_key(os.environ.get("GROQ_API_KEY"))
+        if not api_key:
+            raise RuntimeError(
+                "GROQ_API_KEY is not set. Add it to your environment or .env "
+                "(create a key at https://console.groq.com/keys)."
+            )
+        _client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL)
+    return _client
+
+
+def _groq_auth_hint() -> str:
+    return (
+        "Groq returned 401 (invalid API key). (1) Copy a key from "
+        "https://console.groq.com/keys (starts with `gsk_`). (2) Put it in `.env` as "
+        "GROQ_API_KEY=gsk_... on one line, no quotes. (3) Save the file — unsaved editor "
+        "buffers still leave the old placeholder on disk. (4) Restart uvicorn. "
+        "If you previously `export`ed GROQ_API_KEY in the terminal, close that shell or "
+        "unset it; the app now prefers `.env` over stale env vars."
+    )
+
+
+def _chat_json_text(
+    prompt: str,
+    model: str | None = None,
+    *,
+    temperature: float = 0.4,
+) -> str:
+    """
+    Chat Completions with JSON object mode (Groq supports this for compatible models).
+    """
+    m = model or os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+    client = _get_client()
+    try:
+        response = client.chat.completions.create(
+            model=m,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You reply only with a single valid JSON object. No markdown.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=temperature,
+        )
+    except APIStatusError as e:
+        if e.status_code == 401:
+            raise RuntimeError(_groq_auth_hint()) from e
+        raise RuntimeError(f"Groq API error ({e.status_code}): {e}") from e
+
+    choice = response.choices[0].message
+    text = choice.content if choice else None
+    if not text:
+        raise RuntimeError("Empty response from Groq")
+    return text
+
+
+def _parse_strict_json(raw: str) -> dict[str, Any]:
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Model did not return valid JSON: {e}") from e
+    if not isinstance(data, dict):
+        raise ValueError("JSON root must be an object")
+    return data
+
+
+_VARIATION_HINTS = (
+    "Emphasize short, concrete scenarios rather than abstract definitions alone.",
+    "Include at least one question that tests edge cases or common misconceptions.",
+    "Where relevant, reference idiomatic Python or the standard library.",
+    "Use fresh variable names and numeric examples; avoid overused textbook clichés.",
+    "Blend syntax questions with small behavior-prediction snippets.",
+)
+
+
+def generate_questions(
+    topic: str,
+    difficulty: str,
+    types: list[str],
+    *,
+    questions_per_type: dict[str, int],
+    assessment_id: str,
+) -> list[dict[str, Any]]:
+    """
+    Ask the LLM to generate assessment questions; returns a list of question dicts.
+    Each dict: id, type, question, options (list or empty), answer (correct / reference).
+    Each assessment_id gets a distinct prompt so successive assessments do not reuse the same items.
+    """
+    type_lines: list[str] = []
+    total = 0
+    for t in types:
+        n = int(questions_per_type.get(t, 0))
+        type_lines.append(f'- For type "{t}": create exactly {n} question(s).')
+        total += n
+    counts_block = "\n".join(type_lines)
+    types_str = ", ".join(types)
+    h = int(hashlib.sha256(assessment_id.strip().encode()).hexdigest(), 16)
+    variation = _VARIATION_HINTS[h % len(_VARIATION_HINTS)]
+    gen_temp = float(os.environ.get("GROQ_GENERATION_TEMPERATURE", "0.72"))
+
+    prompt = f"""You are an expert examiner. Generate a NEW set of assessment questions.
+
+Unique assessment instance ID: {assessment_id}
+This ID is different for every assessment you generate. You MUST invent fresh questions—
+different scenarios, wording, code snippets, and distractors from any other assessment,
+including common "template" questions. Do not repeat stock examples if you can avoid it.
+
+Topic: {topic}
+Difficulty: {difficulty}
+Question types to include: {types_str}
+Total questions (all types): {total}
+
+Creative angle for this instance: {variation}
+
+Follow these per-type counts exactly (do not skip or add extra questions):
+{counts_block}
+Types use these lowercase labels: "mcq", "coding", "subjective".
+
+Rules:
+- "mcq": provide "options" as an array of 4 strings and "answer" as the exact correct option text.
+- "coding": provide empty "options" [] and "answer" as a brief reference solution or rubric line.
+- "subjective": provide empty "options" [] and "answer" as a short model answer outline.
+
+Return ONLY valid JSON (no markdown fences) with this exact shape:
+{{
+  "questions": [
+    {{
+      "id": 1,
+      "type": "mcq",
+      "question": "string",
+      "options": ["a","b","c","d"],
+      "answer": "correct option text"
+    }}
+  ]
+}}
+
+Use sequential integer "id" values starting at 1 across all questions."""
+
+    raw = _chat_json_text(prompt, temperature=gen_temp)
+    data = _parse_strict_json(raw)
+    questions = data.get("questions")
+    if not isinstance(questions, list) or not questions:
+        raise ValueError('Expected JSON with non-empty "questions" array')
+
+    normalized: list[dict[str, Any]] = []
+    for q in questions:
+        if not isinstance(q, dict):
+            continue
+        qid = q.get("id")
+        qtype = str(q.get("type", "")).lower().strip()
+        text = str(q.get("question", "")).strip()
+        options = q.get("options") or []
+        if not isinstance(options, list):
+            options = []
+        answer = str(q.get("answer", "")).strip()
+        normalized.append(
+            {
+                "id": qid,
+                "type": qtype,
+                "question": text,
+                "options": options,
+                "answer": answer,
+            }
+        )
+    if not normalized:
+        raise ValueError("No valid questions in model output")
+    return normalized
+
+
+def evaluate_answers(question: str, user_answer: str) -> dict[str, Any]:
+    """
+    Evaluate a single free-form or structured answer; returns { "score": number, "feedback": string }.
+    Score should be 0-100.
+    """
+    prompt = f"""You grade one exam question fairly and briefly.
+
+Question:
+{question}
+
+Student answer:
+{user_answer}
+
+Return ONLY valid JSON (no markdown) with this exact shape:
+{{
+  "score": <number from 0 to 100>,
+  "feedback": "<short constructive feedback>"
+}}"""
+
+    raw = _chat_json_text(prompt)
+    data = _parse_strict_json(raw)
+    score = data.get("score")
+    feedback = data.get("feedback", "")
+    try:
+        score_num = float(score)
+    except (TypeError, ValueError) as e:
+        raise ValueError("Evaluation JSON must include numeric score") from e
+    score_num = max(0.0, min(100.0, score_num))
+    return {"score": score_num, "feedback": str(feedback).strip()}

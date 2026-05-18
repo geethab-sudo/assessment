@@ -1,0 +1,394 @@
+"""
+PostgreSQL persistence for assessments and submissions (replaces CSV layer).
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import json
+from typing import Any
+
+from sqlalchemy import delete, func, select
+from sqlalchemy.orm import Session
+
+from services.database import get_session_factory
+from services.ids import sanitize_client_id
+from services.models import Assessment, AssessmentQuestion, Language, Submission
+
+__all__ = [
+    "sanitize_client_id",
+    "register_assessment",
+    "client_may_access_assessment",
+    "get_client_for_assessment",
+    "save_assessment_rows",
+    "save_shared_assessment_rows",
+    "read_questions_by_assessment",
+    "get_assessment_language_code",
+    "list_assessments_summary",
+    "delete_assessment",
+    "list_all_submissions",
+    "save_submission_row",
+]
+
+
+def _session() -> Session:
+    return get_session_factory()()
+
+
+def register_assessment(assessment_id: str, safe_client_id: str) -> None:
+    """Ensure registry row: set owner_client_id for an existing assessment."""
+    with _session() as session:
+        row = session.get(Assessment, assessment_id)
+        if row:
+            row.owner_client_id = safe_client_id
+        else:
+            session.add(
+                Assessment(
+                    assessment_id=assessment_id,
+                    owner_client_id=safe_client_id,
+                    topic_names=[],
+                    created_at=_utc_now_iso(),
+                )
+            )
+        session.commit()
+
+
+def get_client_for_assessment(assessment_id: str) -> str | None:
+    with _session() as session:
+        row = session.get(Assessment, assessment_id)
+        if not row:
+            return None
+        return row.owner_client_id
+
+
+def client_may_access_assessment(assessment_id: str, client_id: str | None) -> bool:
+    """
+    If the assessment is shared (no owner), anyone may access.
+    If it is client-scoped, a non-empty client_id must match the owner.
+    Empty / missing client_id is only allowed for shared assessments.
+    """
+    owner = get_client_for_assessment(assessment_id)
+    if owner is None:
+        return True
+    cid = (client_id or "").strip()
+    if not cid:
+        return False
+    return owner == cid
+
+
+def _normalize_language_code(language_code: str | None) -> str | None:
+    s = (language_code or "").strip()
+    return s[:32] if s else None
+
+
+def _normalize_language_label(language_label: str | None) -> str | None:
+    s = (language_label or "").strip()
+    return s[:256] if s else None
+
+
+def _normalize_topic_names(names: list[str] | None) -> list[str]:
+    if not names:
+        return []
+    out: list[str] = []
+    for x in names:
+        s = str(x).strip()
+        if s:
+            out.append(s[:512])
+        if len(out) >= 50:
+            break
+    return out
+
+
+def _coerce_stored_topic_names(raw: Any) -> list[str]:
+    """Normalize JSON/list/tuple/string forms from Postgres / SQLAlchemy into title strings."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return []
+        try:
+            parsed = json.loads(s)
+        except json.JSONDecodeError:
+            return [s[:512]]
+        raw = parsed
+    if isinstance(raw, dict):
+        raw = raw.get("topics") or raw.get("names") or raw.get("topic_names") or []
+    if isinstance(raw, (list, tuple)):
+        return [
+            str(x).strip()
+            for x in raw
+            if str(x).strip() and len(str(x).strip()) <= 1024
+        ][:80]
+    return []
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _created_at_sort_key(row: dict[str, Any]) -> tuple[int, str]:
+    """
+    Sort with newest created_at first; rows without created_at go last.
+    """
+    raw = (row.get("created_at") or "").strip()
+    if not raw:
+        return (0, "")
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return (1, dt.astimezone(timezone.utc).isoformat())
+    except ValueError:
+        return (0, raw)
+
+
+def save_assessment_rows(
+    assessment_id: str,
+    rows: list[dict[str, Any]],
+    client_id: str,
+    *,
+    language_code: str | None = None,
+    language_label: str | None = None,
+    topic_names: list[str] | None = None,
+) -> None:
+    """Persist questions scoped to a client (owner_client_id set)."""
+    safe = sanitize_client_id(client_id)
+    lang = _normalize_language_code(language_code)
+    lbl = _normalize_language_label(language_label)
+    topics = _normalize_topic_names(topic_names)
+    with _session() as session:
+        existing = session.get(Assessment, assessment_id)
+        if existing:
+            session.execute(
+                delete(AssessmentQuestion).where(
+                    AssessmentQuestion.assessment_id == assessment_id
+                )
+            )
+            existing.owner_client_id = safe
+            if language_code is not None:
+                existing.language_code = lang
+            if language_label is not None:
+                existing.language_label = lbl
+            if topic_names is not None:
+                existing.topic_names = topics
+        else:
+            session.add(
+                Assessment(
+                    assessment_id=assessment_id,
+                    owner_client_id=safe,
+                    language_code=lang if language_code is not None else None,
+                    language_label=lbl,
+                    topic_names=topics,
+                    created_at=_utc_now_iso(),
+                )
+            )
+        for row in rows:
+            session.add(
+                AssessmentQuestion(
+                    assessment_id=assessment_id,
+                    question_id=str(row["question_id"]),
+                    question=row["question"],
+                    type=row["type"],
+                    options=row.get("options", "") or "",
+                    correct_answer=row.get("correct_answer", "") or "",
+                )
+            )
+        session.commit()
+
+
+def save_shared_assessment_rows(
+    assessment_id: str,
+    rows: list[dict[str, Any]],
+    *,
+    language_code: str | None = None,
+    language_label: str | None = None,
+    topic_names: list[str] | None = None,
+) -> None:
+    """Shared assessment: owner_client_id is NULL (any client may access)."""
+    with _session() as session:
+        existing = session.get(Assessment, assessment_id)
+        lang = _normalize_language_code(language_code)
+        lbl = _normalize_language_label(language_label)
+        topics = _normalize_topic_names(
+            topic_names if topic_names is not None else []
+        )
+        if existing:
+            session.execute(
+                delete(AssessmentQuestion).where(
+                    AssessmentQuestion.assessment_id == assessment_id
+                )
+            )
+            existing.owner_client_id = None
+            if language_code is not None:
+                existing.language_code = lang
+            if language_label is not None:
+                existing.language_label = lbl
+            if topic_names is not None:
+                existing.topic_names = topics
+        else:
+            session.add(
+                Assessment(
+                    assessment_id=assessment_id,
+                    owner_client_id=None,
+                    language_code=lang if language_code is not None else None,
+                    language_label=lbl,
+                    topic_names=topics,
+                    created_at=_utc_now_iso(),
+                )
+            )
+        for row in rows:
+            session.add(
+                AssessmentQuestion(
+                    assessment_id=assessment_id,
+                    question_id=str(row["question_id"]),
+                    question=row["question"],
+                    type=row["type"],
+                    options=row.get("options", "") or "",
+                    correct_answer=row.get("correct_answer", "") or "",
+                )
+            )
+        session.commit()
+
+
+def read_questions_by_assessment(assessment_id: str) -> list[dict[str, Any]]:
+    with _session() as session:
+        rows = session.scalars(
+            select(AssessmentQuestion)
+            .where(AssessmentQuestion.assessment_id == assessment_id)
+            .order_by(AssessmentQuestion.id)
+        ).all()
+        return [
+            {
+                "assessment_id": assessment_id,
+                "question_id": r.question_id,
+                "question": r.question,
+                "type": r.type,
+                "options": r.options or "",
+                "correct_answer": r.correct_answer or "",
+            }
+            for r in rows
+        ]
+
+
+def get_assessment_language_code(assessment_id: str) -> str | None:
+    """Catalog language `code` stored on the assessment row, if any."""
+    with _session() as session:
+        row = session.get(Assessment, assessment_id)
+        if not row:
+            return None
+        return _normalize_language_code(row.language_code)
+
+
+def list_assessments_summary() -> list[dict[str, Any]]:
+    with _session() as session:
+        assessments = session.scalars(select(Assessment)).all()
+        langs = session.scalars(select(Language)).all()
+        #: Case-insensitive lookup: assessment may store catalog code with different casing
+        lang_name_by_code_cf: dict[str, str] = {}
+        for lg in langs:
+            k = _normalize_language_code(lg.code)
+            if k:
+                lang_name_by_code_cf[k.casefold()] = (
+                    (lg.name or "").strip()[:256] or k
+                )
+
+        result: list[dict[str, Any]] = []
+        for a in assessments:
+            n = session.scalar(
+                select(func.count())
+                .select_from(AssessmentQuestion)
+                .where(AssessmentQuestion.assessment_id == a.assessment_id)
+            )
+            cid = a.owner_client_id or "common"
+            source = "shared" if a.owner_client_id is None else "client"
+            lc = _normalize_language_code(a.language_code)
+            stored_label = (a.language_label or "").strip() or None
+            catalog_name = (
+                lang_name_by_code_cf.get(lc.casefold()) if lc else None
+            )
+            # Prefer catalog name; then stored UI label (name-only from generator); avoid showing code unless no alternative
+            language_name = catalog_name or stored_label or None
+            if not language_name and lc:
+                language_name = lc
+            topics = _coerce_stored_topic_names(a.topic_names)
+            result.append(
+                {
+                    "assessment_id": a.assessment_id,
+                    "client_id": cid,
+                    "question_count": int(n or 0),
+                    "source": source,
+                    "language_code": lc,
+                    "language_label": stored_label,
+                    "language_name": language_name,
+                    "topic_names": topics,
+                    "created_at": (a.created_at or "").strip() or None,
+                }
+            )
+        return sorted(
+            result,
+            key=lambda x: (_created_at_sort_key(x), x["assessment_id"]),
+            reverse=True,
+        )
+
+
+def delete_assessment(assessment_id: str) -> None:
+    """Remove assessment, its questions, and all submission rows for that assessment."""
+    aid = assessment_id.strip()
+    if not aid:
+        raise ValueError("Assessment ID is required")
+    with _session() as session:
+        row = session.get(Assessment, aid)
+        if not row:
+            raise ValueError("Assessment not found")
+        session.execute(delete(Submission).where(Submission.assessment_id == aid))
+        session.delete(row)
+        session.commit()
+
+
+def list_all_submissions() -> list[dict[str, Any]]:
+    with _session() as session:
+        rows = session.scalars(
+            select(Submission).order_by(Submission.timestamp.desc())
+        ).all()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            cid = r.submitter_client_id if r.submitter_client_id else "common"
+            out.append(
+                {
+                    "assessment_id": r.assessment_id,
+                    "user_id": r.user_id,
+                    "question_id": r.question_id,
+                    "user_answer": r.user_answer,
+                    "score": r.score,
+                    "feedback": r.feedback,
+                    "timestamp": r.timestamp,
+                    "client_id": cid,
+                }
+            )
+        return out
+
+
+def save_submission_row(
+    assessment_id: str,
+    user_id: str,
+    question_id: str,
+    user_answer: str,
+    score: str,
+    feedback: str,
+    timestamp: str,
+    *,
+    submitter_client_id: str | None = None,
+) -> None:
+    with _session() as session:
+        session.add(
+            Submission(
+                assessment_id=assessment_id,
+                user_id=user_id,
+                question_id=question_id,
+                user_answer=user_answer,
+                score=score,
+                feedback=feedback,
+                timestamp=timestamp,
+                submitter_client_id=submitter_client_id,
+            )
+        )
+        session.commit()

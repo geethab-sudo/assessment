@@ -1,0 +1,30 @@
+# Loads variables from .env in this directory (copy from .env.example).
+# Start:  docker compose up -d
+# Stop:  docker compose down
+# Remove data volume:  docker compose down -v
+#
+# Default host port is 5433 so it does not clash with local Postgres on 5432.
+# To use 5432 instead: POSTGRES_PORT=5432 in .env (stop whatever uses 5432 first).
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: assesment-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-assesment}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - assesment_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  assesment_pgdata:

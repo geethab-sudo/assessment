@@ -1,0 +1,593 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { apiFetch } from "../api";
+import SearchableLanguageSelect from "../components/SearchableLanguageSelect.jsx";
+
+/** Build the topic string for the LLM from a catalog topic row. */
+function buildTopicStringForApi(topicRow) {
+  if (!topicRow) return "";
+  const name = (topicRow.name || "").trim();
+  const docs = Array.isArray(topicRow.related_documents) ? topicRow.related_documents : [];
+  if (docs.length === 0) return name;
+  const lines = docs.map((d) => {
+    const title = (d.title || "").trim() || "Reference";
+    if (d.url) return `- ${title}: ${d.url}`;
+    if (d.path) return `- ${title}: ${d.path}`;
+    return `- ${title}`;
+  });
+  return `${name}\n\nContext (reference materials):\n${lines.join("\n")}`;
+}
+
+/** Join multiple catalog topics for one assessment generation run. */
+function buildMultiTopicString(topicRows) {
+  if (!topicRows.length) return "";
+  if (topicRows.length === 1) return buildTopicStringForApi(topicRows[0]);
+  return topicRows
+    .map(
+      (row, i) =>
+        `## Topic area ${i + 1} — ${(row.name || "Untitled").trim()}\n\n${buildTopicStringForApi(
+          row
+        )}`
+    )
+    .join("\n\n---\n\n");
+}
+
+export default function AdminPage() {
+  const [topicMode, setTopicMode] = useState("catalog"); // "catalog" | "custom"
+  const [languages, setLanguages] = useState([]);
+  const [languageId, setLanguageId] = useState("");
+  const [topics, setTopics] = useState([]);
+  /** Preserves selection order for preview / LLM. */
+  const [selectedTopicIds, setSelectedTopicIds] = useState([]);
+  const [loadingLanguages, setLoadingLanguages] = useState(true);
+  const [loadingTopics, setLoadingTopics] = useState(false);
+  const [catalogHint, setCatalogHint] = useState(null);
+
+  const [customTopic, setCustomTopic] = useState("");
+  /** When using custom free-text topic, optional catalog language for coding-question editor + LLM context. */
+  const [customCodeLanguageId, setCustomCodeLanguageId] = useState("");
+
+  const [level, setLevel] = useState("intermediate");
+  const [typeMcq, setTypeMcq] = useState(true);
+  const [typeCoding, setTypeCoding] = useState(true);
+  const [typeSubjective, setTypeSubjective] = useState(false);
+  const [countMcq, setCountMcq] = useState(2);
+  const [countCoding, setCountCoding] = useState(2);
+  const [countSubjective, setCountSubjective] = useState(1);
+
+  const [generatedId, setGeneratedId] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const topicById = useMemo(
+    () => Object.fromEntries(topics.map((t) => [String(t.id), t])),
+    [topics]
+  );
+
+  const selectedTopicRows = useMemo(
+    () => selectedTopicIds.map((id) => topicById[id]).filter(Boolean),
+    [selectedTopicIds, topicById]
+  );
+
+  const resolvedTopic =
+    topicMode === "catalog" ? buildMultiTopicString(selectedTopicRows) : customTopic.trim();
+
+  const loadLanguages = useCallback(async () => {
+    setLoadingLanguages(true);
+    setCatalogHint(null);
+    try {
+      const data = await apiFetch("/admin/languages", { authRole: "admin" });
+      const list = data.languages ?? [];
+      setLanguages(list);
+      if (list.length === 0) {
+        setCatalogHint(
+          "No languages in the database yet. Add them under Admin → Catalog, or use a custom topic."
+        );
+      }
+    } catch (e) {
+      setCatalogHint(e.message);
+      setLanguages([]);
+    } finally {
+      setLoadingLanguages(false);
+    }
+  }, []);
+
+  const loadTopicsForLanguage = useCallback(async (lid) => {
+    if (lid === "" || lid == null) {
+      setTopics([]);
+      setSelectedTopicIds([]);
+      return;
+    }
+    setLoadingTopics(true);
+    setCatalogHint(null);
+    setSelectedTopicIds([]);
+    try {
+      const data = await apiFetch(
+        `/admin/topics?language_id=${encodeURIComponent(lid)}`,
+        { authRole: "admin" }
+      );
+      const list = data.topics ?? [];
+      setTopics(list);
+      if (list.length === 0) {
+        setCatalogHint(
+          "No topics for this language. Add topics under Admin → Catalog or use a custom topic."
+        );
+      }
+    } catch (e) {
+      setTopics([]);
+      setSelectedTopicIds([]);
+      setCatalogHint(e.message);
+    } finally {
+      setLoadingTopics(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadLanguages();
+  }, [loadLanguages]);
+
+  useEffect(() => {
+    if (languageId === "") {
+      setTopics([]);
+      setSelectedTopicIds([]);
+      return;
+    }
+    void loadTopicsForLanguage(languageId);
+  }, [languageId, loadTopicsForLanguage]);
+
+  const toggleTopic = (id) => {
+    const sid = String(id);
+    setSelectedTopicIds((prev) =>
+      prev.includes(sid) ? prev.filter((x) => x !== sid) : [...prev, sid]
+    );
+  };
+
+  const languageCodeForGenerate = useMemo(() => {
+    if (topicMode === "catalog" && languageId) {
+      const l = languages.find((x) => String(x.id) === String(languageId));
+      return l?.code ? String(l.code).trim() : null;
+    }
+    if (topicMode === "custom" && typeCoding && customCodeLanguageId) {
+      const l = languages.find((x) => String(x.id) === String(customCodeLanguageId));
+      return l?.code ? String(l.code).trim() : null;
+    }
+    return null;
+  }, [topicMode, languageId, typeCoding, customCodeLanguageId, languages]);
+
+  /** Catalog language display name stored for Admin → Assessments (not the code). */
+  const languageNameForGenerate = useMemo(() => {
+    if (topicMode === "catalog" && languageId) {
+      const l = languages.find((x) => String(x.id) === String(languageId));
+      const name = (l?.name || "").trim();
+      return name || null;
+    }
+    if (topicMode === "custom" && typeCoding && customCodeLanguageId) {
+      const l = languages.find((x) => String(x.id) === String(customCodeLanguageId));
+      const name = (l?.name || "").trim();
+      return name || null;
+    }
+    return null;
+  }, [topicMode, languageId, typeCoding, customCodeLanguageId, languages]);
+
+  const topicNamesForGenerate = useMemo(() => {
+    if (topicMode === "catalog") {
+      const names = [];
+      for (const id of selectedTopicIds) {
+        const row = topicById[String(id)];
+        const n = row ? String(row.name ?? "").trim() : "";
+        if (n) names.push(n);
+      }
+      return names;
+    }
+    const t = customTopic.trim();
+    if (!t) return [];
+    const one = t.length > 200 ? `${t.slice(0, 200)}…` : t;
+    return [one];
+  }, [topicMode, selectedTopicIds, topicById, customTopic]);
+
+  const buildTypesAndCounts = useMemo(() => {
+    const types = [];
+    const questions_per_type = {};
+    if (typeMcq) {
+      types.push("mcq");
+      questions_per_type.mcq = Math.min(30, Math.max(1, countMcq));
+    }
+    if (typeCoding) {
+      types.push("coding");
+      questions_per_type.coding = Math.min(30, Math.max(1, countCoding));
+    }
+    if (typeSubjective) {
+      types.push("subjective");
+      questions_per_type.subjective = Math.min(30, Math.max(1, countSubjective));
+    }
+    return { types, questions_per_type };
+  }, [typeMcq, typeCoding, typeSubjective, countMcq, countCoding, countSubjective]);
+
+  const handleGenerate = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      const { types, questions_per_type } = buildTypesAndCounts;
+      if (types.length === 0) {
+        throw new Error("Select at least one question type and set a count of at least 1 for each.");
+      }
+      if (topicMode === "custom" && !customTopic.trim()) {
+        throw new Error("Enter a custom topic.");
+      }
+      if (topicMode === "catalog") {
+        if (!languageId) {
+          throw new Error("Select a language.");
+        }
+        if (selectedTopicRows.length === 0) {
+          throw new Error("Select at least one topic from the list.");
+        }
+        if (!resolvedTopic.trim()) {
+          throw new Error("Could not build topic text for the API.");
+        }
+      }
+      const data = await apiFetch("/generate-assessment", {
+        method: "POST",
+        authRole: "admin",
+        body: JSON.stringify({
+          topic: resolvedTopic,
+          level,
+          types,
+          questions_per_type,
+          ...(languageCodeForGenerate ? { language_code: languageCodeForGenerate } : {}),
+          ...(languageNameForGenerate ? { language_label: languageNameForGenerate } : {}),
+          topic_names: topicNamesForGenerate,
+        }),
+      });
+      setGeneratedId(data.assessment_id);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const catalogReady =
+    topicMode === "custom" ||
+    (Boolean(languageId) && selectedTopicRows.length > 0 && !loadingTopics);
+
+  const canGenerate =
+    !loading &&
+    (topicMode === "catalog" ? catalogReady : customTopic.trim().length > 0) &&
+    (typeMcq || typeCoding || typeSubjective);
+
+  return (
+    <div className="page page--wide">
+      <header className="header">
+        <p className="page-eyebrow">Administrator</p>
+        <h1>Generate assessment</h1>
+        <p className="muted">
+          Choose level, then catalog language and one or more topics (or a custom description).
+          Set how many questions you want for each type. Assessments are stored in PostgreSQL.
+        </p>
+        <p className="muted" style={{ marginTop: "0.65rem" }}>
+          <Link to="/admin/assessments">Browse assessments</Link>
+          {" · "}
+          <Link to="/admin/catalog">Catalog</Link>
+          {" · "}
+          <Link to="/admin/submissions">Submissions</Link>
+        </p>
+      </header>
+
+      <section className="card">
+        <h2>Configuration</h2>
+        <div className="grid">
+          <label>
+            Level
+            <select value={level} onChange={(e) => setLevel(e.target.value)}>
+              <option value="beginner">Beginner</option>
+              <option value="intermediate">Intermediate</option>
+              <option value="advanced">Advanced</option>
+            </select>
+            <span className="muted">Depth and difficulty of questions follow this level.</span>
+          </label>
+          <label>
+            Content source
+            <select
+              value={topicMode}
+              onChange={(e) => {
+                setTopicMode(e.target.value);
+                setError(null);
+                setSelectedTopicIds([]);
+              }}
+            >
+              <option value="catalog">Catalog: language + topics</option>
+              <option value="custom">Custom free-text topic</option>
+            </select>
+          </label>
+        </div>
+
+        {topicMode === "catalog" && (
+          <div className="stack" style={{ marginTop: "1rem" }}>
+            <SearchableLanguageSelect
+              label="Language"
+              inputId="gen-form-lang"
+              languages={languages}
+              value={languageId}
+              onChange={(v) => {
+                setLanguageId(v);
+                setError(null);
+              }}
+              required
+              disabled={loadingLanguages}
+              hint="Search by name, code, or id. Add languages under Admin → Catalog if the list is empty."
+            />
+            {languageId && !loadingTopics && topics.length > 0 && (
+              <div
+                className="topic-pick-card"
+                role="group"
+                aria-labelledby="topic-pick-title"
+              >
+                <div className="topic-pick-card__head">
+                  <div className="topic-pick-card__title-row">
+                    <h3 id="topic-pick-title" className="topic-pick-card__title">
+                      Topic selection
+                    </h3>
+                    {selectedTopicIds.length > 0 && (
+                      <span className="topic-pick-card__badge" aria-live="polite">
+                        {selectedTopicIds.length} selected
+                      </span>
+                    )}
+                  </div>
+                  <p className="topic-pick-card__lead">
+                    Choose one or more areas from the catalog. The model uses your choices together as
+                    the subject matter for this assessment.
+                  </p>
+                </div>
+                <div
+                  className="topic-pick-card__callout"
+                  id="topic-pick-callout"
+                  role="note"
+                >
+                  <span className="topic-pick-card__callout-icon" aria-hidden>
+                    ⓘ
+                  </span>
+                  <p>
+                    <strong>How it works:</strong> every selected topic is sent in one prompt. Questions
+                    may combine ideas across your selections, not only a single line item.
+                  </p>
+                </div>
+                <ul className="topic-pick-list" aria-label="Catalog topics to include">
+                  {topics.map((t) => {
+                    const idStr = String(t.id);
+                    const on = selectedTopicIds.includes(idStr);
+                    const refCount = Array.isArray(t.related_documents)
+                      ? t.related_documents.length
+                      : 0;
+                    return (
+                      <li key={t.id}>
+                        <label
+                          className={
+                            on ? "topic-pick-item topic-pick-item--on" : "topic-pick-item"
+                          }
+                        >
+                          <input
+                            className="topic-pick-item__input"
+                            type="checkbox"
+                            checked={on}
+                            onChange={() => toggleTopic(t.id)}
+                          />
+                          <span className="topic-pick-item__content">
+                            <span className="topic-pick-item__name">
+                              {t.name || `Topic #${t.id}`}
+                            </span>
+                            {refCount > 0 && (
+                              <span className="topic-pick-item__meta">
+                                {refCount} ref{refCount === 1 ? "" : "s"}
+                              </span>
+                            )}
+                          </span>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+            {languageId && loadingTopics && <p className="muted">Loading topics…</p>}
+            {languageId && !loadingTopics && topics.length === 0 && (
+              <p className="muted" role="status">
+                No topics for this language.
+              </p>
+            )}
+          </div>
+        )}
+
+        {topicMode === "custom" && (
+          <div className="grid" style={{ marginTop: "0.75rem" }}>
+            <label>
+              Custom topic
+              <input
+                value={customTopic}
+                onChange={(e) => setCustomTopic(e.target.value)}
+                placeholder="e.g. Python FastAPI and REST APIs"
+              />
+            </label>
+          </div>
+        )}
+
+        {topicMode === "custom" && typeCoding && (
+          <div className="stack" style={{ marginTop: "1rem" }}>
+            <SearchableLanguageSelect
+              label="Programming language (code editor for participants)"
+              inputId="gen-form-custom-code-lang"
+              languages={languages}
+              value={customCodeLanguageId}
+              onChange={(v) => {
+                setCustomCodeLanguageId(v);
+                setError(null);
+              }}
+              required={false}
+              disabled={loadingLanguages}
+              hint="If you include coding questions, pick a language to set syntax highlighting. Optional."
+            />
+          </div>
+        )}
+
+        {selectedTopicRows.length > 0 && topicMode === "catalog" && (
+          <div className="topic-preview" aria-label="Selected topics summary">
+            <h3 className="topic-preview-title">Selected topics</h3>
+            {selectedTopicRows.map((t) => {
+              const docs = Array.isArray(t.related_documents) ? t.related_documents : [];
+              return (
+                <div key={t.id} className="topic-preview-card">
+                  <h4 className="topic-preview-h">{t.name || `Topic #${t.id}`}</h4>
+                  {docs.length === 0 ? (
+                    <p className="muted small-print" style={{ margin: 0 }}>
+                      No reference materials linked in the catalog. The topic title is still used in
+                      the prompt.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="small-print muted" style={{ margin: "0.25rem 0 0.5rem" }}>
+                        References ({docs.length})
+                      </p>
+                      <ul className="topic-preview-reflist">
+                        {docs.map((d, idx) => {
+                          const title = (d?.title || "Reference").trim() || "Reference";
+                          return (
+                            <li key={idx}>
+                              {d?.url && (
+                                <a href={d.url} target="_blank" rel="noreferrer">
+                                  {title}
+                                </a>
+                              )}
+                              {d?.path && !d?.url && (
+                                <span>
+                                  {title} — <code className="cell-id">{d.path}</code>
+                                </span>
+                              )}
+                              {!d?.url && !d?.path && <span>{title}</span>}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <h3 className="generate-subh" style={{ marginTop: "1.25rem" }}>
+          Question types and counts
+        </h3>
+        <p className="muted small-print" style={{ marginTop: 0 }}>
+          Enable each type and set how many questions of that type to generate (1–30 each). Counts
+          are independent.
+        </p>
+        <div className="type-count-grid">
+          <div className="type-count-row">
+            <label className="type-count-tog">
+              <input
+                type="checkbox"
+                checked={typeMcq}
+                onChange={(e) => setTypeMcq(e.target.checked)}
+              />{" "}
+              MCQ
+            </label>
+            <label className="type-count-num">
+              Count
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={countMcq}
+                onChange={(e) =>
+                  setCountMcq(Math.min(30, Math.max(1, Number.parseInt(e.target.value, 10) || 1)))
+                }
+                disabled={!typeMcq}
+              />
+            </label>
+          </div>
+          <div className="type-count-row">
+            <label className="type-count-tog">
+              <input
+                type="checkbox"
+                checked={typeCoding}
+                onChange={(e) => setTypeCoding(e.target.checked)}
+              />{" "}
+              Coding
+            </label>
+            <label className="type-count-num">
+              Count
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={countCoding}
+                onChange={(e) =>
+                  setCountCoding(
+                    Math.min(30, Math.max(1, Number.parseInt(e.target.value, 10) || 1))
+                  )
+                }
+                disabled={!typeCoding}
+              />
+            </label>
+          </div>
+          <div className="type-count-row">
+            <label className="type-count-tog">
+              <input
+                type="checkbox"
+                checked={typeSubjective}
+                onChange={(e) => setTypeSubjective(e.target.checked)}
+              />{" "}
+              Subjective
+            </label>
+            <label className="type-count-num">
+              Count
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={countSubjective}
+                onChange={(e) =>
+                  setCountSubjective(
+                    Math.min(30, Math.max(1, Number.parseInt(e.target.value, 10) || 1))
+                  )
+                }
+                disabled={!typeSubjective}
+              />
+            </label>
+          </div>
+        </div>
+
+        {catalogHint && (
+          <p className="muted" role="status" style={{ marginTop: "0.75rem" }}>
+            {catalogHint}
+          </p>
+        )}
+        <div style={{ marginTop: "1.1rem" }}>
+          <button type="button" className="primary" onClick={handleGenerate} disabled={!canGenerate}>
+            {loading ? "Working…" : "Generate assessment"}
+          </button>
+        </div>
+        {generatedId && (
+          <p className="success" style={{ marginTop: "1rem" }}>
+            Assessment ID: <code>{generatedId}</code>
+          </p>
+        )}
+        {generatedId && (
+          <p className="muted">
+            Open the{" "}
+            <Link to="/client" state={{ assessmentId: generatedId }}>
+              Client page
+            </Link>{" "}
+            with this ID filled in, or copy the ID above.
+          </p>
+        )}
+      </section>
+
+      {error && (
+        <div className="error" role="alert">
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
