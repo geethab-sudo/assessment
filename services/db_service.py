@@ -202,6 +202,7 @@ def save_shared_assessment_rows(
     language_code: str | None = None,
     language_label: str | None = None,
     topic_names: list[str] | None = None,
+    creation_mode: str = "generated",
 ) -> None:
     """Shared assessment: owner_client_id is NULL (any client may access)."""
     with _session() as session:
@@ -225,6 +226,7 @@ def save_shared_assessment_rows(
             if topic_names is not None:
                 existing.topic_names = topics
         else:
+            mode = (creation_mode or "generated").strip().lower()[:16] or "generated"
             session.add(
                 Assessment(
                     assessment_id=assessment_id,
@@ -233,6 +235,7 @@ def save_shared_assessment_rows(
                     language_label=lbl,
                     topic_names=topics,
                     created_at=_utc_now_iso(),
+                    creation_mode=mode,
                 )
             )
         for row in rows:
@@ -310,12 +313,14 @@ def list_assessments_summary() -> list[dict[str, Any]]:
             if not language_name and lc:
                 language_name = lc
             topics = _coerce_stored_topic_names(a.topic_names)
+            mode = (a.creation_mode or "generated").strip().lower() or "generated"
             result.append(
                 {
                     "assessment_id": a.assessment_id,
                     "client_id": cid,
                     "question_count": int(n or 0),
                     "source": source,
+                    "creation_mode": mode,
                     "language_code": lc,
                     "language_label": stored_label,
                     "language_name": language_name,

@@ -267,6 +267,8 @@ export default function AdminPage() {
         <p className="muted" style={{ marginTop: "0.65rem" }}>
           <Link to="/admin/assessments">Browse assessments</Link>
           {" · "}
+          <Link to="/admin/manual">Manual questions</Link>
+          {" · "}
           <Link to="/admin/catalog">Catalog</Link>
           {" · "}
           <Link to="/admin/submissions">Submissions</Link>

@@ -202,6 +202,72 @@ class GenerateAssessmentBody(BaseModel):
         return self
 
 
+class ManualQuestionItem(BaseModel):
+    type: Literal["mcq", "coding", "subjective"]
+    question: str = Field(..., min_length=1)
+    options: list[str] = Field(default_factory=list)
+    correct_answer: str = Field(default="")
+
+
+class CreateManualAssessmentBody(BaseModel):
+    language_code: str | None = Field(default=None, max_length=32)
+    language_label: str | None = Field(default=None, max_length=256)
+    topic_names: list[str] = Field(default_factory=list)
+    questions: list[ManualQuestionItem] = Field(..., min_length=1)
+
+    @field_validator("language_code", mode="before")
+    @classmethod
+    def strip_language_code_manual(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, str) and (s := v.strip()):
+            return s[:32]
+        return None
+
+    @field_validator("language_label", mode="before")
+    @classmethod
+    def strip_language_label_manual(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, str) and (s := v.strip()):
+            return s[:256]
+        return None
+
+    @field_validator("topic_names", mode="before")
+    @classmethod
+    def normalize_topic_names_manual(cls, v: object) -> list[str]:
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise ValueError("topic_names must be a list of strings")
+        out: list[str] = []
+        for item in v[:50]:
+            s = str(item).strip()
+            if s:
+                out.append(s[:512])
+        return out
+
+    @field_validator("questions", mode="before")
+    @classmethod
+    def strip_question_stems(cls, v: object) -> object:
+        if not isinstance(v, list):
+            return v
+        cleaned = []
+        for item in v:
+            if isinstance(item, dict):
+                d = dict(item)
+                if isinstance(d.get("question"), str):
+                    d["question"] = d["question"].strip()
+                if isinstance(d.get("correct_answer"), str):
+                    d["correct_answer"] = d["correct_answer"].strip()
+                if isinstance(d.get("options"), list):
+                    d["options"] = [str(o).strip() for o in d["options"] if str(o).strip()]
+                cleaned.append(d)
+            else:
+                cleaned.append(item)
+        return cleaned
+
+
 class AnswerItem(BaseModel):
     question_id: str | int
     answer: str
@@ -434,6 +500,26 @@ def generate_assessment(
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Generation failed: {e}") from e
+
+
+@app.post("/admin/assessments/manual")
+def create_manual_assessment(
+    body: CreateManualAssessmentBody,
+    _: None = Depends(require_admin),
+) -> dict[str, Any]:
+    """Admin: create assessment from manually entered MCQ / subjective questions."""
+    try:
+        payload = [q.model_dump() for q in body.questions]
+        return assessment_service.create_manual_assessment(
+            payload,
+            language_code=body.language_code,
+            language_label=body.language_label,
+            topic_names=body.topic_names,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Create failed: {e}") from e
 
 
 @app.get("/catalog/languages")

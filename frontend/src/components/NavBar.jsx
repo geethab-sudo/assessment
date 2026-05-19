@@ -26,6 +26,7 @@ export default function NavBar() {
               Admin
             </span>
             <Link to="/admin">Generate</Link>
+            <Link to="/admin/manual">Manual</Link>
             <Link to="/admin/assessments">Assessments</Link>
             <Link to="/admin/catalog">Catalog</Link>
             <Link to="/admin/submissions">Submissions</Link>

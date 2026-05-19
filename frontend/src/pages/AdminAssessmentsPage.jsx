@@ -184,14 +184,15 @@ export default function AdminAssessmentsPage() {
                   <th>Language</th>
                   <th>Topics</th>
                   <th>Question count</th>
-                  <th>Source</th>
+                  <th>Type</th>
+                  <th>Access</th>
                   <th className="cell-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={8}>
+                    <td colSpan={9}>
                       <div className="empty-state">No assessments yet.</div>
                     </td>
                   </tr>
@@ -219,6 +220,13 @@ export default function AdminAssessmentsPage() {
                           )}
                         </td>
                         <td>{r.question_count}</td>
+                        <td className="cell-nowrap">
+                          {r.creation_mode === "manual" ? (
+                            <span className="pill">manual</span>
+                          ) : (
+                            <span className="pill">AI</span>
+                          )}
+                        </td>
                         <td>{r.source}</td>
                         <td className="cell-actions">
                           <div className="cell-actions-btns">
@@ -234,7 +242,7 @@ export default function AdminAssessmentsPage() {
                         </td>
                       </tr>
                       <tr className="admin-assessment-detail">
-                        <td colSpan={8}>
+                        <td colSpan={9}>
                           <AssessmentQuestionPreview
                             assessmentId={r.assessment_id}
                             questionCount={r.question_count}

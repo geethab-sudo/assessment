@@ -137,7 +137,8 @@ pyassesment/
 |------|-------------|
 | `/` | Home |
 | `/login/admin` | Admin sign-in |
-| `/admin` | Generate assessment |
+| `/admin` | Generate assessment (AI) |
+| `/admin/manual` | Create manual MCQ / subjective assessment |
 | `/admin/assessments` | List / delete assessments |
 | `/admin/catalog` | Languages and topics |
 | `/admin/submissions` | Submission review |

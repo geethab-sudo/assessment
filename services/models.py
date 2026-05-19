@@ -72,6 +72,10 @@ class Assessment(Base):
     )
     #: UTC ISO timestamp when assessment row was first created.
     created_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: `generated` (LLM) or `manual` (admin-authored questions).
+    creation_mode: Mapped[str | None] = mapped_column(
+        String(16), nullable=True, server_default=text("'generated'")
+    )
 
     questions: Mapped[list["AssessmentQuestion"]] = relationship(
         "AssessmentQuestion",

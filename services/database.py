@@ -67,6 +67,7 @@ def init_db() -> None:
     _ensure_assessments_language_code_column(eng)
     _ensure_assessments_catalog_meta_columns(eng)
     _ensure_assessments_created_at_column(eng)
+    _ensure_assessments_creation_mode_column(eng)
 
 
 def _ensure_assessments_language_code_column(eng) -> None:
@@ -129,6 +130,29 @@ def _ensure_assessments_created_at_column(eng) -> None:
                         WHERE table_name = 'assessments' AND column_name = 'created_at'
                     ) THEN
                         ALTER TABLE assessments ADD COLUMN created_at VARCHAR(64) NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
+
+
+def _ensure_assessments_creation_mode_column(eng) -> None:
+    """Add creation_mode for DBs created before manual assessments."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessments'
+                          AND column_name = 'creation_mode'
+                    ) THEN
+                        ALTER TABLE assessments
+                        ADD COLUMN creation_mode VARCHAR(16) NULL
+                        DEFAULT 'generated';
                     END IF;
                 END $$;
                 """

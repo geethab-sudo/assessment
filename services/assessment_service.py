@@ -92,6 +92,7 @@ def create_assessment(
         language_code=language_code,
         language_label=language_label,
         topic_names=topic_names if topic_names is not None else [],
+        creation_mode="generated",
     )
     return {
         "assessment_id": assessment_id,
@@ -100,6 +101,77 @@ def create_assessment(
         "difficulty": difficulty,
         "types": types,
         "questions_per_type": questions_per_type,
+        "question_count": len(rows),
+        "language_code": (language_code or "").strip()[:32] or None,
+        "language_label": (language_label or "").strip()[:256] or None,
+        "topic_names": list(topic_names or []),
+    }
+
+
+def create_manual_assessment(
+    questions: list[dict[str, Any]],
+    *,
+    language_code: str | None = None,
+    language_label: str | None = None,
+    topic_names: list[str] | None = None,
+) -> dict[str, Any]:
+    """Persist admin-authored MCQ / coding / subjective questions (no LLM)."""
+    if not questions:
+        raise ValueError("Add at least one question")
+    has_coding = any(
+        (q.get("type") or "").strip().lower() == "coding" for q in questions
+    )
+    if has_coding and not (language_code or "").strip():
+        raise ValueError(
+            "Select a catalog language when the assessment includes coding questions"
+        )
+    assessment_id = str(uuid.uuid4())
+    rows: list[dict[str, Any]] = []
+    for i, q in enumerate(questions, start=1):
+        qtype = (q.get("type") or "").strip().lower()
+        if qtype not in ("mcq", "coding", "subjective"):
+            raise ValueError(f"Question {i}: type must be mcq, coding, or subjective")
+        stem = (q.get("question") or "").strip()
+        if not stem:
+            raise ValueError(f"Question {i}: question text is required")
+        opts_raw = q.get("options") or []
+        if not isinstance(opts_raw, list):
+            raise ValueError(f"Question {i}: options must be a list")
+        options = [str(o).strip() for o in opts_raw if str(o).strip()]
+        correct = (q.get("correct_answer") or "").strip()
+        if qtype == "mcq":
+            if len(options) < 2:
+                raise ValueError(f"Question {i}: MCQ needs at least two options")
+            if not correct:
+                raise ValueError(f"Question {i}: select the correct MCQ answer")
+            if correct.casefold() not in {o.casefold() for o in options}:
+                raise ValueError(
+                    f"Question {i}: correct answer must match one of the options exactly"
+                )
+        elif qtype == "coding":
+            options = []
+        else:
+            options = []
+        rows.append(
+            {
+                "question_id": str(i),
+                "question": stem,
+                "type": qtype,
+                "options": _options_for_csv(options),
+                "correct_answer": correct,
+            }
+        )
+    db_service.save_shared_assessment_rows(
+        assessment_id,
+        rows,
+        language_code=language_code,
+        language_label=language_label,
+        topic_names=topic_names if topic_names is not None else [],
+        creation_mode="manual",
+    )
+    return {
+        "assessment_id": assessment_id,
+        "creation_mode": "manual",
         "question_count": len(rows),
         "language_code": (language_code or "").strip()[:32] or None,
         "language_label": (language_label or "").strip()[:256] or None,
