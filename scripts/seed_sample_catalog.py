@@ -298,8 +298,10 @@ def main() -> None:
     sf = get_session_factory()
     created_lang = 0
     created_topic = 0
-    skipped_lang = 0
     skipped_topic = 0
+    updated_topic = 0
+    deleted_topic = 0
+    skipped_lang = 0
 
     with sf() as session:
         for block in SAMPLE:
@@ -315,31 +317,51 @@ def main() -> None:
                 skipped_lang += 1
 
             lid = lang.id
+
+            # Fetch all existing topics for this language in the DB
+            db_topics = session.scalars(
+                select(Topic).where(Topic.language_id == lid)
+            ).all()
+            db_topic_map = {t.name: t for t in db_topics}
+            seed_topic_names = {t["name"] for t in block["topics"]}
+
+            # 1. For Python, clean up old topics that are no longer in SAMPLE
+            if code == "py":
+                for db_tname, db_t in db_topic_map.items():
+                    if db_tname not in seed_topic_names:
+                        session.delete(db_t)
+                        deleted_topic += 1
+
+            # 2. Add or update topics
             for t in block["topics"]:
                 tname = t["name"]
                 docs = t.get("related_documents") or []
-                existing = session.scalar(
-                    select(Topic).where(
-                        Topic.language_id == lid,
-                        Topic.name == tname,
+
+                if tname in db_topic_map:
+                    # For Python, also update the URLs if they changed
+                    if code == "py":
+                        db_topic = db_topic_map[tname]
+                        if db_topic.related_documents != docs:
+                            db_topic.related_documents = docs
+                            updated_topic += 1
+                        else:
+                            skipped_topic += 1
+                    else:
+                        skipped_topic += 1
+                else:
+                    session.add(
+                        Topic(
+                            language_id=lid,
+                            name=tname,
+                            related_documents=docs,
+                        )
                     )
-                )
-                if existing:
-                    skipped_topic += 1
-                    continue
-                session.add(
-                    Topic(
-                        language_id=lid,
-                        name=tname,
-                        related_documents=docs,
-                    )
-                )
-                created_topic += 1
+                    created_topic += 1
         session.commit()
 
     print(
         f"Done. Languages: {created_lang} created, {skipped_lang} already present. "
-        f"Topics: {created_topic} created, {skipped_topic} already present."
+        f"Topics: {created_topic} created, {updated_topic} updated, {deleted_topic} deleted, {skipped_topic} already present/skipped."
     )
 
 
