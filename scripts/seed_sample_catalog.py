@@ -76,75 +76,96 @@ SAMPLE: list[dict] = [
         "name": "Python",
         "topics": [
             {
-                "name": "Python basics (syntax, types, control flow)",
+                "name": "Tier 1 - Data Structures & Manipulation (Lists, Sets, Strings)",
                 "related_documents": [
-                    {
-                        "title": "The Python Tutorial",
-                        "url": "https://docs.python.org/3/tutorial/index.html",
-                    },
+                    {"title": "Python Data Structures", "url": "https://docs.python.org/3/tutorial/datastructures.html"},
+                    {"title": "RealPython - Data Structures", "url": "https://realpython.com/python-data-structures/"}
                 ],
             },
             {
-                "name": "Python functions and modules",
+                "name": "Tier 1 - Logic & Flow Control (Conditionals, Loops, Comprehensions)",
                 "related_documents": [
-                    {
-                        "title": "Functions",
-                        "url": "https://docs.python.org/3/tutorial/controlflow.html#defining-functions",
-                    },
+                    {"title": "Python Control Flow", "url": "https://docs.python.org/3/tutorial/controlflow.html"},
+                    {"title": "RealPython - List Comprehensions", "url": "https://realpython.com/list-comprehension-python/"}
                 ],
             },
             {
-                "name": "Python OOP (classes, inheritance)",
+                "name": "Tier 1 - OOP Basics (Classes, Methods, Encapsulation)",
                 "related_documents": [
-                    {
-                        "title": "Classes",
-                        "url": "https://docs.python.org/3/tutorial/classes.html",
-                    },
+                    {"title": "Python Classes", "url": "https://docs.python.org/3/tutorial/classes.html"},
+                    {"title": "RealPython - OOP", "url": "https://realpython.com/python3-object-oriented-programming/"}
                 ],
             },
             {
-                "name": "Python data structures (list, dict, set, tuple)",
+                "name": "Tier 1 - Functions & Dictionaries (Nested lookups, signatures, defaults)",
                 "related_documents": [
-                    {
-                        "title": "Data structures",
-                        "url": "https://docs.python.org/3/tutorial/datastructures.html",
-                    },
+                    {"title": "Python Functions", "url": "https://docs.python.org/3/tutorial/controlflow.html#defining-functions"},
+                    {"title": "Mutable Default Arguments Gotcha", "url": "https://docs.python-guide.org/writing/gotchas/#mutable-default-arguments"}
                 ],
             },
             {
-                "name": "Python error handling and exceptions",
+                "name": "Tier 1 - Error Handling (Basic try-except, raising exceptions)",
                 "related_documents": [
-                    {
-                        "title": "Errors and exceptions",
-                        "url": "https://docs.python.org/3/tutorial/errors.html",
-                    },
+                    {"title": "Python Errors and Exceptions", "url": "https://docs.python.org/3/tutorial/errors.html"},
+                    {"title": "RealPython - Exceptions", "url": "https://realpython.com/python-exceptions/"}
                 ],
             },
             {
-                "name": "Python testing (unittest, pytest)",
+                "name": "Tier 1 - Type Hinting & Annotations (Typing module, static analysis support)",
                 "related_documents": [
-                    {
-                        "title": "unittest",
-                        "url": "https://docs.python.org/3/library/unittest.html",
-                    },
+                    {"title": "Python Typing", "url": "https://docs.python.org/3/library/typing.html"},
+                    {"title": "Mypy Cheat Sheet", "url": "https://mypy.readthedocs.io/en/stable/cheat_sheet_py3.html"}
                 ],
             },
             {
-                "name": "Python async (asyncio, async/await)",
+                "name": "Tier 1 - Built-in Iterators & Utilities (enumerate, zip, any, all)",
                 "related_documents": [
-                    {
-                        "title": "asyncio",
-                        "url": "https://docs.python.org/3/library/asyncio.html",
-                    },
+                    {"title": "Python Built-in Functions", "url": "https://docs.python.org/3/library/functions.html"},
+                    {"title": "RealPython - Enumerate", "url": "https://realpython.com/python-enumerate/"}
                 ],
             },
             {
-                "name": "Python packaging and virtual environments",
+                "name": "Tier 1 - Basic File I/O & Context Managers (with open statements)",
                 "related_documents": [
-                    {
-                        "title": "venv",
-                        "url": "https://docs.python.org/3/library/venv.html",
-                    },
+                    {"title": "Python Reading and Writing Files", "url": "https://docs.python.org/3/tutorial/inputoutput.html#reading-and-writing-files"},
+                    {"title": "RealPython - With Statement", "url": "https://realpython.com/python-with-statement/"}
+                ],
+            },
+            {
+                "name": "Tier 1 - Modules, Namespaces & Imports (Absolute/Relative, Circular imports)",
+                "related_documents": [
+                    {"title": "Python Modules", "url": "https://docs.python.org/3/tutorial/modules.html"},
+                    {"title": "RealPython - Imports", "url": "https://realpython.com/absolute-vs-relative-python-imports/"}
+                ],
+            },
+            {
+                "name": "Tier 1 - Generators & Iterables (yield, generator expressions)",
+                "related_documents": [
+                    {"title": "Python Generators", "url": "https://docs.python.org/3/tutorial/classes.html#generators"},
+                    {"title": "RealPython - Generators", "url": "https://realpython.com/introduction-to-python-generators/"}
+                ],
+            },
+            {
+                "name": "Tier 1 - Testing (unittest, pytest)",
+                "related_documents": [
+                    {"title": "unittest", "url": "https://docs.python.org/3/library/unittest.html"},
+                    {"title": "pytest - Getting Started", "url": "https://docs.pytest.org/en/stable/getting-started.html#get-started"},
+                    {"title": "pytest - How-To Guides", "url": "https://docs.pytest.org/en/stable/how-to/index.html#how-to"},
+                    {"title": "pytest - Explanation", "url": "https://docs.pytest.org/en/stable/explanation/index.html#explanation"}
+                ],
+            },
+            {
+                "name": "Tier 1 - Packaging and virtual environments (venv)",
+                "related_documents": [
+                    {"title": "venv", "url": "https://docs.python.org/3/library/venv.html"},
+                    {"title": "PyPA - Installing Packages", "url": "https://packaging.python.org/en/latest/tutorials/installing-packages/"}
+                ],
+            },
+            {
+                "name": "Tier 2 - Async (asyncio, async/await)",
+                "related_documents": [
+                    {"title": "asyncio", "url": "https://docs.python.org/3/library/asyncio.html"},
+                    {"title": "RealPython - Async IO", "url": "https://realpython.com/async-io-python/"}
                 ],
             },
         ],
