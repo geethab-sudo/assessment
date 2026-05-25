@@ -32,6 +32,42 @@ function buildMultiTopicString(topicRows) {
     .join("\n\n---\n\n");
 }
 
+/** Build the topic string when per-topic counts are specified. */
+function buildPerTopicTopicString(selectedTopicRows, perTopicCounts) {
+  if (!selectedTopicRows.length) return "";
+
+  const header = `Please distribute the generated questions across the specific topic areas below according to the requested counts. Each topic area must get exactly the counts specified.
+`;
+
+  const sections = selectedTopicRows.map((row, i) => {
+    const topicId = String(row.id);
+    const counts = perTopicCounts[topicId] || { mcq: 0, coding: 0, subjective: 0 };
+    const name = (row.name || "Untitled").trim();
+    const docs = Array.isArray(row.related_documents) ? row.related_documents : [];
+
+    const lines = docs.map((d) => {
+      const title = (d.title || "").trim() || "Reference";
+      if (d.url) return `- ${title}: ${d.url}`;
+      if (d.path) return `- ${title}: ${d.path}`;
+      return `- ${title}`;
+    });
+
+    const contextStr = lines.length > 0
+      ? `\nContext (reference materials):\n${lines.join("\n")}`
+      : "";
+
+    const instructionStr = `Required questions for this specific topic:
+- MCQ (Multiple-Choice Questions): ${counts.mcq || 0}
+- Coding: ${counts.coding || 0}
+- Subjective: ${counts.subjective || 0}`;
+
+    return `## Topic area ${i + 1} — ${name}${contextStr}\n\n${instructionStr}`;
+  });
+
+  return `${header}\n${sections.join("\n\n---\n\n")}`;
+}
+
+
 export default function AdminPage() {
   const [topicMode, setTopicMode] = useState("catalog"); // "catalog" | "custom"
   const [languages, setLanguages] = useState([]);
@@ -59,6 +95,10 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  const [allocationMode, setAllocationMode] = useState("auto"); // "auto" | "per-topic"
+  const [perTopicCounts, setPerTopicCounts] = useState({}); // { [topicId]: { mcq, coding, subjective } }
+
+
   const topicById = useMemo(
     () => Object.fromEntries(topics.map((t) => [String(t.id), t])),
     [topics]
@@ -69,8 +109,14 @@ export default function AdminPage() {
     [selectedTopicIds, topicById]
   );
 
-  const resolvedTopic =
-    topicMode === "catalog" ? buildMultiTopicString(selectedTopicRows) : customTopic.trim();
+  const resolvedTopic = useMemo(() => {
+    if (topicMode !== "catalog") return customTopic.trim();
+    if (allocationMode === "per-topic") {
+      return buildPerTopicTopicString(selectedTopicRows, perTopicCounts);
+    }
+    return buildMultiTopicString(selectedTopicRows);
+  }, [topicMode, allocationMode, selectedTopicRows, perTopicCounts, customTopic]);
+
 
   const loadLanguages = useCallback(async () => {
     setLoadingLanguages(true);
@@ -137,10 +183,29 @@ export default function AdminPage() {
 
   const toggleTopic = (id) => {
     const sid = String(id);
-    setSelectedTopicIds((prev) =>
-      prev.includes(sid) ? prev.filter((x) => x !== sid) : [...prev, sid]
-    );
+    setSelectedTopicIds((prev) => {
+      const isAdding = !prev.includes(sid);
+      if (isAdding) {
+        setPerTopicCounts((old) => ({
+          ...old,
+          [sid]: old[sid] || { mcq: 1, coding: 0, subjective: 0 },
+        }));
+      }
+      return isAdding ? [...prev, sid] : prev.filter((x) => x !== sid);
+    });
   };
+
+  const handlePerTopicCountChange = (topicId, type, val) => {
+    const count = Math.min(30, Math.max(0, Number.parseInt(val, 10) || 0));
+    setPerTopicCounts((prev) => ({
+      ...prev,
+      [topicId]: {
+        ...(prev[topicId] || { mcq: 0, coding: 0, subjective: 0 }),
+        [type]: count,
+      },
+    }));
+  };
+
 
   const languageCodeForGenerate = useMemo(() => {
     if (topicMode === "catalog" && languageId) {
@@ -185,7 +250,39 @@ export default function AdminPage() {
     return [one];
   }, [topicMode, selectedTopicIds, topicById, customTopic]);
 
+  const totalCounts = useMemo(() => {
+    let mcq = 0;
+    let coding = 0;
+    let subjective = 0;
+    for (const id of selectedTopicIds) {
+      const counts = perTopicCounts[id] || { mcq: 0, coding: 0, subjective: 0 };
+      mcq += counts.mcq || 0;
+      coding += counts.coding || 0;
+      subjective += counts.subjective || 0;
+    }
+    return { mcq, coding, subjective };
+  }, [selectedTopicIds, perTopicCounts]);
+
   const buildTypesAndCounts = useMemo(() => {
+    if (topicMode === "catalog" && allocationMode === "per-topic") {
+      const types = [];
+      const questions_per_type = {};
+      const { mcq, coding, subjective } = totalCounts;
+      if (mcq > 0) {
+        types.push("mcq");
+        questions_per_type.mcq = mcq;
+      }
+      if (coding > 0) {
+        types.push("coding");
+        questions_per_type.coding = coding;
+      }
+      if (subjective > 0) {
+        types.push("subjective");
+        questions_per_type.subjective = subjective;
+      }
+      return { types, questions_per_type };
+    }
+
     const types = [];
     const questions_per_type = {};
     if (typeMcq) {
@@ -201,7 +298,8 @@ export default function AdminPage() {
       questions_per_type.subjective = Math.min(30, Math.max(1, countSubjective));
     }
     return { types, questions_per_type };
-  }, [typeMcq, typeCoding, typeSubjective, countMcq, countCoding, countSubjective]);
+  }, [topicMode, allocationMode, totalCounts, typeMcq, typeCoding, typeSubjective, countMcq, countCoding, countSubjective]);
+
 
   const handleGenerate = async () => {
     setError(null);
@@ -250,10 +348,18 @@ export default function AdminPage() {
     topicMode === "custom" ||
     (Boolean(languageId) && selectedTopicRows.length > 0 && !loadingTopics);
 
+  const hasAnyQuestions = useMemo(() => {
+    if (topicMode === "catalog" && allocationMode === "per-topic") {
+      return totalCounts.mcq > 0 || totalCounts.coding > 0 || totalCounts.subjective > 0;
+    }
+    return typeMcq || typeCoding || typeSubjective;
+  }, [topicMode, allocationMode, totalCounts, typeMcq, typeCoding, typeSubjective]);
+
   const canGenerate =
     !loading &&
     (topicMode === "catalog" ? catalogReady : customTopic.trim().length > 0) &&
-    (typeMcq || typeCoding || typeSubjective);
+    hasAnyQuestions;
+
 
   return (
     <div className="page page--wide">
@@ -428,6 +534,35 @@ export default function AdminPage() {
           </div>
         )}
 
+        {topicMode === "catalog" && selectedTopicIds.length > 0 && (
+          <div className="allocation-mode-selector" style={{ marginTop: "1rem", marginBottom: "1rem" }}>
+            <label style={{ marginBottom: "0.4rem", display: "block" }}>
+              Question Distribution
+            </label>
+            <div className="segmented-control">
+              <button
+                type="button"
+                className={`segmented-control__btn ${allocationMode === "auto" ? "active" : ""}`}
+                onClick={() => setAllocationMode("auto")}
+              >
+                Auto-distribute Questions
+              </button>
+              <button
+                type="button"
+                className={`segmented-control__btn ${allocationMode === "per-topic" ? "active" : ""}`}
+                onClick={() => setAllocationMode("per-topic")}
+              >
+                Specify Per Topic
+              </button>
+            </div>
+            <p className="muted small-print" style={{ marginTop: "0.4rem", marginBottom: 0 }}>
+              {allocationMode === "auto"
+                ? "Generate questions from a pool of selected topics. The AI decides how they are distributed."
+                : "Set precise question counts for each chosen topic area individually."}
+            </p>
+          </div>
+        )}
+
         {selectedTopicRows.length > 0 && topicMode === "catalog" && (
           <div className="topic-preview" aria-label="Selected topics summary">
             <h3 className="topic-preview-title">Selected topics</h3>
@@ -436,14 +571,50 @@ export default function AdminPage() {
               return (
                 <div key={t.id} className="topic-preview-card">
                   <h4 className="topic-preview-h">{t.name || `Topic #${t.id}`}</h4>
+                  
+                  {allocationMode === "per-topic" && (
+                    <div className="per-topic-inputs">
+                      <div className="per-topic-input-group">
+                        <span>MCQ:</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={30}
+                          value={perTopicCounts[String(t.id)]?.mcq ?? 0}
+                          onChange={(e) => handlePerTopicCountChange(String(t.id), "mcq", e.target.value)}
+                        />
+                      </div>
+                      <div className="per-topic-input-group">
+                        <span>Coding:</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={30}
+                          value={perTopicCounts[String(t.id)]?.coding ?? 0}
+                          onChange={(e) => handlePerTopicCountChange(String(t.id), "coding", e.target.value)}
+                        />
+                      </div>
+                      <div className="per-topic-input-group">
+                        <span>Subjective:</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={30}
+                          value={perTopicCounts[String(t.id)]?.subjective ?? 0}
+                          onChange={(e) => handlePerTopicCountChange(String(t.id), "subjective", e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   {docs.length === 0 ? (
-                    <p className="muted small-print" style={{ margin: 0 }}>
+                    <p className="muted small-print" style={{ margin: "0.5rem 0 0" }}>
                       No reference materials linked in the catalog. The topic title is still used in
                       the prompt.
                     </p>
                   ) : (
                     <>
-                      <p className="small-print muted" style={{ margin: "0.25rem 0 0.5rem" }}>
+                      <p className="small-print muted" style={{ margin: "0.5rem 0 0.5rem" }}>
                         References ({docs.length})
                       </p>
                       <ul className="topic-preview-reflist">
@@ -474,20 +645,23 @@ export default function AdminPage() {
           </div>
         )}
 
+
         <h3 className="generate-subh" style={{ marginTop: "1.25rem" }}>
           Question types and counts
         </h3>
         <p className="muted small-print" style={{ marginTop: 0 }}>
-          Enable each type and set how many questions of that type to generate (1–30 each). Counts
-          are independent.
+          {topicMode === "catalog" && allocationMode === "per-topic"
+            ? "Aggregated counts from individual topics selected above (read-only)."
+            : "Enable each type and set how many questions of that type to generate (1–30 each). Counts are independent."}
         </p>
         <div className="type-count-grid">
           <div className="type-count-row">
             <label className="type-count-tog">
               <input
                 type="checkbox"
-                checked={typeMcq}
+                checked={topicMode === "catalog" && allocationMode === "per-topic" ? totalCounts.mcq > 0 : typeMcq}
                 onChange={(e) => setTypeMcq(e.target.checked)}
+                disabled={topicMode === "catalog" && allocationMode === "per-topic"}
               />{" "}
               MCQ
             </label>
@@ -497,11 +671,11 @@ export default function AdminPage() {
                 type="number"
                 min={1}
                 max={30}
-                value={countMcq}
+                value={topicMode === "catalog" && allocationMode === "per-topic" ? totalCounts.mcq : countMcq}
                 onChange={(e) =>
                   setCountMcq(Math.min(30, Math.max(1, Number.parseInt(e.target.value, 10) || 1)))
                 }
-                disabled={!typeMcq}
+                disabled={topicMode === "catalog" && allocationMode === "per-topic" ? true : !typeMcq}
               />
             </label>
           </div>
@@ -509,8 +683,9 @@ export default function AdminPage() {
             <label className="type-count-tog">
               <input
                 type="checkbox"
-                checked={typeCoding}
+                checked={topicMode === "catalog" && allocationMode === "per-topic" ? totalCounts.coding > 0 : typeCoding}
                 onChange={(e) => setTypeCoding(e.target.checked)}
+                disabled={topicMode === "catalog" && allocationMode === "per-topic"}
               />{" "}
               Coding
             </label>
@@ -520,13 +695,13 @@ export default function AdminPage() {
                 type="number"
                 min={1}
                 max={30}
-                value={countCoding}
+                value={topicMode === "catalog" && allocationMode === "per-topic" ? totalCounts.coding : countCoding}
                 onChange={(e) =>
                   setCountCoding(
                     Math.min(30, Math.max(1, Number.parseInt(e.target.value, 10) || 1))
                   )
                 }
-                disabled={!typeCoding}
+                disabled={topicMode === "catalog" && allocationMode === "per-topic" ? true : !typeCoding}
               />
             </label>
           </div>
@@ -534,8 +709,9 @@ export default function AdminPage() {
             <label className="type-count-tog">
               <input
                 type="checkbox"
-                checked={typeSubjective}
+                checked={topicMode === "catalog" && allocationMode === "per-topic" ? totalCounts.subjective > 0 : typeSubjective}
                 onChange={(e) => setTypeSubjective(e.target.checked)}
+                disabled={topicMode === "catalog" && allocationMode === "per-topic"}
               />{" "}
               Subjective
             </label>
@@ -545,13 +721,13 @@ export default function AdminPage() {
                 type="number"
                 min={1}
                 max={30}
-                value={countSubjective}
+                value={topicMode === "catalog" && allocationMode === "per-topic" ? totalCounts.subjective : countSubjective}
                 onChange={(e) =>
                   setCountSubjective(
                     Math.min(30, Math.max(1, Number.parseInt(e.target.value, 10) || 1))
                   )
                 }
-                disabled={!typeSubjective}
+                disabled={topicMode === "catalog" && allocationMode === "per-topic" ? true : !typeSubjective}
               />
             </label>
           </div>

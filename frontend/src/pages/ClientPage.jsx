@@ -55,10 +55,6 @@ export default function ClientPage() {
     setAnswers((prev) => ({ ...prev, [String(qid)]: value }));
   };
 
-  /** Disallow copy / paste / cut in answer fields (honor-system; not bypass-proof). */
-  const blockClipboard = (e) => {
-    e.preventDefault();
-  };
 
   const setCodeLanguageForQuestion = useCallback((qid, catalogCode) => {
     const k = String(qid);
@@ -148,9 +144,10 @@ export default function ClientPage() {
         <p className="page-eyebrow">Participant</p>
         <h1>Take assessment</h1>
         <p className="muted">
-          Enter your employee ID, name, and the assessment ID you were given, then load the test. Typed
-          answers cannot be pasted; after you submit, this attempt is locked. No sign-in is required.
+          Enter your employee ID, name, and the assessment ID you were given, then load the test.
+          After you submit, this attempt is locked. No sign-in is required.
         </p>
+
       </header>
 
       <section className="card">
@@ -313,16 +310,14 @@ export default function ClientPage() {
               ) : (
                 <textarea
                   rows={5}
-                  placeholder="Your answer (typing only — paste disabled)"
+                  placeholder="Your answer here…"
                   value={answers[String(q.question_id)] ?? ""}
                   onChange={(e) => setAnswer(q.question_id, e.target.value)}
                   readOnly={!!result}
-                  onPaste={blockClipboard}
-                  onCopy={blockClipboard}
-                  onCut={blockClipboard}
                   autoComplete="off"
                   spellCheck={false}
                 />
+
               )}
             </div>
           );
