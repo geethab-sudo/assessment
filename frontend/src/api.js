@@ -51,9 +51,11 @@ export function logoutClient() {
 export async function apiFetch(path, options = {}) {
   const { authRole, ...rest } = options;
   const headers = {
-    "Content-Type": "application/json",
     ...rest.headers,
   };
+  if (!(rest.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
   if (authRole === "admin") {
     const t = getAdminToken();
     if (t) headers.Authorization = `Bearer ${t}`;

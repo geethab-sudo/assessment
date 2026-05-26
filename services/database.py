@@ -67,6 +67,28 @@ def init_db() -> None:
     _ensure_assessments_language_code_column(eng)
     _ensure_assessments_catalog_meta_columns(eng)
     _ensure_assessments_created_at_column(eng)
+    _ensure_modality_and_routing_columns(eng)
+    _ensure_raw_notebook_column(eng)
+
+
+def _ensure_raw_notebook_column(eng) -> None:
+    """Add raw_notebook column to submissions table if it does not exist (PostgreSQL)."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'submissions' AND column_name = 'raw_notebook'
+                    ) THEN
+                        ALTER TABLE submissions ADD COLUMN raw_notebook JSONB NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
 
 
 def _ensure_assessments_language_code_column(eng) -> None:
@@ -129,6 +151,36 @@ def _ensure_assessments_created_at_column(eng) -> None:
                         WHERE table_name = 'assessments' AND column_name = 'created_at'
                     ) THEN
                         ALTER TABLE assessments ADD COLUMN created_at VARCHAR(64) NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
+def _ensure_modality_and_routing_columns(eng) -> None:
+    """Add modality to topics, and routing_flag to assessments and submissions if they do not exist (PostgreSQL)."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'topics' AND column_name = 'modality'
+                    ) THEN
+                        ALTER TABLE topics ADD COLUMN modality VARCHAR(32) NOT NULL DEFAULT 'pyodide';
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessments' AND column_name = 'routing_flag'
+                    ) THEN
+                        ALTER TABLE assessments ADD COLUMN routing_flag VARCHAR(32) NOT NULL DEFAULT 'pyodide';
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'submissions' AND column_name = 'routing_flag'
+                    ) THEN
+                        ALTER TABLE submissions ADD COLUMN routing_flag VARCHAR(32) NOT NULL DEFAULT 'pyodide';
                     END IF;
                 END $$;
                 """

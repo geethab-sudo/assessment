@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from services.database import get_session_factory
 from services.ids import sanitize_client_id
-from services.models import Assessment, AssessmentQuestion, Language, Submission
+from services.models import Assessment, AssessmentQuestion, Language, Submission, Topic
 
 __all__ = [
     "sanitize_client_id",
@@ -24,6 +24,7 @@ __all__ = [
     "save_shared_assessment_rows",
     "read_questions_by_assessment",
     "get_assessment_language_code",
+    "get_assessment_routing_flag",
     "list_assessments_summary",
     "delete_assessment",
     "list_all_submissions",
@@ -156,6 +157,20 @@ def save_assessment_rows(
     lbl = _normalize_language_label(language_label)
     topics = _normalize_topic_names(topic_names)
     with _session() as session:
+        # Determine routing flag:
+        routing_flag = "pyodide"
+        if lang == "ipynb":
+            routing_flag = "jupyter"
+        elif topics:
+            has_jupyter = session.scalar(
+                select(Topic.id).where(
+                    Topic.name.in_(topics),
+                    Topic.modality == "jupyter"
+                ).limit(1)
+            )
+            if has_jupyter:
+                routing_flag = "jupyter"
+
         existing = session.get(Assessment, assessment_id)
         if existing:
             session.execute(
@@ -164,6 +179,7 @@ def save_assessment_rows(
                 )
             )
             existing.owner_client_id = safe
+            existing.routing_flag = routing_flag
             if language_code is not None:
                 existing.language_code = lang
             if language_label is not None:
@@ -178,6 +194,7 @@ def save_assessment_rows(
                     language_code=lang if language_code is not None else None,
                     language_label=lbl,
                     topic_names=topics,
+                    routing_flag=routing_flag,
                     created_at=_utc_now_iso(),
                 )
             )
@@ -211,6 +228,20 @@ def save_shared_assessment_rows(
         topics = _normalize_topic_names(
             topic_names if topic_names is not None else []
         )
+        # Determine routing flag:
+        routing_flag = "pyodide"
+        if lang == "ipynb":
+            routing_flag = "jupyter"
+        elif topics:
+            has_jupyter = session.scalar(
+                select(Topic.id).where(
+                    Topic.name.in_(topics),
+                    Topic.modality == "jupyter"
+                ).limit(1)
+            )
+            if has_jupyter:
+                routing_flag = "jupyter"
+
         if existing:
             session.execute(
                 delete(AssessmentQuestion).where(
@@ -218,6 +249,7 @@ def save_shared_assessment_rows(
                 )
             )
             existing.owner_client_id = None
+            existing.routing_flag = routing_flag
             if language_code is not None:
                 existing.language_code = lang
             if language_label is not None:
@@ -232,6 +264,7 @@ def save_shared_assessment_rows(
                     language_code=lang if language_code is not None else None,
                     language_label=lbl,
                     topic_names=topics,
+                    routing_flag=routing_flag,
                     created_at=_utc_now_iso(),
                 )
             )
@@ -278,6 +311,15 @@ def get_assessment_language_code(assessment_id: str) -> str | None:
         return _normalize_language_code(row.language_code)
 
 
+def get_assessment_routing_flag(assessment_id: str) -> str:
+    """Routing flag stored on the assessment row, if any, defaulting to 'pyodide'."""
+    with _session() as session:
+        row = session.get(Assessment, assessment_id)
+        if not row:
+            return "pyodide"
+        return row.routing_flag or "pyodide"
+
+
 def list_assessments_summary() -> list[dict[str, Any]]:
     with _session() as session:
         assessments = session.scalars(select(Assessment)).all()
@@ -321,6 +363,7 @@ def list_assessments_summary() -> list[dict[str, Any]]:
                     "language_name": language_name,
                     "topic_names": topics,
                     "created_at": (a.created_at or "").strip() or None,
+                    "routing_flag": a.routing_flag,
                 }
             )
         return sorted(
@@ -362,6 +405,7 @@ def list_all_submissions() -> list[dict[str, Any]]:
                     "feedback": r.feedback,
                     "timestamp": r.timestamp,
                     "client_id": cid,
+                    "routing_flag": r.routing_flag,
                 }
             )
         return out
@@ -377,6 +421,8 @@ def save_submission_row(
     timestamp: str,
     *,
     submitter_client_id: str | None = None,
+    routing_flag: str = "pyodide",
+    raw_notebook: dict | None = None,
 ) -> None:
     with _session() as session:
         session.add(
@@ -389,6 +435,9 @@ def save_submission_row(
                 feedback=feedback,
                 timestamp=timestamp,
                 submitter_client_id=submitter_client_id,
+                routing_flag=routing_flag,
+                raw_notebook=raw_notebook,
             )
         )
         session.commit()
+

@@ -15,12 +15,12 @@ _root = Path(__file__).resolve().parent
 load_dotenv(_root / ".env", override=True)
 load_dotenv(override=True)
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Form, File, UploadFile, Header, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from services import assessment_service, auth_service, catalog_service
+from services import assessment_service, auth_service, catalog_service, notebook_service
 from services import db_service
 from services.database import init_db, ping_database
 from services.llm_service import groq_key_configured
@@ -486,6 +486,86 @@ def submit_assessment(body: SubmitAssessmentBody) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/submit-notebook-assessment")
+async def submit_notebook_assessment(
+    assessment_id: str = Form(...),
+    user_id: str = Form(...),
+    file: UploadFile = File(...),
+    client_id: str | None = Header(None),
+):
+    contents = await file.read()
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 5 MiB)")
+    try:
+        aid = assessment_id.strip()
+        if not db_service.client_may_access_assessment(aid, client_id):
+            raise HTTPException(
+                status_code=403,
+                detail="This assessment is not available for open access.",
+            )
+        result = notebook_service.submit_notebook_assessment(
+            aid, user_id, contents, submitter_client_id=client_id
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/assessment/{assessment_id}/template")
+def get_notebook_template(assessment_id: str, client_id: str | None = Header(None)):
+    try:
+        aid = assessment_id.strip()
+        if not db_service.client_may_access_assessment(aid, client_id):
+            raise HTTPException(
+                status_code=403,
+                detail="This assessment is not available for open access.",
+            )
+        assessment = assessment_service.get_assessment_for_user(aid)
+        if not assessment.get("found"):
+            raise HTTPException(status_code=404, detail="Assessment not found")
+        
+        cells = []
+        for i, q in enumerate(assessment.get("questions", [])):
+            cells.append({
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": [
+                    f"# Question {i + 1}\n",
+                    f"{q['question']}\n"
+                ]
+            })
+            cells.append({
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": []
+            })
+            
+        nb_dict = {
+            "cells": cells,
+            "metadata": {
+                "language_info": {
+                    "name": "python"
+                }
+            },
+            "nbformat": 4,
+            "nbformat_minor": 2
+        }
+        
+        import json
+        nb_json = json.dumps(nb_dict, indent=1)
+        return Response(content=nb_json, media_type="application/x-ipynb+json", headers={
+            "Content-Disposition": f"attachment; filename=assessment_{aid}.ipynb"
+        })
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

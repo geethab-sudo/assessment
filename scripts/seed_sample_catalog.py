@@ -162,10 +162,66 @@ SAMPLE: list[dict] = [
                 ],
             },
             {
-                "name": "Tier 2 - Async (asyncio, async/await)",
+                "name": "Tier 2 - Resilience & Reliability: Retry decorators, exponential backoff, jitter.",
+                "modality": "pyodide",
                 "related_documents": [
-                    {"title": "asyncio", "url": "https://docs.python.org/3/library/asyncio.html"},
-                    {"title": "RealPython - Async IO", "url": "https://realpython.com/async-io-python/"}
+                    {"title": "AWS Architecture: Exponential Backoff and Jitter", "url": "https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/"},
+                    {"title": "Python functools", "url": "https://docs.python.org/3/library/functools.html#functools.wraps"}
+                ],
+            },
+            {
+                "name": "Tier 2 - Security: PII/Credit card Regex redaction strings, AuthN vs AuthZ boundaries.",
+                "modality": "pyodide",
+                "related_documents": [
+                    {"title": "OWASP Python Security Cheat Sheet", "url": "https://cheatsheetseries.owasp.org/cheatsheets/Python_Security_Cheat_Sheet.html"},
+                    {"title": "Python Regular Expressions", "url": "https://docs.python.org/3/library/re.html"}
+                ],
+            },
+            {
+                "name": "Tier 2 - LLM Output Validation & Repair: String manipulation for parsing and validating broken JSON.",
+                "modality": "pyodide",
+                "related_documents": [
+                    {"title": "Python JSON Processing", "url": "https://docs.python.org/3/library/json.html"},
+                    {"title": "Anthropic Prompt Engineering", "url": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/overview"}
+                ],
+            },
+            {
+                "name": "Tier 2 - Observability: Dictionary manipulation for injecting Trace/Correlation IDs, span propagation.",
+                "modality": "pyodide",
+                "related_documents": [
+                    {"title": "Python Logging HOWTO", "url": "https://docs.python.org/3/howto/logging.html"},
+                    {"title": "OpenTelemetry Context Propagation", "url": "https://opentelemetry.io/docs/languages/python/"}
+                ],
+            },
+            {
+                "name": "Tier 2 - Performance: Python Data Model logic like __slots__ memory footprint restrictions.",
+                "modality": "pyodide",
+                "related_documents": [
+                    {"title": "Python Data Model __slots__", "url": "https://docs.python.org/3/reference/datamodel.html#slots"}
+                ],
+            },
+            {
+                "name": "Tier 2 - LLM Integration: Live API calls to the Google Gemini API (model configuration, prompting, text generation).",
+                "modality": "jupyter",
+                "related_documents": [
+                    {"title": "Gemini API Python Quickstart", "url": "https://ai.google.dev/gemini-api/docs/quickstart?lang=python"},
+                    {"title": "Gemini API Key Setup and Configuration", "url": "https://ai.google.dev/gemini-api/docs/api-key"}
+                ],
+            },
+            {
+                "name": "Tier 2 - Data & Persistence Patterns: Real SQLAlchemy sessions, demonstrating database transactions, connection pooling, cache-aside, and the \"Lost Update\" anomaly.",
+                "modality": "jupyter",
+                "related_documents": [
+                    {"title": "Python Contextlib", "url": "https://docs.python.org/3/library/contextlib.html"},
+                    {"title": "RealPython Context Managers", "url": "https://realpython.com/python-with-statement/"}
+                ],
+            },
+            {
+                "name": "Tier 2 - Real Async Concurrency: Hitting live HTTP endpoints concurrently using httpx.AsyncClient or similar tools and measuring true non-blocking event loops vs synchronous blockages.",
+                "modality": "jupyter",
+                "related_documents": [
+                    {"title": "Python Asyncio Basics", "url": "https://docs.python.org/3/library/asyncio.html"},
+                    {"title": "RealPython Async Features", "url": "https://realpython.com/python-async-features/"}
                 ],
             },
         ],
@@ -318,6 +374,7 @@ def main() -> None:
             for t in block["topics"]:
                 tname = t["name"]
                 docs = t.get("related_documents") or []
+                modality = t.get("modality", "pyodide")
                 existing = session.scalar(
                     select(Topic).where(
                         Topic.language_id == lid,
@@ -325,6 +382,8 @@ def main() -> None:
                     )
                 )
                 if existing:
+                    existing.modality = modality
+                    existing.related_documents = docs
                     skipped_topic += 1
                     continue
                 session.add(
@@ -332,6 +391,7 @@ def main() -> None:
                         language_id=lid,
                         name=tname,
                         related_documents=docs,
+                        modality=modality,
                     )
                 )
                 created_topic += 1

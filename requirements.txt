@@ -6,3 +6,4 @@ pydantic>=2.10.0
 PyJWT>=2.9.0
 sqlalchemy>=2.0.0
 psycopg[binary]>=3.2.0
+nbformat>=5.10.0

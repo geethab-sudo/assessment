@@ -45,6 +45,11 @@ class Topic(Base):
         nullable=False,
         server_default=text("'[]'::jsonb"),
     )
+    modality: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default=text("'pyodide'"),
+    )
 
     language: Mapped["Language"] = relationship("Language", back_populates="topics")
 
@@ -72,6 +77,11 @@ class Assessment(Base):
     )
     #: UTC ISO timestamp when assessment row was first created.
     created_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    routing_flag: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default=text("'pyodide'"),
+    )
 
     questions: Mapped[list["AssessmentQuestion"]] = relationship(
         "AssessmentQuestion",
@@ -111,5 +121,14 @@ class Submission(Base):
     score: Mapped[str] = mapped_column(String(32), default="")
     feedback: Mapped[str] = mapped_column(Text, default="")
     timestamp: Mapped[str] = mapped_column(String(64), nullable=False)
+    routing_flag: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        server_default=text("'pyodide'"),
+    )
+    # Optional raw notebook JSON for audit/debugging (nullable)
+    raw_notebook: Mapped[dict | None] = mapped_column(
+        JSONB, nullable=True, server_default=text("NULL"),
+    )
     #: Client session that submitted (for admin reporting)
     submitter_client_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)

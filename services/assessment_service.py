@@ -152,6 +152,7 @@ def get_assessment_for_user(assessment_id: str) -> dict[str, Any]:
         "language_code": language_code,
         "questions": questions_out,
         "found": True,
+        "routing_flag": db_service.get_assessment_routing_flag(assessment_id),
     }
 
 
