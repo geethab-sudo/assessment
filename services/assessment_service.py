@@ -57,34 +57,76 @@ def create_assessment(
     language_code: str | None = None,
     language_label: str | None = None,
     topic_names: list[str] | None = None,
+    per_topic_config: dict[str, dict[str, int]] | None = None,
 ) -> dict[str, Any]:
-    """Generate questions via LLM and persist rows (shared assessment in PostgreSQL)."""
+    """Generate questions via LLM and persist rows (shared assessment in PostgreSQL).
+
+    When `per_topic_config` maps topic names to per-type counts, each topic is sent to
+    the LLM separately so questions can be tagged with their originating topic name.
+    """
     difficulty = LEVEL_TO_DIFFICULTY.get(level.strip().lower())
     if not difficulty:
         raise ValueError("level must be one of: beginner, intermediate, advanced")
-    if set(types) != set(questions_per_type.keys()):
-        raise ValueError("types and questions_per_type keys must match")
     assessment_id = str(uuid.uuid4())
-    questions = generate_questions(
-        topic,
-        difficulty,
-        types,
-        questions_per_type=questions_per_type,
-        assessment_id=assessment_id,
-    )
 
     rows: list[dict[str, Any]] = []
-    for q in questions:
-        opts = q.get("options") or []
-        rows.append(
-            {
+
+    if per_topic_config and topic_names:
+        # Per-topic generation: one LLM call per topic so questions carry a topic_name tag.
+        from services.llm_service import generate_questions as _gen  # local to avoid circular
+        from services import catalog_service as _cat
+
+        # Build a name→topic row map for fetching topic text (related docs etc.)
+        # We need to reconstruct the topic string for each topic the same way AdminPage does.
+        topic_strings: dict[str, str] = _build_per_topic_strings(topic_names)
+
+        global_q_id = 1
+        for tname in topic_names:
+            cfg = per_topic_config.get(tname) or {}
+            t_types = [t for t in types if cfg.get(t, 0) > 0]
+            t_counts = {t: cfg[t] for t in t_types}
+            if not t_types:
+                continue
+            t_topic_str = topic_strings.get(tname, tname)
+            t_questions = _gen(
+                t_topic_str,
+                difficulty,
+                t_types,
+                questions_per_type=t_counts,
+                assessment_id=f"{assessment_id}-{tname[:32]}",
+            )
+            for q in t_questions:
+                opts = q.get("options") or []
+                rows.append({
+                    "question_id": str(global_q_id),
+                    "question": q["question"],
+                    "type": q["type"],
+                    "options": _options_for_csv(opts),
+                    "correct_answer": q.get("answer", ""),
+                    "topic_name": tname,
+                })
+                global_q_id += 1
+    else:
+        # Legacy single-call generation (no per-topic config).
+        if set(types) != set(questions_per_type.keys()):
+            raise ValueError("types and questions_per_type keys must match")
+        questions = generate_questions(
+            topic,
+            difficulty,
+            types,
+            questions_per_type=questions_per_type,
+            assessment_id=assessment_id,
+        )
+        for q in questions:
+            opts = q.get("options") or []
+            rows.append({
                 "question_id": q.get("id"),
                 "question": q["question"],
                 "type": q["type"],
                 "options": _options_for_csv(opts),
                 "correct_answer": q.get("answer", ""),
-            }
-        )
+                "topic_name": "",
+            })
 
     db_service.save_shared_assessment_rows(
         assessment_id,
@@ -107,20 +149,66 @@ def create_assessment(
     }
 
 
+def _build_per_topic_strings(topic_names: list[str]) -> dict[str, str]:
+    """Build LLM topic strings for each catalog topic name by looking up related_documents."""
+    from sqlalchemy import select
+    from services.database import get_session_factory
+    from services.models import Topic
+
+    result: dict[str, str] = {}
+    try:
+        sf = get_session_factory()
+        with sf() as session:
+            rows = session.scalars(
+                select(Topic).where(Topic.name.in_(topic_names))
+            ).all()
+            by_name = {r.name: r for r in rows}
+    except Exception:
+        by_name = {}
+
+    for tname in topic_names:
+        row = by_name.get(tname)
+        if not row:
+            result[tname] = tname
+            continue
+        docs = row.related_documents or []
+        if not docs:
+            result[tname] = tname
+            continue
+        lines = []
+        for d in docs:
+            title = (d.get("title") or "").strip() or "Reference"
+            url = (d.get("url") or "").strip()
+            path = (d.get("path") or "").strip()
+            if url:
+                lines.append(f"- {title}: {url}")
+            elif path:
+                lines.append(f"- {title}: {path}")
+            else:
+                lines.append(f"- {title}")
+        result[tname] = f"{tname}\n\nContext (reference materials):\n" + "\n".join(lines)
+    return result
+
+
 def get_assessment_for_user(assessment_id: str) -> dict[str, Any]:
     """
     Return assessment metadata and questions without revealing correct answers.
     """
+    meta = db_service.get_assessment_metadata(assessment_id)
     rows = db_service.read_questions_by_assessment(assessment_id)
     if not rows:
         return {
             "assessment_id": assessment_id,
             "questions": [],
             "found": False,
-            "language_code": db_service.get_assessment_language_code(assessment_id),
+            "language_code": meta["language_code"],
+            "routing_flag": meta["routing_flag"],
+            "topic_names": meta["topic_names"],
+            "jupyter_topic_names": meta["jupyter_topic_names"],
         }
 
-    language_code = db_service.get_assessment_language_code(assessment_id)
+    jupyter_topics = set(meta["jupyter_topic_names"])
+
     questions_out: list[dict[str, Any]] = []
     for r in rows:
         qtype = (r.get("type") or "").lower()
@@ -136,10 +224,21 @@ def get_assessment_for_user(assessment_id: str) -> dict[str, Any]:
             except json.JSONDecodeError:
                 options = []
 
+        tname = r.get("topic_name") or ""
+        # Determine per-question modality: if the question is tagged to a jupyter topic → jupyter
+        if tname and tname in jupyter_topics:
+            topic_modality = "jupyter"
+        elif tname:
+            topic_modality = "pyodide"
+        else:
+            topic_modality = None  # legacy question with no topic tag
+
         item: dict[str, Any] = {
             "question_id": r.get("question_id"),
             "type": qtype,
             "question": r.get("question", ""),
+            "topic_name": tname,
+            "topic_modality": topic_modality,
         }
         if qtype == "mcq":
             item["options"] = options
@@ -149,10 +248,12 @@ def get_assessment_for_user(assessment_id: str) -> dict[str, Any]:
 
     return {
         "assessment_id": assessment_id,
-        "language_code": language_code,
+        "language_code": meta["language_code"],
         "questions": questions_out,
         "found": True,
-        "routing_flag": db_service.get_assessment_routing_flag(assessment_id),
+        "routing_flag": meta["routing_flag"],
+        "topic_names": meta["topic_names"],
+        "jupyter_topic_names": meta["jupyter_topic_names"],
     }
 
 

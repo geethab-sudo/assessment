@@ -25,6 +25,7 @@ __all__ = [
     "read_questions_by_assessment",
     "get_assessment_language_code",
     "get_assessment_routing_flag",
+    "get_assessment_metadata",
     "list_assessments_summary",
     "delete_assessment",
     "list_all_submissions",
@@ -159,17 +160,7 @@ def save_assessment_rows(
     with _session() as session:
         # Determine routing flag:
         routing_flag = "pyodide"
-        if lang == "ipynb":
-            routing_flag = "jupyter"
-        elif topics:
-            has_jupyter = session.scalar(
-                select(Topic.id).where(
-                    Topic.name.in_(topics),
-                    Topic.modality == "jupyter"
-                ).limit(1)
-            )
-            if has_jupyter:
-                routing_flag = "jupyter"
+# Preserve routing_flag determined earlier (supports mixed modalities)
 
         existing = session.get(Assessment, assessment_id)
         if existing:
@@ -207,6 +198,7 @@ def save_assessment_rows(
                     type=row["type"],
                     options=row.get("options", "") or "",
                     correct_answer=row.get("correct_answer", "") or "",
+                    topic_name=str(row.get("topic_name") or ""),
                 )
             )
         session.commit()
@@ -228,19 +220,37 @@ def save_shared_assessment_rows(
         topics = _normalize_topic_names(
             topic_names if topic_names is not None else []
         )
-        # Determine routing flag:
+        # Determine routing flag (supports mixed modalities)
         routing_flag = "pyodide"
-        if lang == "ipynb":
-            routing_flag = "jupyter"
-        elif topics:
+        # Detect presence of Jupyter modality among topics
+        has_jupyter = False
+        has_other = False
+        if topics:
             has_jupyter = session.scalar(
                 select(Topic.id).where(
                     Topic.name.in_(topics),
                     Topic.modality == "jupyter"
                 ).limit(1)
             )
-            if has_jupyter:
+            has_other = session.scalar(
+                select(Topic.id).where(
+                    Topic.name.in_(topics),
+                    Topic.modality != "jupyter"
+                ).limit(1)
+            )
+        # Determine flag based on language code and topic modalities
+        if lang == "ipynb":
+            if has_other:
+                routing_flag = "mixed"
+            else:
                 routing_flag = "jupyter"
+        elif has_jupyter and has_other:
+            routing_flag = "mixed"
+        elif has_jupyter:
+            routing_flag = "jupyter"
+        # else remains "pyodide"
+
+
 
         if existing:
             session.execute(
@@ -277,6 +287,7 @@ def save_shared_assessment_rows(
                     type=row["type"],
                     options=row.get("options", "") or "",
                     correct_answer=row.get("correct_answer", "") or "",
+                    topic_name=str(row.get("topic_name") or ""),
                 )
             )
         session.commit()
@@ -297,6 +308,7 @@ def read_questions_by_assessment(assessment_id: str) -> list[dict[str, Any]]:
                 "type": r.type,
                 "options": r.options or "",
                 "correct_answer": r.correct_answer or "",
+                "topic_name": r.topic_name or "",
             }
             for r in rows
         ]
@@ -318,6 +330,36 @@ def get_assessment_routing_flag(assessment_id: str) -> str:
         if not row:
             return "pyodide"
         return row.routing_flag or "pyodide"
+
+
+def get_assessment_metadata(assessment_id: str) -> dict[str, Any]:
+    """Return language_code, routing_flag, topic_names, and jupyter_topic_names in one query."""
+    with _session() as session:
+        row = session.get(Assessment, assessment_id)
+        if not row:
+            return {
+                "language_code": None,
+                "routing_flag": "pyodide",
+                "topic_names": [],
+                "jupyter_topic_names": [],
+            }
+        topic_names = _coerce_stored_topic_names(row.topic_names)
+        jupyter_topic_names: list[str] = []
+        if topic_names:
+            jupyter_topic_names = list(
+                session.scalars(
+                    select(Topic.name).where(
+                        Topic.name.in_(topic_names),
+                        Topic.modality == "jupyter",
+                    )
+                ).all()
+            )
+        return {
+            "language_code": _normalize_language_code(row.language_code),
+            "routing_flag": row.routing_flag or "pyodide",
+            "topic_names": topic_names,
+            "jupyter_topic_names": jupyter_topic_names,
+        }
 
 
 def list_assessments_summary() -> list[dict[str, Any]]:

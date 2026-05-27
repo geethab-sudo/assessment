@@ -102,6 +102,8 @@ class AssessmentQuestion(Base):
     type: Mapped[str] = mapped_column(String(32), nullable=False)
     options: Mapped[str] = mapped_column(Text, default="")
     correct_answer: Mapped[str] = mapped_column(Text, default="")
+    #: Catalog topic name this question was generated for (empty for legacy questions)
+    topic_name: Mapped[str] = mapped_column(String(512), nullable=False, server_default=text("''"))
 
     assessment: Mapped["Assessment"] = relationship("Assessment", back_populates="questions")
 

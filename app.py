@@ -101,6 +101,8 @@ class GenerateAssessmentBody(BaseModel):
     language_label: str | None = Field(default=None, max_length=256)
     #: Selected catalog topic titles (or custom topic preview), in order
     topic_names: list[str] = Field(default_factory=list)
+    #: Per-topic question counts: { "Topic name": { "mcq": 1, "coding": 1, "subjective": 0 } }
+    per_topic_config: dict[str, dict[str, int]] = Field(default_factory=dict)
 
     @field_validator("topic", mode="before")
     @classmethod
@@ -427,6 +429,7 @@ def generate_assessment(
             language_code=body.language_code,
             language_label=body.language_label,
             topic_names=body.topic_names,
+            per_topic_config=body.per_topic_config or {},
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
@@ -529,9 +532,31 @@ def get_notebook_template(assessment_id: str, client_id: str | None = Header(Non
         assessment = assessment_service.get_assessment_for_user(aid)
         if not assessment.get("found"):
             raise HTTPException(status_code=404, detail="Assessment not found")
-        
+
+        routing_flag = assessment.get("routing_flag", "pyodide")
+        all_questions = assessment.get("questions", [])
+
+        # For jupyter or mixed assessments: only include *coding* questions from jupyter topics.
+        # MCQ/subjective questions from jupyter topics are answered in the web UI as normal.
+        # For pyodide-only assessments: include all coding questions as before.
+        if routing_flag in ("jupyter", "mixed"):
+            jupyter_topics = set(assessment.get("jupyter_topic_names") or [])
+            notebook_questions = [
+                q for q in all_questions
+                if q.get("type") == "coding"
+                and (
+                    q.get("topic_modality") == "jupyter"
+                    or (q.get("topic_name") and q.get("topic_name") in jupyter_topics)
+                )
+            ]
+            # Fallback for legacy assessments with no topic tagging: include all coding questions
+            if not notebook_questions:
+                notebook_questions = [q for q in all_questions if q.get("type") == "coding"]
+        else:
+            notebook_questions = all_questions
+
         cells = []
-        for i, q in enumerate(assessment.get("questions", [])):
+        for i, q in enumerate(notebook_questions):
             cells.append({
                 "cell_type": "markdown",
                 "metadata": {},

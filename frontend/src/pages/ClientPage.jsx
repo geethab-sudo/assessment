@@ -19,6 +19,8 @@ export default function ClientPage() {
   const [assessment, setAssessment] = useState(null);
   const [answers, setAnswers] = useState({});
   const [result, setResult] = useState(null);
+  // Separate result state for the notebook upload path (used in mixed assessments)
+  const [notebookResult, setNotebookResult] = useState(null);
   const [notebookFile, setNotebookFile] = useState(null);
 
   const [loading, setLoading] = useState(false);
@@ -74,6 +76,7 @@ export default function ClientPage() {
   const handleFetchAssessment = async () => {
     setError(null);
     setResult(null);
+    setNotebookResult(null);
     setLoading(true);
     try {
       const id = assessmentIdInput.trim();
@@ -146,23 +149,57 @@ export default function ClientPage() {
       setError("No questions found in this assessment.");
       return;
     }
+
+    const isMixed = assessment.routing_flag === "mixed";
+    const hasJupyterTopics = isMixed && assessment.jupyter_topic_names?.length > 0;
+
+    // For mixed assessments, warn if no notebook was attached but don't block.
+    if (hasJupyterTopics && !notebookFile) {
+      const proceed = window.confirm(
+        "You haven't selected a Jupyter notebook file yet.\n\n" +
+        "Your in-browser answers will be submitted now, but the Jupyter coding questions won't be graded.\n\n" +
+        "Click OK to submit anyway, or Cancel to attach the notebook first."
+      );
+      if (!proceed) return;
+    }
+
     setLoading(true);
     try {
       const id = assessment.assessment_id;
+
+      // Submit in-browser questions (exclude jupyter coding questions for mixed).
       const payload = {
         assessment_id: id,
         employee_id: empid,
         participant_name: name,
-        answers: assessment.questions.map((q) => ({
-          question_id: q.question_id,
-          answer: answers[String(q.question_id)] ?? "",
-        })),
+        answers: assessment.questions
+          .filter(
+            (q) =>
+              !(isMixed && q.type === "coding" && q.topic_modality === "jupyter")
+          )
+          .map((q) => ({
+            question_id: q.question_id,
+            answer: answers[String(q.question_id)] ?? "",
+          })),
       };
-      const data = await apiFetch("/submit-assessment", {
+      const inBrowserData = await apiFetch("/submit-assessment", {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      setResult(data);
+      setResult(inBrowserData);
+
+      // For mixed assessments, also submit the notebook if the user attached one.
+      if (isMixed && notebookFile) {
+        const formData = new FormData();
+        formData.append("assessment_id", id);
+        formData.append("user_id", `${empid} | ${name}`);
+        formData.append("file", notebookFile);
+        const nbData = await apiFetch("/submit-notebook-assessment", {
+          method: "POST",
+          body: formData,
+        });
+        setNotebookResult(nbData);
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -219,9 +256,9 @@ export default function ClientPage() {
         </div>
       </section>
 
-      {assessment && (assessment.routing_flag === "jupyter" || assessment.questions?.length > 0) && (
+      {assessment && (
         <section className={`card${result ? " card-after-submit" : ""}`}>
-          {assessment.routing_flag === "jupyter" ? (
+        {assessment.routing_flag === "jupyter" ? (
             <div className="jupyter-workspace-panel" style={{ padding: "10px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
                 <span className="pill" style={{ background: "#f37021", color: "#fff", fontWeight: "bold" }}>Jupyter Sandbox</span>
@@ -365,7 +402,58 @@ export default function ClientPage() {
             </div>
           ) : (
             <>
-              <h2>Questions{result ? " — your results" : ""}</h2>
+              {assessment.routing_flag === "mixed" && assessment.jupyter_topic_names?.length > 0 && (
+                <div style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: "16px",
+                  background: "rgba(243,112,33,0.08)",
+                  border: "1px solid rgba(243,112,33,0.35)",
+                  borderRadius: "10px",
+                  padding: "16px 20px",
+                  marginBottom: "24px",
+                  flexWrap: "wrap",
+                }}>
+                  <div style={{ flex: 1, minWidth: "200px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
+                      <span className="pill" style={{ background: "#f37021", color: "#fff", fontWeight: "bold", fontSize: "0.78rem" }}>
+                        Jupyter Required
+                      </span>
+                    </div>
+                    <p style={{ margin: "0 0 6px 0", fontWeight: "600", fontSize: "0.95rem" }}>
+                      The following topics must be completed in a Jupyter Notebook:
+                    </p>
+                    <ul style={{ margin: "0 0 0 16px", padding: 0, fontSize: "0.88rem" }}>
+                      {assessment.jupyter_topic_names.map((name) => (
+                        <li key={name} style={{ marginBottom: "2px" }}>{name}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <a
+                    href={`${import.meta.env.VITE_API_URL || "/api"}/assessment/${encodeURIComponent(assessment.assessment_id)}/template`}
+                    download={`assessment_${assessment.assessment_id}.ipynb`}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      padding: "10px 18px",
+                      borderRadius: "8px",
+                      background: "#f37021",
+                      color: "#fff",
+                      fontWeight: "600",
+                      fontSize: "0.9rem",
+                      textDecoration: "none",
+                      whiteSpace: "nowrap",
+                      alignSelf: "center",
+                    }}
+                  >
+                    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                    </svg>
+                    Download .ipynb
+                  </a>
+                </div>
+              )}
               {assessment.questions.map((q) => {
                 const qr = resultByQid[String(q.question_id)];
                 const qk = String(q.question_id);
@@ -416,6 +504,24 @@ export default function ClientPage() {
                           </label>
                         ))}
                       </div>
+                    ) : q.type === "coding" && q.topic_modality === "jupyter" ? (
+                      <div style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "12px",
+                        padding: "16px 20px",
+                        background: "rgba(243,112,33,0.07)",
+                        border: "1px solid rgba(243,112,33,0.3)",
+                        borderRadius: "8px",
+                        fontSize: "0.9rem",
+                      }}>
+                        <svg width="20" height="20" fill="none" stroke="#f37021" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
+                          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                        </svg>
+                        <span>
+                          Complete this question in the <strong>Jupyter Notebook</strong> — download it from the panel above.
+                        </span>
+                      </div>
                     ) : q.type === "coding" ? (
                       <div className="code-playground" aria-label="Code playground">
                         <header className="code-playground-chrome">
@@ -423,6 +529,9 @@ export default function ClientPage() {
                             <span className="code-playground-chrome-title">Code playground</span>
                             <span className="code-playground-chrome-pill" title="Language mode (Execute uses Python)">
                               {codingMonaco}
+                            </span>
+                            <span className="code-playground-chrome-pill" style={{ opacity: 0.6, fontSize: "0.72rem", fontFamily: "monospace" }} title="Toggle comment on selected lines">
+                              Ctrl+/
                             </span>
                           </div>
                           {catalogLanguages.length > 0 && (
@@ -505,11 +614,68 @@ export default function ClientPage() {
               >
                 {result ? "Submitted" : loading ? "Submitting…" : "Submit answers"}
               </button>
+
+              {assessment.routing_flag === "mixed" && (
+                <div style={{
+                  marginTop: "32px",
+                  padding: "20px 24px",
+                  background: "rgba(243,112,33,0.07)",
+                  border: "1px solid rgba(243,112,33,0.3)",
+                  borderRadius: "10px",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+                    <span className="pill" style={{ background: "#f37021", color: "#fff", fontWeight: "bold", fontSize: "0.78rem" }}>
+                      Jupyter Notebook
+                    </span>
+                    <span style={{ fontWeight: "600", fontSize: "0.95rem" }}>Upload your completed notebook</span>
+                  </div>
+                  <p className="muted small-print" style={{ margin: "0 0 14px 0" }}>
+                    Select your completed <code>.ipynb</code> file below — it will be graded automatically when you click <strong>Submit answers</strong>.
+                  </p>
+                  <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                    <input
+                      type="file"
+                      accept=".ipynb"
+                      id="mixed-notebook-input"
+                      style={{ display: "none" }}
+                      disabled={!!notebookResult}
+                      onChange={(e) => { if (e.target.files?.[0]) setNotebookFile(e.target.files[0]); }}
+                    />
+                    <label htmlFor="mixed-notebook-input" style={{
+                      display: "inline-flex", alignItems: "center", gap: "8px",
+                      padding: "9px 16px", borderRadius: "7px", cursor: notebookResult ? "not-allowed" : "pointer",
+                      background: "rgba(0,0,0,0.06)", fontWeight: "500", fontSize: "0.9rem",
+                      border: "1px solid rgba(0,0,0,0.12)",
+                      opacity: notebookResult ? 0.5 : 1,
+                    }}>
+                      <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                      </svg>
+                      {notebookFile ? notebookFile.name : "Choose .ipynb file"}
+                    </label>
+                    {notebookFile && (
+                      <span style={{ fontSize: "0.85rem", color: "#2a7a2a", fontWeight: "500" }}>
+                        ✓ Ready — will be submitted with your answers
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
             </>
           )}
-          {result && (
+          {result && assessment?.routing_flag !== "mixed" && (
             <p className="muted submit-locked-hint" role="status">
               This assessment has been submitted. Load a different assessment ID to take another test.
+            </p>
+          )}
+          {result && assessment?.routing_flag === "mixed" && notebookResult && (
+            <p className="muted submit-locked-hint" role="status">
+              All sections submitted. Load a different assessment ID to take another test.
+            </p>
+          )}
+          {result && assessment?.routing_flag === "mixed" && !notebookResult && (
+            <p className="muted submit-locked-hint" role="status">
+              In-browser questions submitted. Jupyter notebook was not included — load a new assessment ID to retry.
             </p>
           )}
         </section>
@@ -517,7 +683,9 @@ export default function ClientPage() {
 
       {result && (
         <section className="card result-card">
-          <h2 className="result-card-title">Results</h2>
+          <h2 className="result-card-title">
+            Results{assessment?.routing_flag === "mixed" ? " — In-browser questions" : ""}
+          </h2>
           <div className="result-summary">
             <div className="result-score-block">
               <span className="result-score-label">Average score</span>
@@ -534,6 +702,29 @@ export default function ClientPage() {
           <div className="result-feedback">
             <h3 className="result-feedback-title">Feedback</h3>
             <pre className="result-feedback-body">{result.feedback}</pre>
+          </div>
+        </section>
+      )}
+
+      {notebookResult && (
+        <section className="card result-card">
+          <h2 className="result-card-title">Results — Jupyter notebook</h2>
+          <div className="result-summary">
+            <div className="result-score-block">
+              <span className="result-score-label">Average score</span>
+              <div className="result-score-row">
+                <span className="result-score-value">{notebookResult.score}</span>
+                <span className="result-score-suffix">/ 100</span>
+              </div>
+            </div>
+            <div className="result-meta">
+              <span className="result-meta-label">Questions graded</span>
+              <span className="result-meta-value">{notebookResult.questions_graded}</span>
+            </div>
+          </div>
+          <div className="result-feedback">
+            <h3 className="result-feedback-title">Feedback</h3>
+            <pre className="result-feedback-body">{notebookResult.feedback}</pre>
           </div>
         </section>
       )}

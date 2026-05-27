@@ -69,6 +69,7 @@ def init_db() -> None:
     _ensure_assessments_created_at_column(eng)
     _ensure_modality_and_routing_columns(eng)
     _ensure_raw_notebook_column(eng)
+    _ensure_question_topic_name_column(eng)
 
 
 def _ensure_raw_notebook_column(eng) -> None:
@@ -181,6 +182,27 @@ def _ensure_modality_and_routing_columns(eng) -> None:
                         WHERE table_name = 'submissions' AND column_name = 'routing_flag'
                     ) THEN
                         ALTER TABLE submissions ADD COLUMN routing_flag VARCHAR(32) NOT NULL DEFAULT 'pyodide';
+                    END IF;
+                END $$;
+                """
+            )
+        )
+
+
+def _ensure_question_topic_name_column(eng) -> None:
+    """Add topic_name to assessment_questions for per-topic question attribution."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessment_questions' AND column_name = 'topic_name'
+                    ) THEN
+                        ALTER TABLE assessment_questions
+                        ADD COLUMN topic_name VARCHAR(512) NOT NULL DEFAULT '';
                     END IF;
                 END $$;
                 """

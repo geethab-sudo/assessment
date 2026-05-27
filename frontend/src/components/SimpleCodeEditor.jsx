@@ -59,19 +59,64 @@ export default function SimpleCodeEditor({
   }, [value]);
 
   const handleKeyDown = (e) => {
-    if (e.key === "Tab") {
-      e.preventDefault();
-      const val = textareaRef.current.value;
-      const start = textareaRef.current.selectionStart;
-      const end = textareaRef.current.selectionEnd;
-      const spaces = "    "; // 4 spaces
-      const newValue = val.substring(0, start) + spaces + val.substring(end);
-      onChange(newValue);
+    const ta = textareaRef.current;
 
-      // Reset selection cursor (we need to defer it slightly so React state updates first)
+    // Tab → insert 4 spaces
+    if (e.key === "Tab" && !e.shiftKey) {
+      e.preventDefault();
+      const val = ta.value;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const spaces = "    ";
+      onChange(val.substring(0, start) + spaces + val.substring(end));
       setTimeout(() => {
-        if (textareaRef.current) {
-          textareaRef.current.selectionStart = textareaRef.current.selectionEnd = start + spaces.length;
+        if (ta) ta.selectionStart = ta.selectionEnd = start + spaces.length;
+      }, 0);
+      return;
+    }
+
+    // Ctrl+/ or Cmd+/ → toggle line comment
+    if ((e.ctrlKey || e.metaKey) && e.key === "/") {
+      e.preventDefault();
+      const val = ta.value;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+
+      // Expand selection to full line boundaries
+      const lineStart = val.lastIndexOf("\n", start - 1) + 1;
+      const lineEndRaw = val.indexOf("\n", end);
+      const lineEnd = lineEndRaw === -1 ? val.length : lineEndRaw;
+
+      const block = val.substring(lineStart, lineEnd);
+      const lines = block.split("\n");
+
+      // If every non-empty line already starts with #, uncomment; otherwise comment
+      const allCommented = lines.every(
+        (l) => l.trim() === "" || l.trimStart().startsWith("#")
+      );
+
+      let newBlock;
+      if (allCommented) {
+        newBlock = lines
+          .map((l) => {
+            const trimmed = l.trimStart();
+            const indent = l.slice(0, l.length - trimmed.length);
+            if (trimmed.startsWith("# ")) return indent + trimmed.slice(2);
+            if (trimmed.startsWith("#")) return indent + trimmed.slice(1);
+            return l;
+          })
+          .join("\n");
+      } else {
+        newBlock = lines.map((l) => (l === "" ? l : "# " + l)).join("\n");
+      }
+
+      onChange(val.substring(0, lineStart) + newBlock + val.substring(lineEnd));
+
+      // Restore selection to cover the whole modified block
+      setTimeout(() => {
+        if (ta) {
+          ta.selectionStart = lineStart;
+          ta.selectionEnd = lineStart + newBlock.length;
         }
       }, 0);
     }

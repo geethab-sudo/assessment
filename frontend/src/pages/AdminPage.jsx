@@ -323,6 +323,21 @@ export default function AdminPage() {
           throw new Error("Could not build topic text for the API.");
         }
       }
+      // Build per_topic_config when using per-topic allocation mode
+      let per_topic_config = {};
+      if (topicMode === "catalog" && allocationMode === "per-topic" && selectedTopicIds.length > 0) {
+        for (const id of selectedTopicIds) {
+          const row = topicById[String(id)];
+          if (!row) continue;
+          const counts = perTopicCounts[id] || { mcq: 0, coding: 0, subjective: 0 };
+          per_topic_config[row.name] = {
+            mcq: counts.mcq || 0,
+            coding: counts.coding || 0,
+            subjective: counts.subjective || 0,
+          };
+        }
+      }
+
       const data = await apiFetch("/generate-assessment", {
         method: "POST",
         authRole: "admin",
@@ -334,6 +349,7 @@ export default function AdminPage() {
           ...(languageCodeForGenerate ? { language_code: languageCodeForGenerate } : {}),
           ...(languageNameForGenerate ? { language_label: languageNameForGenerate } : {}),
           topic_names: topicNamesForGenerate,
+          ...(Object.keys(per_topic_config).length > 0 ? { per_topic_config } : {}),
         }),
       });
       setGeneratedId(data.assessment_id);
