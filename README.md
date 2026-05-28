@@ -2,17 +2,18 @@
 
 Web application for generating and delivering technical assessments. Administrators use an LLM (Groq) to create question sets from a language/topic catalog; participants take tests in the browser with optional in-browser Python execution (Pyodide) or a downloadable Jupyter Notebook for topics that require a live runtime environment.
 
-Persistence is **PostgreSQL** (SQLAlchemy). Legacy CSV storage under `data/` has been removed.
+Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema migrations automatically on startup — no manual migration steps needed.
 
 ## Features
 
-- **Admin**: Sign in with a configured password; generate assessments (MCQ, coding, subjective); manage catalog languages/topics; browse assessments (language, topics, added date); delete assessments; review submissions.
-- **Participant**: Open a test with employee ID, name, and assessment ID (no account required for shared assessments).
-- **Grading**: Answers scored via Groq with per-question feedback; MCQ correctness uses stored answers when applicable. Notebook submissions are graded cell-by-cell.
-- **Coding questions**: Code editor with catalog language selection; run Python in the browser via Pyodide.
-- **Jupyter Notebook mode**: Topics that require a live environment (e.g. live API calls, async HTTP, real database sessions) are delivered as a downloadable `.ipynb` template. Participants solve it locally and upload the completed notebook for LLM grading.
-- **Mixed assessments**: A single assessment can contain both in-browser (Pyodide) questions and Jupyter-required questions side-by-side.
-- **Per-topic question allocation**: Admins can set independent MCQ/coding/subjective counts for each topic in one assessment, and the backend generates questions per topic (one LLM call per topic) so each question is tagged to its originating topic.
+- **Admin portal**: Sign in with a configured password; generate assessments (MCQ, coding, subjective); manage catalog languages/topics; browse all assessments (language, topics, date); delete assessments; review participant submissions.
+- **Participant portal**: Open a test with employee ID, name, and assessment ID — no account required for shared assessments.
+- **Pyodide coding questions**: In-browser Python execution with a full code editor. Participants write and run code without leaving the page.
+- **Jupyter Notebook mode**: Topics that need a live runtime (live API calls, async HTTP, real DB sessions) are delivered as a downloadable `.ipynb` template. Participants solve it locally and submit the completed notebook for LLM grading.
+- **Mixed assessments**: One assessment can contain both Pyodide and Jupyter questions side-by-side. A single **Submit answers** button handles both — in-browser questions are graded directly and the attached notebook is graded in the same request.
+- **Per-topic question allocation**: Admins can set independent MCQ/coding/subjective counts per topic. The backend calls the LLM once per topic and tags every question with its originating topic, enabling correct per-question routing.
+- **LLM grading**: All answers (MCQ, coding, subjective, notebook cells) are scored via Groq with per-question written feedback.
+- **Code editor**: Tab indentation, `Ctrl+/` comment toggling, syntax highlighting, and per-question language override.
 
 ## Tech stack
 
@@ -21,6 +22,7 @@ Persistence is **PostgreSQL** (SQLAlchemy). Legacy CSV storage under `data/` has
 | Backend | FastAPI, SQLAlchemy 2, PostgreSQL, PyJWT |
 | Frontend | React 18, Vite 6, React Router |
 | LLM | Groq (OpenAI-compatible API) |
+| In-browser Python | Pyodide |
 
 ## Prerequisites
 
@@ -54,7 +56,7 @@ docker compose up -d
 
 Default host port is **5433** (see `POSTGRES_PORT` in `.env.example`) to avoid clashing with a local Postgres on 5432.
 
-Tables are created automatically on API startup (`init_db()`). All schema migrations (new columns for modality, routing, notebook storage, topic attribution) are applied idempotently on each startup — no manual migration steps needed.
+Tables and all schema columns are created automatically on API startup (`init_db()`). Migrations are idempotent — safe to restart at any time.
 
 ### 3. Seed catalog
 
@@ -65,7 +67,7 @@ pip install -r requirements.txt
 python scripts/seed_sample_catalog.py
 ```
 
-The seed script populates the catalog with Python topics (Tier 1 and Tier 2), Java, Node.js, and general English CS topics. It is **idempotent** — safe to re-run; existing rows are updated, not duplicated.
+Populates Python (Tier 1 + Tier 2), Java, Node.js, and general English CS topics. The script is **idempotent** — safe to re-run.
 
 ### 4. Backend
 
@@ -94,9 +96,35 @@ npm run dev
 1. Open http://localhost:5173/login/admin  
 2. Use the password from `ADMIN_PASSWORD` in `.env`
 
-## Python catalog: Tier 1 and Tier 2 topics
+## Participant workflow
 
-The `py` language catalog has been expanded and divided into two tiers:
+### Pyodide-only assessment
+
+1. Open the participant page and enter employee ID, name, and assessment ID.
+2. Answer MCQ questions and write/run Python code in the in-browser Pyodide terminal.
+3. Click **Submit answers** — all questions are graded immediately and a score card with per-question feedback appears.
+
+### Jupyter-only assessment
+
+1. Open the participant page and load the assessment.
+2. Click **Download .ipynb** to get the notebook template (one markdown question cell + one empty code cell per question).
+3. Solve the notebook locally in JupyterLab / VS Code / Google Colab.
+4. Select the completed `.ipynb` file using the file picker on the page.
+5. Click **Submit answers** — the notebook is graded cell-by-cell and a score card with per-cell feedback appears.
+
+### Mixed assessment
+
+1. Open the participant page and load the assessment.
+2. Answer MCQ questions in the web UI.
+3. Write code for Pyodide topics directly in the in-browser terminal.
+4. For Jupyter topics, a **"Jupyter Required"** banner lists which topics need the notebook. Click **Download .ipynb** to get the template; solve it locally.
+5. Select the completed `.ipynb` file using the file picker at the bottom of the page.
+6. Click **Submit answers** once — in-browser questions and the notebook are both submitted and graded in the same action.
+7. Two result cards appear: one for in-browser questions, one for the Jupyter notebook.
+
+> If you click Submit without attaching a notebook, a confirmation dialog warns you so you can cancel and attach it first.
+
+## Python catalog: Tier 1 and Tier 2 topics
 
 ### Tier 1 — Core Python (evaluated in-browser via Pyodide)
 
@@ -137,8 +165,8 @@ Assessments are automatically routed based on the topics selected:
 | `routing_flag` | Meaning | Participant experience |
 |----------------|---------|----------------------|
 | `pyodide` | All topics use in-browser execution | Regular questions + Pyodide terminal |
-| `jupyter` | All topics require a live environment | Download `.ipynb` template → solve locally → upload |
-| `mixed` | Mix of pyodide and jupyter topics | All questions shown; Pyodide terminal for pyodide coding questions; "Complete in Jupyter Notebook" placeholder for jupyter coding questions; download + upload panel displayed |
+| `jupyter` | All topics require a live environment | Download `.ipynb` template → solve locally → submit |
+| `mixed` | Mix of pyodide and jupyter topics | All questions shown; Pyodide terminal for pyodide coding questions; "Complete in Jupyter Notebook" placeholder for jupyter coding questions; download + submit panel included |
 
 MCQ and subjective questions from jupyter-modality topics are always answered in the web UI — only **coding** questions from jupyter topics go into the downloadable notebook.
 
@@ -152,32 +180,42 @@ When generating an assessment with multiple catalog topics, admins can switch to
 - On generation, the backend calls the LLM **separately for each topic**, tagging every question with its originating topic name.
 - This enables correct routing: questions from `jupyter` topics are sent to the notebook; questions from `pyodide` topics use the in-browser terminal.
 
-## Jupyter Notebook workflow
+## Jupyter Notebook internals
 
-### Generating a notebook template
+### Template generation
 
-When an assessment contains jupyter-modality topics, a **Download .ipynb** button appears on the participant page. The template is generated by `GET /assessment/{id}/template` and contains only the coding questions from jupyter topics (one Markdown cell with the question, one empty code cell for the answer).
+`GET /assessment/{id}/template` builds a `.ipynb` with one markdown cell (question text) followed by one empty code cell (student answer) for each **coding** question from a jupyter-modality topic. MCQ and subjective questions from jupyter topics are excluded from the notebook — they are answered in the web UI.
 
-### Submitting a completed notebook
+### Notebook grading
 
-For **mixed** assessments, the participant selects their solved `.ipynb` file via the file picker on the assessment page, then clicks **Submit answers** once — the in-browser questions and the notebook are graded in the same request. No separate upload button is needed.
+`notebook_service.py` parses the submitted notebook and pairs each markdown question cell with the immediately following code cell:
 
-For **jupyter-only** assessments, the upload is also triggered by the single Submit button.
+```
+[markdown: question text] → [code: student answer] → repeat
+```
 
-The backend (`notebook_service.py`) pairs each markdown question cell with the immediately following code cell (the template structure is `[markdown: question] → [code: answer] → repeat`). Blank trailing code cells with no associated question are skipped automatically. Each pair is graded individually by the LLM; a combined score and per-cell feedback are returned and stored as a submission row.
+- Blank trailing code cells with no associated markdown question are silently skipped (Jupyter always appends an empty cell at the bottom).
+- Each question/answer pair is graded individually by the LLM.
+- A combined score and per-cell feedback string are stored as a submission row and returned to the participant.
 
-## Code editor improvements
+## Code editor
 
-- **Python syntax highlighting** via Monaco language mapping (`monacoLanguageMap.js`).
-- **Copy/paste support** and **Tab key indentation** in the in-browser code editor (`SimpleCodeEditor`).
-- **Comment toggling** (`Ctrl+/` on Windows/Linux, `Cmd+/` on macOS): selects the current line (or all selected lines) and toggles the `# ` prefix, preserving indentation and detecting mixed-comment state.
-- Language override selector per coding question so participants can switch syntax mode independently of the assessment default.
+The in-browser code editor (`SimpleCodeEditor`) provides a comfortable Python editing experience:
+
+| Shortcut | Action |
+|----------|--------|
+| `Tab` | Insert 4-space indent (or indent selected lines) |
+| `Shift+Tab` | Dedent selected lines |
+| `Ctrl+/` / `Cmd+/` | Toggle `# ` comment on current line or all selected lines |
+| Standard clipboard | Copy / paste works normally |
+
+Syntax mode is set from the catalog language of the assessment and can be overridden per coding question via the language selector.
 
 ## Port conflicts
 
 If another app already uses **8000** or **5173**, you may see the wrong API or UI.
 
-- Confirm the API: `curl -s http://127.0.0.1:8000/openapi.json` should report title **AI Assessment API** and include `/auth/login`.
+- Confirm the API: `curl -s http://127.0.0.1:8000/openapi.json` should report title **AI Assessment API**.
 - Run the backend on another port, e.g. `uvicorn app:app --reload --port 8010`, then:
 
   ```bash
@@ -198,27 +236,28 @@ Serve `frontend/dist` behind your reverse proxy and point `/api` to the FastAPI 
 
 ```
 assessment/
-├── app.py                      # FastAPI routes and validation
+├── app.py                      # FastAPI routes and request validation
 ├── services/
-│   ├── assessment_service.py   # LLM orchestration, per-topic generation
+│   ├── assessment_service.py   # LLM orchestration, per-topic generation, routing
 │   ├── auth_service.py
 │   ├── catalog_service.py
 │   ├── db_service.py           # PostgreSQL read/write, routing flag logic
-│   ├── database.py             # Engine, session, idempotent migrations
-│   ├── llm_service.py
-│   ├── models.py               # SQLAlchemy ORM (incl. modality, routing_flag, topic_name)
-│   └── notebook_service.py     # Jupyter notebook parsing, cell grading
-├── frontend/                   # React SPA
+│   ├── database.py             # Engine, session factory, idempotent migrations
+│   ├── llm_service.py          # Groq wrappers for generation and grading
+│   ├── models.py               # SQLAlchemy ORM (modality, routing_flag, topic_name)
+│   └── notebook_service.py     # Jupyter parsing, markdown↔code pairing, cell grading
+├── frontend/                   # React SPA (Vite)
 │   └── src/
 │       ├── components/
-│       │   └── SimpleCodeEditor.jsx   # Monaco-based editor (Tab, copy/paste)
+│       │   ├── SimpleCodeEditor.jsx   # Code editor (Tab, Ctrl+/, syntax highlight)
+│       │   └── PythonRunPanel.jsx     # Pyodide execution panel
 │       └── pages/
 │           ├── AdminPage.jsx          # Generate assessment (per-topic allocation)
 │           ├── AdminCatalogPage.jsx   # Manage languages and topics
 │           └── ClientPage.jsx         # Take assessment (Pyodide + Jupyter mixed)
 ├── scripts/
 │   ├── seed_sample_catalog.py         # Seed Python Tier 1/2, Java, Node.js catalog
-│   └── cleanup_python_topics.py      # Standalone script to remove legacy Python topics
+│   └── cleanup_python_topics.py      # Remove legacy Python topics
 ├── docker-compose.yml          # PostgreSQL only
 ├── requirements.txt
 └── .env.example
@@ -245,7 +284,7 @@ assessment/
 | `GET /admin/assessments` | Admin | List assessments (includes `routing_flag`) |
 | `DELETE /admin/assessments/{id}` | Admin | Delete assessment |
 | `GET /assessment/{id}` | Public* | Questions with `topic_modality` per question |
-| `POST /submit-assessment` | Public* | Submit and grade (Pyodide questions) |
+| `POST /submit-assessment` | Public* | Submit and grade in-browser questions (Pyodide + MCQ) |
 | `GET /assessment/{id}/template` | Public* | Download `.ipynb` template (jupyter coding questions only) |
 | `POST /submit-notebook-assessment` | Public* | Upload and grade completed `.ipynb` |
 
