@@ -10,6 +10,7 @@ from typing import Any
 
 from services import db_service
 from services.llm_service import evaluate_answers, generate_questions
+from services.shuffle_service import apply_participant_shuffle
 import uuid
 
 
@@ -190,9 +191,21 @@ def _build_per_topic_strings(topic_names: list[str]) -> dict[str, str]:
     return result
 
 
-def get_assessment_for_user(assessment_id: str) -> dict[str, Any]:
+def get_assessment_for_user(
+    assessment_id: str,
+    *,
+    employee_id: str | None = None,
+) -> dict[str, Any]:
     """
     Return assessment metadata and questions without revealing correct answers.
+
+    The ``*`` in the signature makes ``employee_id`` keyword-only: callers must pass
+    ``employee_id="E1001"``, not as a second positional argument. That keeps
+    ``assessment_id`` unambiguous and avoids mistakes if more optional params are added.
+
+    When ``employee_id`` is provided, question order and MCQ option order are
+    shuffled deterministically for that participant (assessment_id + employee_id).
+    Admin preview and notebook templates should omit ``employee_id`` for canonical order.
     """
     meta = db_service.get_assessment_metadata(assessment_id)
     rows = db_service.read_questions_by_assessment(assessment_id)
@@ -245,6 +258,11 @@ def get_assessment_for_user(assessment_id: str) -> dict[str, Any]:
         else:
             item["options"] = []
         questions_out.append(item)
+
+    if employee_id and employee_id.strip():
+        questions_out = apply_participant_shuffle(
+            assessment_id, employee_id.strip(), questions_out
+        )
 
     return {
         "assessment_id": assessment_id,

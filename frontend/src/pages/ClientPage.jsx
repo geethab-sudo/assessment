@@ -4,6 +4,7 @@ import { apiFetch } from "../api";
 import SimpleCodeEditor from "../components/SimpleCodeEditor.jsx";
 import PythonRunPanel from "../components/PythonRunPanel.jsx";
 import { catalogCodeToMonaco } from "../lib/monacoLanguageMap.js";
+import { participantQuestionLabel } from "../lib/participantQuestionLabels.js";
 
 export default function ClientPage() {
   const location = useLocation();
@@ -80,8 +81,13 @@ export default function ClientPage() {
     setLoading(true);
     try {
       const id = assessmentIdInput.trim();
+      const empid = employeeId.trim();
       if (!id) throw new Error("Enter an assessment ID.");
-      const data = await apiFetch(`/assessment/${encodeURIComponent(id)}`);
+      if (!empid) throw new Error("Enter your employee ID before loading the test.");
+      const params = new URLSearchParams({ employee_id: empid });
+      const data = await apiFetch(
+        `/assessment/${encodeURIComponent(id)}?${params.toString()}`
+      );
       setAssessment(data);
       setAnswers({});
       setCodeLangByQid({});
@@ -214,7 +220,8 @@ export default function ClientPage() {
         <h1>Take assessment</h1>
         <p className="muted">
           Enter your employee ID, name, and the assessment ID you were given, then load the test.
-          After you submit, this attempt is locked. No sign-in is required.
+          Question and MCQ option order are personalized to your employee ID. After you submit,
+          this attempt is locked. No sign-in is required.
         </p>
 
       </header>
@@ -250,7 +257,11 @@ export default function ClientPage() {
               placeholder="paste the assessment id"
             />
           </label>
-          <button type="button" onClick={handleFetchAssessment} disabled={loading}>
+          <button
+            type="button"
+            onClick={handleFetchAssessment}
+            disabled={loading || !employeeId.trim()}
+          >
             Load test
           </button>
         </div>
@@ -454,7 +465,12 @@ export default function ClientPage() {
                   </a>
                 </div>
               )}
-              {assessment.questions.map((q) => {
+              {assessment.questions.map((q, questionIndex) => {
+                const totalQuestions = assessment.questions.length;
+                const displayLabel = participantQuestionLabel(
+                  questionIndex + 1,
+                  totalQuestions
+                );
                 const qr = resultByQid[String(q.question_id)];
                 const qk = String(q.question_id);
                 const codingMonaco =
@@ -467,7 +483,7 @@ export default function ClientPage() {
                   <div key={String(q.question_id)} className="question">
                     <div className="qhead">
                       <span className="pill">{q.type}</span>
-                      <span className="muted">Q{q.question_id}</span>
+                      <span className="muted">{displayLabel}</span>
                       {result && qr != null && (
                         <span
                           className={`result-tick ${qr.correct ? "correct" : "wrong"}`}
@@ -481,7 +497,7 @@ export default function ClientPage() {
                     </div>
                     <p className="question-stem">{q.question}</p>
                     {q.type === "mcq" && Array.isArray(q.options) ? (
-                      <div className="options" role="group" aria-label={`Question ${q.question_id} choices`}>
+                      <div className="options" role="group" aria-label={`${displayLabel} choices`}>
                         {q.options.map((opt, idx) => (
                           <label
                             key={`${q.question_id}-${idx}`}
@@ -603,6 +619,22 @@ export default function ClientPage() {
                         spellCheck={false}
                       />
                     )}
+                    {result && qr != null && (
+                      <div
+                        className={`question-feedback${qr.correct ? " question-feedback--correct" : " question-feedback--wrong"}`}
+                        role="status"
+                      >
+                        <div className="question-feedback-header">
+                          <span className="question-feedback-label">Feedback</span>
+                          <span className="question-feedback-score">{qr.score}/100</span>
+                        </div>
+                        {qr.feedback ? (
+                          <p className="question-feedback-body">{qr.feedback}</p>
+                        ) : (
+                          <p className="question-feedback-body muted">No feedback for this question.</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -699,10 +731,9 @@ export default function ClientPage() {
               <span className="result-meta-value">{result.questions_graded}</span>
             </div>
           </div>
-          <div className="result-feedback">
-            <h3 className="result-feedback-title">Feedback</h3>
-            <pre className="result-feedback-body">{result.feedback}</pre>
-          </div>
+          <p className="muted small-print result-feedback-hint">
+            See feedback under each question above.
+          </p>
         </section>
       )}
 

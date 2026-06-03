@@ -446,8 +446,11 @@ def public_list_languages() -> dict[str, Any]:
 
 
 @app.get("/assessment/{assessment_id}")
-def get_assessment(assessment_id: str) -> dict[str, Any]:
-    """Public: fetch questions (no correct answers). Shared assessments only without client token."""
+def get_assessment(
+    assessment_id: str,
+    employee_id: str | None = None,
+) -> dict[str, Any]:
+    """Public: fetch questions (no correct answers). Pass employee_id for per-participant shuffle."""
     try:
         aid = assessment_id.strip()
         if not db_service.client_may_access_assessment(aid, None):
@@ -455,7 +458,8 @@ def get_assessment(assessment_id: str) -> dict[str, Any]:
                 status_code=403,
                 detail="This assessment is not available for open access.",
             )
-        data = assessment_service.get_assessment_for_user(aid)
+        eid = (employee_id or "").strip() or None
+        data = assessment_service.get_assessment_for_user(aid, employee_id=eid)
         if not data.get("found"):
             raise HTTPException(status_code=404, detail="Assessment not found")
         return data

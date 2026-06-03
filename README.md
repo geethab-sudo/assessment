@@ -124,6 +124,21 @@ npm run dev
 
 > If you click Submit without attaching a notebook, a confirmation dialog warns you so you can cancel and attach it first.
 
+## Per-participant randomization (anti-cheating)
+
+When a participant loads an assessment, they must enter their **employee ID** first. The API shuffles:
+
+- **Question order** on the web UI (MCQ, Pyodide coding, subjective, Jupyter placeholders)
+- **MCQ option order** (letters A/B/C/D follow the shuffled list; grading still uses the option text)
+
+The shuffle seed is `assessment_id + employee_id` only (participant name is **not** used, so spelling variations do not change the layout). The same employee ID always sees the same order on reload.
+
+Participants see **Question 3 of 7** (position in their shuffled list), not internal `Q1` / `Q4` IDs. After submit, feedback appears **under each question card** (score + comment), not in one combined block. Admin preview and submissions review keep **Q1, Q2, Q3…** by `question_id` for debugging.
+
+**Not randomized:** Jupyter `.ipynb` template download order (canonical order for coding tasks in the notebook).
+
+Admin preview and `GET /assessment/{id}/template` omit `employee_id` and return canonical order.
+
 ## Python catalog: Tier 1 and Tier 2 topics
 
 ### Tier 1 — Core Python (evaluated in-browser via Pyodide)
@@ -245,7 +260,8 @@ assessment/
 │   ├── database.py             # Engine, session factory, idempotent migrations
 │   ├── llm_service.py          # Groq wrappers for generation and grading
 │   ├── models.py               # SQLAlchemy ORM (modality, routing_flag, topic_name)
-│   └── notebook_service.py     # Jupyter parsing, markdown↔code pairing, cell grading
+│   ├── notebook_service.py     # Jupyter parsing, markdown↔code pairing, cell grading
+│   └── shuffle_service.py      # Per-participant question/MCQ option shuffle
 ├── frontend/                   # React SPA (Vite)
 │   └── src/
 │       ├── components/
@@ -283,12 +299,18 @@ assessment/
 | `POST /generate-assessment` | Admin | Create assessment via LLM (supports `per_topic_config`) |
 | `GET /admin/assessments` | Admin | List assessments (includes `routing_flag`) |
 | `DELETE /admin/assessments/{id}` | Admin | Delete assessment |
-| `GET /assessment/{id}` | Public* | Questions with `topic_modality` per question |
+| `GET /assessment/{id}?employee_id=…` | Public* | Questions with `topic_modality`; shuffled per employee ID |
 | `POST /submit-assessment` | Public* | Submit and grade in-browser questions (Pyodide + MCQ) |
 | `GET /assessment/{id}/template` | Public* | Download `.ipynb` template (jupyter coding questions only) |
 | `POST /submit-notebook-assessment` | Public* | Upload and grade completed `.ipynb` |
 
 \*Shared assessments only without client token; client-scoped assessments require client JWT.
+
+## Future roadmap
+
+| Goal | Notes |
+|------|--------|
+| **MCQ code snippets as formatted blocks** | When a generated MCQ embeds Python (or other code) in the question stem, render it in a syntax-highlighted code block—not as one long inline sentence. Detect code in stems at display time and/or steer the LLM prompt to emit a separate `code` field. |
 
 ## License
 
