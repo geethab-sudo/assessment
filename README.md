@@ -18,6 +18,7 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 - **Per-participant shuffle**: Deterministic question and MCQ option order from `assessment_id + employee_id`; display **Question N of M**; per-question feedback under each card after submit.
 - **LLM grading**: All answers (MCQ, coding, subjective, notebook cells) are scored via Groq with per-question written feedback.
 - **Code editor**: Tab indentation, `Ctrl+/` comment toggling, syntax highlighting, and per-question language override.
+- **Shell-style coding (venv topic)**: Catalog topics can set `coding_editor_language` to `shell` or `powershell` so coding answers use a Bash/PowerShell editor only (no Pyodide console) — used for **Packaging and virtual environments (venv)** in Python Tier 1.
 
 ## Documentation
 
@@ -257,6 +258,16 @@ See [docs/timed-assessments.md](docs/timed-assessments.md).
 
 Syntax mode follows the assessment catalog language; participants can override per coding question.
 
+### Shell commands (venv / packaging topic)
+
+For topics with `coding_editor_language` set on the catalog row (seeded for **Tier 1 - Packaging and virtual environments (venv)**):
+
+- Coding questions show a **Shell commands** editor (full width) with Bash or PowerShell syntax highlighting.
+- Participants switch **Bash / sh** vs **PowerShell** via the Shell dropdown; there is no in-browser terminal or Execute button.
+- Answers are shell command text, graded by the LLM on submit (generation prompts steer away from Python scripts for venv setup).
+
+After pulling this feature, re-run `python scripts/seed_sample_catalog.py` so existing DB topics get `coding_editor_language: shell`.
+
 ## Port conflicts
 
 If another app already uses **8000** or **5173**:
@@ -296,6 +307,7 @@ assessment/
 │   ├── notebook_plan_service.py # notebook_expected, derive_per_topic_config
 │   ├── notebook_service.py     # Jupyter parsing and cell grading
 │   └── shuffle_service.py      # Per-participant shuffle
+├── frontend/src/lib/shellEditor.js  # Bash/PowerShell topic editor helpers
 ├── tests/
 │   ├── test_notebook_plan_service.py
 │   ├── test_attempt_service.py
