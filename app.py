@@ -103,6 +103,9 @@ class GenerateAssessmentBody(BaseModel):
     topic_names: list[str] = Field(default_factory=list)
     #: Per-topic question counts: { "Topic name": { "mcq": 1, "coding": 1, "subjective": 0 } }
     per_topic_config: dict[str, dict[str, int]] = Field(default_factory=dict)
+    is_timed: bool = False
+    duration_minutes: int | None = Field(default=None, ge=1)
+    notebook_grace_minutes: int | None = Field(default=None, ge=0)
 
     @field_validator("topic", mode="before")
     @classmethod
@@ -201,6 +204,11 @@ class GenerateAssessmentBody(BaseModel):
         for t, n in self.questions_per_type.items():
             if n < 1 or n > 30:
                 raise ValueError(f"Count for {t} must be between 1 and 30 (got {n})")
+        if self.is_timed and self.duration_minutes is None:
+            raise ValueError("duration_minutes is required when is_timed is true")
+        if not self.is_timed:
+            object.__setattr__(self, "duration_minutes", None)
+            object.__setattr__(self, "notebook_grace_minutes", None)
         return self
 
 
@@ -430,6 +438,9 @@ def generate_assessment(
             language_label=body.language_label,
             topic_names=body.topic_names,
             per_topic_config=body.per_topic_config or {},
+            is_timed=body.is_timed,
+            duration_minutes=body.duration_minutes,
+            notebook_grace_minutes=body.notebook_grace_minutes,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
@@ -487,10 +498,14 @@ def submit_assessment(body: SubmitAssessmentBody) -> dict[str, Any]:
             assessment_id=aid,
             user_id=user_label,
             answers=answers_payload,
+            employee_id=body.employee_id.strip(),
             submitter_client_id=None,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        msg = str(e)
+        if "expired" in msg.lower() or "attempt" in msg.lower():
+            raise HTTPException(status_code=403, detail=msg) from e
+        raise HTTPException(status_code=400, detail=msg) from e
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
@@ -519,7 +534,10 @@ async def submit_notebook_assessment(
         )
         return result
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        msg = str(e)
+        if "expired" in msg.lower() or "grace" in msg.lower() or "attempt" in msg.lower():
+            raise HTTPException(status_code=403, detail=msg) from e
+        raise HTTPException(status_code=400, detail=msg) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -533,31 +551,28 @@ def get_notebook_template(assessment_id: str, client_id: str | None = Header(Non
                 status_code=403,
                 detail="This assessment is not available for open access.",
             )
-        assessment = assessment_service.get_assessment_for_user(aid)
-        if not assessment.get("found"):
+        rows = db_service.read_questions_by_assessment(aid)
+        if not rows:
             raise HTTPException(status_code=404, detail="Assessment not found")
 
-        routing_flag = assessment.get("routing_flag", "pyodide")
-        all_questions = assessment.get("questions", [])
+        from services.notebook_plan_service import notebook_plan_for_assessment
 
-        # For jupyter or mixed assessments: only include *coding* questions from jupyter topics.
-        # MCQ/subjective questions from jupyter topics are answered in the web UI as normal.
-        # For pyodide-only assessments: include all coding questions as before.
-        if routing_flag in ("jupyter", "mixed"):
-            jupyter_topics = set(assessment.get("jupyter_topic_names") or [])
-            notebook_questions = [
-                q for q in all_questions
-                if q.get("type") == "coding"
-                and (
-                    q.get("topic_modality") == "jupyter"
-                    or (q.get("topic_name") and q.get("topic_name") in jupyter_topics)
-                )
-            ]
-            # Fallback for legacy assessments with no topic tagging: include all coding questions
-            if not notebook_questions:
-                notebook_questions = [q for q in all_questions if q.get("type") == "coding"]
-        else:
-            notebook_questions = all_questions
+        plan = notebook_plan_for_assessment(aid)
+        if not plan["notebook_expected"]:
+            raise HTTPException(
+                status_code=404,
+                detail="This assessment does not require a Jupyter notebook.",
+            )
+        if not plan["notebook_ready"]:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This assessment expects notebook coding questions, but none are "
+                    "available in the template. Regenerate the assessment."
+                ),
+            )
+
+        notebook_questions = assessment_service.get_notebook_template_questions(aid)
 
         cells = []
         for i, q in enumerate(notebook_questions):

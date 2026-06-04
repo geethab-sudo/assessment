@@ -10,7 +10,17 @@ from typing import Any
 
 from services import db_service
 from services.llm_service import evaluate_answers, generate_questions
+from services import attempt_service
 from services.shuffle_service import apply_participant_shuffle
+from services.notebook_plan_service import (
+    derive_per_topic_config,
+    notebook_plan_for_assessment,
+    notebook_plan_from_rows,
+    resolve_question_modality,
+    validate_notebook_plan_after_generation,
+)
+from services.database import get_session_factory
+from services.models import Assessment
 import uuid
 
 
@@ -59,6 +69,9 @@ def create_assessment(
     language_label: str | None = None,
     topic_names: list[str] | None = None,
     per_topic_config: dict[str, dict[str, int]] | None = None,
+    is_timed: bool = False,
+    duration_minutes: int | None = None,
+    notebook_grace_minutes: int | None = None,
 ) -> dict[str, Any]:
     """Generate questions via LLM and persist rows (shared assessment in PostgreSQL).
 
@@ -69,21 +82,33 @@ def create_assessment(
     if not difficulty:
         raise ValueError("level must be one of: beginner, intermediate, advanced")
     assessment_id = str(uuid.uuid4())
+    dur, grace = attempt_service.validate_timed_config(
+        is_timed, duration_minutes, notebook_grace_minutes
+    )
 
     rows: list[dict[str, Any]] = []
+    catalog_topic_names = [
+        n.strip() for n in (topic_names or []) if n and str(n).strip()
+    ]
+    effective_per_topic: dict[str, dict[str, int]] | None = None
+    if catalog_topic_names:
+        effective_per_topic = (
+            per_topic_config
+            if per_topic_config
+            else derive_per_topic_config(
+                catalog_topic_names, types, questions_per_type
+            )
+        )
 
-    if per_topic_config and topic_names:
+    if effective_per_topic and catalog_topic_names:
         # Per-topic generation: one LLM call per topic so questions carry a topic_name tag.
         from services.llm_service import generate_questions as _gen  # local to avoid circular
-        from services import catalog_service as _cat
 
-        # Build a name→topic row map for fetching topic text (related docs etc.)
-        # We need to reconstruct the topic string for each topic the same way AdminPage does.
-        topic_strings: dict[str, str] = _build_per_topic_strings(topic_names)
+        topic_strings: dict[str, str] = _build_per_topic_strings(catalog_topic_names)
 
         global_q_id = 1
-        for tname in topic_names:
-            cfg = per_topic_config.get(tname) or {}
+        for tname in catalog_topic_names:
+            cfg = effective_per_topic.get(tname) or {}
             t_types = [t for t in types if cfg.get(t, 0) > 0]
             t_counts = {t: cfg[t] for t in t_types}
             if not t_types:
@@ -108,7 +133,7 @@ def create_assessment(
                 })
                 global_q_id += 1
     else:
-        # Legacy single-call generation (no per-topic config).
+        # Legacy single-call generation (custom topic or no catalog topics).
         if set(types) != set(questions_per_type.keys()):
             raise ValueError("types and questions_per_type keys must match")
         questions = generate_questions(
@@ -129,12 +154,35 @@ def create_assessment(
                 "topic_name": "",
             })
 
+    from services.notebook_plan_service import jupyter_topic_names_from_list
+
+    routing_flag = "pyodide"
+    if catalog_topic_names:
+        jupyter_topics = jupyter_topic_names_from_list(catalog_topic_names)
+        has_jupyter = bool(jupyter_topics)
+        has_other = any(t not in set(jupyter_topics) for t in catalog_topic_names)
+        if has_jupyter and has_other:
+            routing_flag = "mixed"
+        elif has_jupyter:
+            routing_flag = "jupyter"
+
+    plan = notebook_plan_from_rows(
+        rows,
+        topic_names=catalog_topic_names,
+        per_topic_config=effective_per_topic or {},
+        routing_flag=routing_flag,
+    )
+    validate_notebook_plan_after_generation(plan)
+
     db_service.save_shared_assessment_rows(
         assessment_id,
         rows,
         language_code=language_code,
         language_label=language_label,
         topic_names=topic_names if topic_names is not None else [],
+        is_timed=is_timed,
+        duration_minutes=dur,
+        notebook_grace_minutes=grace,
     )
     return {
         "assessment_id": assessment_id,
@@ -146,7 +194,14 @@ def create_assessment(
         "question_count": len(rows),
         "language_code": (language_code or "").strip()[:32] or None,
         "language_label": (language_label or "").strip()[:256] or None,
-        "topic_names": list(topic_names or []),
+        "topic_names": catalog_topic_names,
+        "notebook_expected": plan["notebook_expected"],
+        "notebook_ready": plan["notebook_ready"],
+        "expected_notebook_coding_count": plan["expected_notebook_coding_count"],
+        "actual_notebook_coding_count": plan["actual_notebook_coding_count"],
+        "is_timed": is_timed,
+        "duration_minutes": dur,
+        "notebook_grace_minutes": grace,
     }
 
 
@@ -191,6 +246,51 @@ def _build_per_topic_strings(topic_names: list[str]) -> dict[str, str]:
     return result
 
 
+def get_notebook_template_questions(assessment_id: str) -> list[dict[str, Any]]:
+    """
+    Coding questions that belong in the downloadable .ipynb (jupyter-modality only).
+
+    Uses DB question rows in canonical order. Never includes pyodide-tier coding
+    questions for mixed assessments.
+    """
+    meta = db_service.get_assessment_metadata(assessment_id)
+    rows = db_service.read_questions_by_assessment(assessment_id)
+    jupyter_topics = set(meta.get("jupyter_topic_names") or [])
+    routing_flag = meta.get("routing_flag") or "pyodide"
+
+    topic_names_on_questions = list(
+        dict.fromkeys((r.get("topic_name") or "").strip() for r in rows if r.get("topic_name"))
+    )
+    modality_by_name = db_service.get_topic_modality_by_names(topic_names_on_questions)
+
+    notebook_questions: list[dict[str, Any]] = []
+    for r in rows:
+        if (r.get("type") or "").lower() != "coding":
+            continue
+        tname = (r.get("topic_name") or "").strip()
+        if resolve_question_modality(tname, jupyter_topics, modality_by_name) == "jupyter":
+            notebook_questions.append(
+                {
+                    "question_id": r.get("question_id"),
+                    "question": r.get("question", ""),
+                    "topic_name": tname,
+                }
+            )
+
+    if not notebook_questions and routing_flag == "jupyter":
+        for r in rows:
+            if (r.get("type") or "").lower() == "coding":
+                notebook_questions.append(
+                    {
+                        "question_id": r.get("question_id"),
+                        "question": r.get("question", ""),
+                        "topic_name": r.get("topic_name") or "",
+                    }
+                )
+
+    return notebook_questions
+
+
 def get_assessment_for_user(
     assessment_id: str,
     *,
@@ -209,6 +309,14 @@ def get_assessment_for_user(
     """
     meta = db_service.get_assessment_metadata(assessment_id)
     rows = db_service.read_questions_by_assessment(assessment_id)
+    plan = notebook_plan_for_assessment(assessment_id)
+    notebook_fields = {
+        "notebook_expected": plan["notebook_expected"],
+        "notebook_ready": plan["notebook_ready"],
+        "expected_notebook_coding_count": plan["expected_notebook_coding_count"],
+        "actual_notebook_coding_count": plan["actual_notebook_coding_count"],
+    }
+
     if not rows:
         return {
             "assessment_id": assessment_id,
@@ -218,9 +326,18 @@ def get_assessment_for_user(
             "routing_flag": meta["routing_flag"],
             "topic_names": meta["topic_names"],
             "jupyter_topic_names": meta["jupyter_topic_names"],
+            "is_timed": meta.get("is_timed", False),
+            "duration_minutes": meta.get("duration_minutes"),
+            "notebook_grace_minutes": meta.get("notebook_grace_minutes"),
+            "already_submitted": False,
+            "timer": None,
+            **notebook_fields,
         }
 
     jupyter_topics = set(meta["jupyter_topic_names"])
+    modality_by_name = db_service.get_topic_modality_by_names(
+        list(dict.fromkeys((x.get("topic_name") or "").strip() for x in rows if x.get("topic_name")))
+    )
 
     questions_out: list[dict[str, Any]] = []
     for r in rows:
@@ -237,14 +354,9 @@ def get_assessment_for_user(
             except json.JSONDecodeError:
                 options = []
 
-        tname = r.get("topic_name") or ""
-        # Determine per-question modality: if the question is tagged to a jupyter topic → jupyter
-        if tname and tname in jupyter_topics:
-            topic_modality = "jupyter"
-        elif tname:
-            topic_modality = "pyodide"
-        else:
-            topic_modality = None  # legacy question with no topic tag
+        tname = (r.get("topic_name") or "").strip()
+        mod = resolve_question_modality(tname, jupyter_topics, modality_by_name)
+        topic_modality = mod if mod else None
 
         item: dict[str, Any] = {
             "question_id": r.get("question_id"),
@@ -264,7 +376,7 @@ def get_assessment_for_user(
             assessment_id, employee_id.strip(), questions_out
         )
 
-    return {
+    out: dict[str, Any] = {
         "assessment_id": assessment_id,
         "language_code": meta["language_code"],
         "questions": questions_out,
@@ -272,7 +384,28 @@ def get_assessment_for_user(
         "routing_flag": meta["routing_flag"],
         "topic_names": meta["topic_names"],
         "jupyter_topic_names": meta["jupyter_topic_names"],
+        "is_timed": meta.get("is_timed", False),
+        "duration_minutes": meta.get("duration_minutes"),
+        "notebook_grace_minutes": meta.get("notebook_grace_minutes"),
+        "already_submitted": False,
+        "timer": None,
+        **notebook_fields,
     }
+
+    if meta.get("is_timed") and employee_id and employee_id.strip():
+        if attempt_service.user_has_submitted(assessment_id, employee_id):
+            out["already_submitted"] = True
+            out["questions"] = []
+        else:
+            sf = get_session_factory()
+            with sf() as session:
+                assessment_row = session.get(Assessment, assessment_id)
+            if assessment_row and assessment_row.is_timed:
+                out["timer"] = attempt_service.get_or_create_attempt(
+                    assessment_row, employee_id
+                )
+
+    return out
 
 
 def submit_assessment(
@@ -280,6 +413,7 @@ def submit_assessment(
     user_id: str,
     answers: list[dict[str, Any]],
     *,
+    employee_id: str | None = None,
     submitter_client_id: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -289,6 +423,13 @@ def submit_assessment(
     stored = db_service.read_questions_by_assessment(assessment_id)
     if not stored:
         raise ValueError("Unknown assessment_id")
+
+    meta = db_service.get_assessment_metadata(assessment_id)
+    eid = (employee_id or attempt_service.parse_employee_id_from_user_label(user_id)).strip()
+    if meta.get("is_timed") and eid:
+        attempt_service.assert_main_submit_allowed(
+            assessment_id, eid, is_timed=True
+        )
 
     by_qid = {str(r["question_id"]): r for r in stored}
     ts = datetime.now(timezone.utc).isoformat()
@@ -352,6 +493,9 @@ def submit_assessment(
 
     overall = round(sum(scores) / len(scores), 2)
     combined_feedback = "\n".join(feedback_parts)
+
+    if meta.get("is_timed") and eid:
+        attempt_service.mark_attempt_submitted(assessment_id, eid)
 
     return {
         "assessment_id": assessment_id,

@@ -13,7 +13,14 @@ from sqlalchemy.orm import Session
 
 from services.database import get_session_factory
 from services.ids import sanitize_client_id
-from services.models import Assessment, AssessmentQuestion, Language, Submission, Topic
+from services.models import (
+    Assessment,
+    AssessmentAttempt,
+    AssessmentQuestion,
+    Language,
+    Submission,
+    Topic,
+)
 
 __all__ = [
     "sanitize_client_id",
@@ -26,6 +33,7 @@ __all__ = [
     "get_assessment_language_code",
     "get_assessment_routing_flag",
     "get_assessment_metadata",
+    "get_topic_modality_by_names",
     "list_assessments_summary",
     "delete_assessment",
     "list_all_submissions",
@@ -211,6 +219,9 @@ def save_shared_assessment_rows(
     language_code: str | None = None,
     language_label: str | None = None,
     topic_names: list[str] | None = None,
+    is_timed: bool = False,
+    duration_minutes: int | None = None,
+    notebook_grace_minutes: int | None = None,
 ) -> None:
     """Shared assessment: owner_client_id is NULL (any client may access)."""
     with _session() as session:
@@ -266,6 +277,11 @@ def save_shared_assessment_rows(
                 existing.language_label = lbl
             if topic_names is not None:
                 existing.topic_names = topics
+            existing.is_timed = is_timed
+            existing.duration_minutes = duration_minutes if is_timed else None
+            existing.notebook_grace_minutes = (
+                notebook_grace_minutes if is_timed else None
+            )
         else:
             session.add(
                 Assessment(
@@ -276,6 +292,11 @@ def save_shared_assessment_rows(
                     topic_names=topics,
                     routing_flag=routing_flag,
                     created_at=_utc_now_iso(),
+                    is_timed=is_timed,
+                    duration_minutes=duration_minutes if is_timed else None,
+                    notebook_grace_minutes=(
+                        notebook_grace_minutes if is_timed else None
+                    ),
                 )
             )
         for row in rows:
@@ -332,6 +353,16 @@ def get_assessment_routing_flag(assessment_id: str) -> str:
         return row.routing_flag or "pyodide"
 
 
+def get_topic_modality_by_names(topic_names: list[str]) -> dict[str, str]:
+    """Map catalog topic name → modality ('pyodide' or 'jupyter')."""
+    names = [n.strip() for n in topic_names if n and str(n).strip()]
+    if not names:
+        return {}
+    with _session() as session:
+        rows = session.scalars(select(Topic).where(Topic.name.in_(names))).all()
+        return {r.name: (r.modality or "pyodide") for r in rows}
+
+
 def get_assessment_metadata(assessment_id: str) -> dict[str, Any]:
     """Return language_code, routing_flag, topic_names, and jupyter_topic_names in one query."""
     with _session() as session:
@@ -342,6 +373,9 @@ def get_assessment_metadata(assessment_id: str) -> dict[str, Any]:
                 "routing_flag": "pyodide",
                 "topic_names": [],
                 "jupyter_topic_names": [],
+                "is_timed": False,
+                "duration_minutes": None,
+                "notebook_grace_minutes": None,
             }
         topic_names = _coerce_stored_topic_names(row.topic_names)
         jupyter_topic_names: list[str] = []
@@ -359,6 +393,9 @@ def get_assessment_metadata(assessment_id: str) -> dict[str, Any]:
             "routing_flag": row.routing_flag or "pyodide",
             "topic_names": topic_names,
             "jupyter_topic_names": jupyter_topic_names,
+            "is_timed": bool(row.is_timed),
+            "duration_minutes": row.duration_minutes,
+            "notebook_grace_minutes": row.notebook_grace_minutes,
         }
 
 
@@ -406,6 +443,9 @@ def list_assessments_summary() -> list[dict[str, Any]]:
                     "topic_names": topics,
                     "created_at": (a.created_at or "").strip() or None,
                     "routing_flag": a.routing_flag,
+                    "is_timed": bool(a.is_timed),
+                    "duration_minutes": a.duration_minutes,
+                    "notebook_grace_minutes": a.notebook_grace_minutes,
                 }
             )
         return sorted(
@@ -425,6 +465,9 @@ def delete_assessment(assessment_id: str) -> None:
         if not row:
             raise ValueError("Assessment not found")
         session.execute(delete(Submission).where(Submission.assessment_id == aid))
+        session.execute(
+            delete(AssessmentAttempt).where(AssessmentAttempt.assessment_id == aid)
+        )
         session.delete(row)
         session.commit()
 

@@ -218,7 +218,19 @@ export default function AdminAssessmentsPage() {
                             <span className="muted">—</span>
                           )}
                         </td>
-                        <td>{r.question_count}</td>
+                        <td>
+                          {r.question_count}
+                          {r.is_timed ? (
+                            <div className="muted small-print" style={{ marginTop: "4px" }}>
+                              <span className="pill" style={{ fontSize: "0.72rem" }}>
+                                Timed {r.duration_minutes}m
+                                {r.notebook_grace_minutes
+                                  ? ` (+${r.notebook_grace_minutes}m notebook)`
+                                  : ""}
+                              </span>
+                            </div>
+                          ) : null}
+                        </td>
                         <td>{r.source}</td>
                         <td className="cell-actions">
                           <div className="cell-actions-btns">

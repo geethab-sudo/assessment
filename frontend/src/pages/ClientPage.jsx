@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { apiFetch } from "../api";
 import SimpleCodeEditor from "../components/SimpleCodeEditor.jsx";
 import PythonRunPanel from "../components/PythonRunPanel.jsx";
 import { catalogCodeToMonaco } from "../lib/monacoLanguageMap.js";
 import { participantQuestionLabel } from "../lib/participantQuestionLabels.js";
+import AssessmentTimerBar from "../components/AssessmentTimerBar.jsx";
+import { useAssessmentTimer } from "../hooks/useAssessmentTimer.js";
 
 export default function ClientPage() {
   const location = useLocation();
@@ -25,7 +27,12 @@ export default function ClientPage() {
   const [notebookFile, setNotebookFile] = useState(null);
 
   const [loading, setLoading] = useState(false);
+  const [autoSubmitting, setAutoSubmitting] = useState(false);
+  const [timeExpiredBanner, setTimeExpiredBanner] = useState(false);
   const [error, setError] = useState(null);
+  const autoSubmitLock = useRef(false);
+  const graceNotebookSubmitLock = useRef(false);
+  const lastGraceSubmittedFile = useRef(null);
 
   /** @type {Array<{ id: number, code: string, name: string }>} */
   const [catalogLanguages, setCatalogLanguages] = useState([]);
@@ -88,10 +95,19 @@ export default function ClientPage() {
       const data = await apiFetch(
         `/assessment/${encodeURIComponent(id)}?${params.toString()}`
       );
+      if (data.already_submitted) {
+        setAssessment({ ...data, questions: [] });
+        setError("You have already submitted this assessment.");
+        return;
+      }
       setAssessment(data);
       setAnswers({});
       setCodeLangByQid({});
       setNotebookFile(null);
+      setTimeExpiredBanner(false);
+      autoSubmitLock.current = false;
+      graceNotebookSubmitLock.current = false;
+      lastGraceSubmittedFile.current = null;
     } catch (e) {
       setError(e.message);
     } finally {
@@ -106,115 +122,213 @@ export default function ClientPage() {
     );
   }, [result]);
 
-  const handleSubmit = async () => {
-    if (result) {
-      return;
-    }
-    setError(null);
-    if (!assessment) {
-      setError("Load an assessment first.");
-      return;
-    }
-    const empid = employeeId.trim();
-    const name = participantName.trim();
-    if (!empid) {
-      setError("Enter your employee ID.");
-      return;
-    }
-    if (!name) {
-      setError("Enter your name.");
-      return;
-    }
+  const needsNotebook = assessment?.notebook_expected === true;
 
-    if (assessment.routing_flag === "jupyter") {
-      if (!notebookFile) {
-        setError("Please select a Jupyter notebook (.ipynb) file to upload.");
+  const submitNotebook = useCallback(
+    async (assessmentId, empid, name, file) => {
+      const formData = new FormData();
+      formData.append("assessment_id", assessmentId);
+      formData.append("user_id", `${empid} | ${name}`);
+      formData.append("file", file);
+      return apiFetch("/submit-notebook-assessment", { method: "POST", body: formData });
+    },
+    []
+  );
+
+  const handleSubmit = useCallback(
+    async (opts = {}) => {
+      const { auto = false, skipNotebookConfirm = false, notebookOnly = false } = opts;
+
+      if (result && !notebookOnly) return;
+      setError(null);
+      if (!assessment) {
+        setError("Load an assessment first.");
         return;
       }
+      const empid = employeeId.trim();
+      const name = participantName.trim();
+      if (!empid) {
+        setError("Enter your employee ID.");
+        return;
+      }
+      if (!name) {
+        setError("Enter your name.");
+        return;
+      }
+
+      if (notebookOnly) {
+        if (!notebookFile) {
+          setError("Select a Jupyter notebook file to upload.");
+          return;
+        }
+        setLoading(true);
+        try {
+          const nbData = await submitNotebook(
+            assessment.assessment_id,
+            empid,
+            name,
+            notebookFile
+          );
+          setNotebookResult(nbData);
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
+
+      if (assessment.routing_flag === "jupyter" && needsNotebook) {
+        if (!notebookFile) {
+          if (auto) {
+            setTimeExpiredBanner(true);
+            return;
+          }
+          setError("Please select a Jupyter notebook (.ipynb) file to upload.");
+          return;
+        }
+        setLoading(true);
+        try {
+          const data = await submitNotebook(
+            assessment.assessment_id,
+            empid,
+            name,
+            notebookFile
+          );
+          setResult(data);
+        } catch (e) {
+          setError(e.message);
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
+
+      if (!assessment.questions?.length) {
+        setError("No questions found in this assessment.");
+        return;
+      }
+
+      const isMixed = assessment.routing_flag === "mixed";
+
+      if (
+        needsNotebook &&
+        !notebookFile &&
+        !skipNotebookConfirm &&
+        !auto
+      ) {
+        const proceed = window.confirm(
+          "You haven't selected a Jupyter notebook file yet.\n\n" +
+            "Your in-browser answers will be submitted now, but the Jupyter coding questions won't be graded.\n\n" +
+            "Click OK to submit anyway, or Cancel to attach the notebook first."
+        );
+        if (!proceed) return;
+      }
+
       setLoading(true);
       try {
-        const formData = new FormData();
-        formData.append("assessment_id", assessment.assessment_id);
-        formData.append("user_id", `${empid} | ${name}`);
-        formData.append("file", notebookFile);
-
-        const data = await apiFetch("/submit-notebook-assessment", {
+        const id = assessment.assessment_id;
+        const payload = {
+          assessment_id: id,
+          employee_id: empid,
+          participant_name: name,
+          answers: assessment.questions
+            .filter(
+              (q) =>
+                !(isMixed && q.type === "coding" && q.topic_modality === "jupyter")
+            )
+            .map((q) => ({
+              question_id: q.question_id,
+              answer: answers[String(q.question_id)] ?? "",
+            })),
+        };
+        const inBrowserData = await apiFetch("/submit-assessment", {
           method: "POST",
-          body: formData,
+          body: JSON.stringify(payload),
         });
-        setResult(data);
+        setResult(inBrowserData);
+        if (auto) setTimeExpiredBanner(true);
+
+        if (isMixed && notebookFile) {
+          const nbData = await submitNotebook(id, empid, name, notebookFile);
+          setNotebookResult(nbData);
+        }
       } catch (e) {
         setError(e.message);
       } finally {
         setLoading(false);
       }
-      return;
-    }
+    },
+    [result, assessment, employeeId, participantName, notebookFile, answers, submitNotebook, needsNotebook]
+  );
 
-    if (!assessment.questions?.length) {
-      setError("No questions found in this assessment.");
-      return;
-    }
+  const onMainExpire = useCallback(() => {
+    if (autoSubmitLock.current || result) return;
+    autoSubmitLock.current = true;
+    setAutoSubmitting(true);
+    handleSubmit({ auto: true, skipNotebookConfirm: true })
+      .finally(() => setAutoSubmitting(false));
+  }, [handleSubmit, result]);
 
-    const isMixed = assessment.routing_flag === "mixed";
-    const hasJupyterTopics = isMixed && assessment.jupyter_topic_names?.length > 0;
+  const onNotebookGraceEnd = useCallback(() => {
+    if (!needsNotebook || notebookResult || !notebookFile) return;
+    if (graceNotebookSubmitLock.current) return;
+    if (lastGraceSubmittedFile.current === notebookFile.name && notebookResult) return;
+    graceNotebookSubmitLock.current = true;
+    setAutoSubmitting(true);
+    handleSubmit({ notebookOnly: true }).finally(() => {
+      setAutoSubmitting(false);
+      graceNotebookSubmitLock.current = false;
+    });
+  }, [needsNotebook, notebookResult, notebookFile, handleSubmit]);
 
-    // For mixed assessments, warn if no notebook was attached but don't block.
-    if (hasJupyterTopics && !notebookFile) {
-      const proceed = window.confirm(
-        "You haven't selected a Jupyter notebook file yet.\n\n" +
-        "Your in-browser answers will be submitted now, but the Jupyter coding questions won't be graded.\n\n" +
-        "Click OK to submit anyway, or Cancel to attach the notebook first."
-      );
-      if (!proceed) return;
-    }
+  const timerState = useAssessmentTimer(assessment, {
+    onMainExpire,
+    onNotebookGraceEnd,
+  });
 
-    setLoading(true);
-    try {
-      const id = assessment.assessment_id;
+  // Auto-grade notebook as soon as it is attached during the grace window
+  useEffect(() => {
+    if (!timerState.inNotebookGrace || !notebookFile || notebookResult || !result) return;
+    if (lastGraceSubmittedFile.current === notebookFile.name) return;
+    lastGraceSubmittedFile.current = notebookFile.name;
+    graceNotebookSubmitLock.current = true;
+    setAutoSubmitting(true);
+    handleSubmit({ notebookOnly: true }).finally(() => {
+      setAutoSubmitting(false);
+      graceNotebookSubmitLock.current = false;
+    });
+  }, [
+    timerState.inNotebookGrace,
+    notebookFile,
+    notebookResult,
+    result,
+    handleSubmit,
+  ]);
 
-      // Submit in-browser questions (exclude jupyter coding questions for mixed).
-      const payload = {
-        assessment_id: id,
-        employee_id: empid,
-        participant_name: name,
-        answers: assessment.questions
-          .filter(
-            (q) =>
-              !(isMixed && q.type === "coding" && q.topic_modality === "jupyter")
-          )
-          .map((q) => ({
-            question_id: q.question_id,
-            answer: answers[String(q.question_id)] ?? "",
-          })),
-      };
-      const inBrowserData = await apiFetch("/submit-assessment", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      setResult(inBrowserData);
+  const formLocked =
+    !!result || autoSubmitting || (timerState.isTimed && !timerState.inMainWindow);
 
-      // For mixed assessments, also submit the notebook if the user attached one.
-      if (isMixed && notebookFile) {
-        const formData = new FormData();
-        formData.append("assessment_id", id);
-        formData.append("user_id", `${empid} | ${name}`);
-        formData.append("file", notebookFile);
-        const nbData = await apiFetch("/submit-notebook-assessment", {
-          method: "POST",
-          body: formData,
-        });
-        setNotebookResult(nbData);
-      }
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const notebookUploadEnabled =
+    !notebookResult &&
+    (!timerState.isTimed || timerState.inMainWindow || timerState.inNotebookGrace);
+
+  const showFixedTimer = Boolean(assessment?.is_timed && assessment?.timer);
 
   return (
-    <div className="page">
+    <div className={`page${showFixedTimer ? " page--timed-assessment" : ""}`}>
+      {showFixedTimer && (
+        <div className="assessment-timer-fixed" role="region" aria-label="Assessment timer">
+          <AssessmentTimerBar
+            mainLabel={timerState.mainLabel}
+            notebookLabel={timerState.notebookLabel}
+            mainTone={timerState.mainTone}
+            inNotebookGrace={timerState.inNotebookGrace}
+            durationMinutes={assessment.duration_minutes}
+            notebookGraceMinutes={assessment.notebook_grace_minutes}
+          />
+        </div>
+      )}
       <header className="header">
         <p className="page-eyebrow">Participant</p>
         <h1>Take assessment</h1>
@@ -269,7 +383,28 @@ export default function ClientPage() {
 
       {assessment && (
         <section className={`card${result ? " card-after-submit" : ""}`}>
-        {assessment.routing_flag === "jupyter" ? (
+          {(timeExpiredBanner || timerState.inNotebookGrace) && needsNotebook && !notebookResult && (
+            <p
+              className="assessment-timer-banner"
+              role="status"
+              style={{
+                margin: "0 0 1rem 0",
+                padding: "0.75rem 1rem",
+                borderRadius: "8px",
+                background: "rgba(243,112,33,0.1)",
+                border: "1px solid rgba(243,112,33,0.35)",
+                fontSize: "0.9rem",
+              }}
+            >
+              {timeExpiredBanner
+                ? "Time expired — your in-browser answers were submitted. "
+                : ""}
+              {timerState.inNotebookGrace
+                ? `Upload your Jupyter notebook (${timerState.notebookLabel} left) — it will be graded automatically when you select the file or when grace ends.`
+                : null}
+            </p>
+          )}
+        {assessment.routing_flag === "jupyter" && needsNotebook ? (
             <div className="jupyter-workspace-panel" style={{ padding: "10px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
                 <span className="pill" style={{ background: "#f37021", color: "#fff", fontWeight: "bold" }}>Jupyter Sandbox</span>
@@ -377,14 +512,14 @@ export default function ClientPage() {
                       accept=".ipynb"
                       id="notebook-file-input"
                       style={{ display: "none" }}
-                      disabled={!!result}
+                      disabled={!notebookUploadEnabled}
                       onChange={(e) => {
                         if (e.target.files?.[0]) {
                           setNotebookFile(e.target.files[0]);
                         }
                       }}
                     />
-                    <label htmlFor="notebook-file-input" style={{ cursor: "pointer", display: "block" }}>
+                    <label htmlFor="notebook-file-input" style={{ cursor: notebookUploadEnabled ? "pointer" : "not-allowed", display: "block" }}>
                       <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ margin: "0 auto 8px auto", opacity: 0.7 }}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"></path></svg>
                       {notebookFile ? (
                         <div className="file-info" style={{ wordBreak: "break-all" }}>
@@ -403,8 +538,15 @@ export default function ClientPage() {
                 <button
                   type="button"
                   className="primary"
-                  onClick={handleSubmit}
-                  disabled={loading || !!result}
+                  onClick={() => handleSubmit()}
+                  disabled={
+                    loading ||
+                    autoSubmitting ||
+                    !!result ||
+                    (timerState.isTimed &&
+                      !timerState.inMainWindow &&
+                      !(timerState.inNotebookGrace && notebookFile))
+                  }
                   style={{ width: "100%", padding: "12px 24px", fontSize: "1rem", fontWeight: "600", borderRadius: "8px" }}
                 >
                   {result ? "Submitted" : loading ? "Submitting…" : "Submit notebook"}
@@ -413,7 +555,7 @@ export default function ClientPage() {
             </div>
           ) : (
             <>
-              {assessment.routing_flag === "mixed" && assessment.jupyter_topic_names?.length > 0 && (
+              {needsNotebook && (
                 <div style={{
                   display: "flex",
                   alignItems: "flex-start",
@@ -509,7 +651,7 @@ export default function ClientPage() {
                               value={opt}
                               checked={answers[String(q.question_id)] === opt}
                               onChange={() => setAnswer(q.question_id, opt)}
-                              disabled={!!result}
+                              disabled={formLocked}
                             />
                             <span className="opt-text">
                               <span className="opt-letter" aria-hidden="true">
@@ -557,7 +699,7 @@ export default function ClientPage() {
                                 <select
                                   value={qk in codeLangByQid ? (codeLangByQid[qk] || "") : ""}
                                   onChange={(e) => setCodeLanguageForQuestion(q.question_id, e.target.value)}
-                                  disabled={!!result}
+                                  disabled={formLocked}
                                 >
                                   <option value="">
                                     {assessment?.language_code
@@ -583,7 +725,7 @@ export default function ClientPage() {
                               <SimpleCodeEditor
                                 value={answers[qk] ?? ""}
                                 onChange={(v) => setAnswer(q.question_id, v)}
-                                readOnly={!!result}
+                                readOnly={formLocked}
                                 minHeight={320}
                               />
                             </div>
@@ -595,7 +737,7 @@ export default function ClientPage() {
                             {codingMonaco === "python" ? (
                               <PythonRunPanel
                                 code={answers[qk] ?? ""}
-                                disabled={!!result}
+                                disabled={formLocked}
                                 variant="playground"
                               />
                             ) : (
@@ -614,7 +756,7 @@ export default function ClientPage() {
                         placeholder="Your answer here…"
                         value={answers[String(q.question_id)] ?? ""}
                         onChange={(e) => setAnswer(q.question_id, e.target.value)}
-                        readOnly={!!result}
+                        readOnly={formLocked}
                         autoComplete="off"
                         spellCheck={false}
                       />
@@ -641,13 +783,30 @@ export default function ClientPage() {
               <button
                 type="button"
                 className="primary"
-                onClick={handleSubmit}
-                disabled={loading || !!result}
+                onClick={() =>
+                  timerState.inNotebookGrace && notebookFile && needsNotebook
+                    ? handleSubmit({ notebookOnly: true })
+                    : handleSubmit()
+                }
+                disabled={
+                  loading ||
+                  autoSubmitting ||
+                  !!result ||
+                  (timerState.isTimed && !timerState.inMainWindow && !(timerState.inNotebookGrace && notebookFile && needsNotebook))
+                }
               >
-                {result ? "Submitted" : loading ? "Submitting…" : "Submit answers"}
+                {result
+                  ? "Submitted"
+                  : autoSubmitting
+                    ? "Submitting…"
+                    : loading
+                      ? "Submitting…"
+                      : timerState.inNotebookGrace && notebookFile && needsNotebook
+                        ? "Upload notebook"
+                        : "Submit answers"}
               </button>
 
-              {assessment.routing_flag === "mixed" && (
+              {needsNotebook && (
                 <div style={{
                   marginTop: "32px",
                   padding: "20px 24px",
@@ -662,7 +821,7 @@ export default function ClientPage() {
                     <span style={{ fontWeight: "600", fontSize: "0.95rem" }}>Upload your completed notebook</span>
                   </div>
                   <p className="muted small-print" style={{ margin: "0 0 14px 0" }}>
-                    Select your completed <code>.ipynb</code> file below — it will be graded automatically when you click <strong>Submit answers</strong>.
+                    Select your completed <code>.ipynb</code> file below — it is graded automatically on submit or during the grace period after time expires.
                   </p>
                   <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
                     <input
@@ -670,7 +829,7 @@ export default function ClientPage() {
                       accept=".ipynb"
                       id="mixed-notebook-input"
                       style={{ display: "none" }}
-                      disabled={!!notebookResult}
+                      disabled={!notebookUploadEnabled}
                       onChange={(e) => { if (e.target.files?.[0]) setNotebookFile(e.target.files[0]); }}
                     />
                     <label htmlFor="mixed-notebook-input" style={{

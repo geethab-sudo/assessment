@@ -1540,6 +1540,89 @@ code {
   color: var(--text-secondary);
 }
 
+.page--timed-assessment {
+  padding-top: 4.75rem;
+}
+
+.assessment-timer-fixed {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  padding: 0.65rem clamp(1rem, 3vw, 2rem);
+  background: var(--bg, #fff);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+.assessment-timer-fixed .assessment-timer {
+  margin-bottom: 0;
+  max-width: 1100px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.assessment-timer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  padding: 0.85rem 1.1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-subtle);
+}
+
+.assessment-timer--warning {
+  border-color: rgba(200, 140, 0, 0.45);
+  background: rgba(200, 140, 0, 0.08);
+}
+
+.assessment-timer--critical {
+  border-color: rgba(180, 50, 40, 0.5);
+  background: rgba(180, 50, 40, 0.1);
+}
+
+.assessment-timer--ended,
+.assessment-timer--grace {
+  border-color: rgba(243, 112, 33, 0.45);
+  background: rgba(243, 112, 33, 0.08);
+}
+
+.assessment-timer-main,
+.assessment-timer-grace {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem 0.75rem;
+  flex-wrap: wrap;
+}
+
+.assessment-timer-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.assessment-timer-value {
+  font-size: 1.35rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.assessment-timer--critical .assessment-timer-value {
+  color: #b43228;
+}
+
+.assessment-timer--warning .assessment-timer-value {
+  color: #9a7200;
+}
+
 @media (max-width: 520px) {
   .result-summary {
     grid-template-columns: 1fr;

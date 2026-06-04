@@ -7,8 +7,7 @@ from __future__ import annotations
 import json
 from typing import Any, List, Dict
 
-from services import db_service
-from services.assessment_service import submit_assessment
+from services import attempt_service, db_service
 from services.llm_service import evaluate_answers
 
 
@@ -103,6 +102,13 @@ def submit_notebook_assessment(
     """Handle notebook submission.
     Parses notebook, stores code as a submission row.
     """
+    meta = db_service.get_assessment_metadata(assessment_id)
+    eid = attempt_service.parse_employee_id_from_user_label(user_id)
+    if meta.get("is_timed") and eid:
+        attempt_service.assert_notebook_submit_allowed(
+            assessment_id, eid, is_timed=True
+        )
+
     parsed = parse_jupyter_notebook(notebook_bytes)
     try:
         raw_notebook_dict = json.loads(notebook_bytes.decode("utf-8"))

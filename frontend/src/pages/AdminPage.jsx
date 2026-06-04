@@ -98,6 +98,10 @@ export default function AdminPage() {
   const [allocationMode, setAllocationMode] = useState("auto"); // "auto" | "per-topic"
   const [perTopicCounts, setPerTopicCounts] = useState({}); // { [topicId]: { mcq, coding, subjective } }
 
+  const [isTimed, setIsTimed] = useState(false);
+  const [durationMinutes, setDurationMinutes] = useState(45);
+  const [notebookGraceMinutes, setNotebookGraceMinutes] = useState(5);
+
 
   const topicById = useMemo(
     () => Object.fromEntries(topics.map((t) => [String(t.id), t])),
@@ -350,6 +354,13 @@ export default function AdminPage() {
           ...(languageNameForGenerate ? { language_label: languageNameForGenerate } : {}),
           topic_names: topicNamesForGenerate,
           ...(Object.keys(per_topic_config).length > 0 ? { per_topic_config } : {}),
+          is_timed: isTimed,
+          ...(isTimed
+            ? {
+                duration_minutes: durationMinutes,
+                notebook_grace_minutes: notebookGraceMinutes,
+              }
+            : {}),
         }),
       });
       setGeneratedId(data.assessment_id);
@@ -754,6 +765,61 @@ export default function AdminPage() {
             {catalogHint}
           </p>
         )}
+
+        <div
+          className="timed-assessment-config"
+          style={{
+            marginTop: "1.25rem",
+            padding: "1rem 1.1rem",
+            borderRadius: "10px",
+            border: "1px solid rgba(0,0,0,0.1)",
+            background: "rgba(0,0,0,0.02)",
+          }}
+        >
+          <label className="type-count-tog" style={{ display: "block", marginBottom: "0.75rem" }}>
+            <input
+              type="checkbox"
+              checked={isTimed}
+              onChange={(e) => setIsTimed(e.target.checked)}
+            />{" "}
+            <strong>Timed assessment</strong>
+          </label>
+          {isTimed && (
+            <div className="row" style={{ gap: "12px", flexWrap: "wrap" }}>
+              <label className="type-count-num">
+                Duration (minutes)
+                <input
+                  type="number"
+                  min={1}
+                  value={durationMinutes}
+                  onChange={(e) => {
+                    const n = Number.parseInt(e.target.value, 10);
+                    setDurationMinutes(Number.isFinite(n) && n >= 1 ? n : 1);
+                  }}
+                />
+              </label>
+              <label className="type-count-num">
+                Notebook upload grace (minutes)
+                <input
+                  type="number"
+                  min={0}
+                  value={notebookGraceMinutes}
+                  onChange={(e) => {
+                    const n = Number.parseInt(e.target.value, 10);
+                    setNotebookGraceMinutes(Number.isFinite(n) && n >= 0 ? n : 0);
+                  }}
+                />
+              </label>
+            </div>
+          )}
+          {isTimed && (
+            <p className="muted small-print" style={{ margin: "0.65rem 0 0 0", lineHeight: 1.5 }}>
+              Timer starts when the participant loads the test. At time zero, answers auto-submit.
+              Grace minutes allow uploading the Jupyter notebook after the main timer ends.
+            </p>
+          )}
+        </div>
+
         <div style={{ marginTop: "1.1rem" }}>
           <button type="button" className="primary" onClick={handleGenerate} disabled={!canGenerate}>
             {loading ? "Working…" : "Generate assessment"}

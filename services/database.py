@@ -70,6 +70,8 @@ def init_db() -> None:
     _ensure_modality_and_routing_columns(eng)
     _ensure_raw_notebook_column(eng)
     _ensure_question_topic_name_column(eng)
+    _ensure_assessment_timed_columns(eng)
+    _ensure_assessment_attempts_table(eng)
 
 
 def _ensure_raw_notebook_column(eng) -> None:
@@ -205,6 +207,66 @@ def _ensure_question_topic_name_column(eng) -> None:
                         ADD COLUMN topic_name VARCHAR(512) NOT NULL DEFAULT '';
                     END IF;
                 END $$;
+                """
+            )
+        )
+
+
+def _ensure_assessment_timed_columns(eng) -> None:
+    """Add timed-assessment config columns to assessments."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessments' AND column_name = 'is_timed'
+                    ) THEN
+                        ALTER TABLE assessments
+                        ADD COLUMN is_timed BOOLEAN NOT NULL DEFAULT false;
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessments' AND column_name = 'duration_minutes'
+                    ) THEN
+                        ALTER TABLE assessments ADD COLUMN duration_minutes INTEGER NULL;
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessments' AND column_name = 'notebook_grace_minutes'
+                    ) THEN
+                        ALTER TABLE assessments ADD COLUMN notebook_grace_minutes INTEGER NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
+
+
+def _ensure_assessment_attempts_table(eng) -> None:
+    """Create assessment_attempts if missing (also created by create_all on fresh DB)."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS assessment_attempts (
+                    id SERIAL PRIMARY KEY,
+                    assessment_id VARCHAR(36) NOT NULL
+                        REFERENCES assessments(assessment_id) ON DELETE CASCADE,
+                    employee_id VARCHAR(64) NOT NULL,
+                    started_at VARCHAR(64) NOT NULL,
+                    expires_at VARCHAR(64) NOT NULL,
+                    notebook_expires_at VARCHAR(64) NOT NULL,
+                    submitted_at VARCHAR(64) NULL,
+                    CONSTRAINT uq_assessment_attempt_employee
+                        UNIQUE (assessment_id, employee_id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_assessment_attempts_assessment_id
+                    ON assessment_attempts (assessment_id);
+                CREATE INDEX IF NOT EXISTS ix_assessment_attempts_employee_id
+                    ON assessment_attempts (employee_id);
                 """
             )
         )

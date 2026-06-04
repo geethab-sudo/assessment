@@ -6,14 +6,26 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 
 ## Features
 
-- **Admin portal**: Sign in with a configured password; generate assessments (MCQ, coding, subjective); manage catalog languages/topics; browse all assessments (language, topics, date); delete assessments; review participant submissions.
+- **Admin portal**: Sign in with a configured password; generate assessments (MCQ, coding, subjective); manage catalog languages/topics; browse all assessments (language, topics, routing, timed flag); delete assessments; review participant submissions.
 - **Participant portal**: Open a test with employee ID, name, and assessment ID — no account required for shared assessments.
+- **Auto topic allocation**: Select multiple catalog topics with global MCQ/coding counts — the backend splits counts evenly across topics, generates per topic, and tags each question with `topic_name` for correct routing (no manual per-topic grid required).
+- **Per-topic question allocation**: Optional admin mode with independent MCQ/coding/subjective counts per topic; one LLM call per topic either way when catalog topics are selected.
+- **Notebook-aware routing**: Jupyter download/upload appears only when the assessment **expects notebook coding** (`notebook_expected`), not merely because a jupyter-modality topic is selected (e.g. MCQ-only on a tier-2 topic skips the notebook UI).
 - **Pyodide coding questions**: In-browser Python execution with a full code editor. Participants write and run code without leaving the page.
-- **Jupyter Notebook mode**: Topics that need a live runtime (live API calls, async HTTP, real DB sessions) are delivered as a downloadable `.ipynb` template. Participants solve it locally and submit the completed notebook for LLM grading.
-- **Mixed assessments**: One assessment can contain both Pyodide and Jupyter questions side-by-side. A single **Submit answers** button handles both — in-browser questions are graded directly and the attached notebook is graded in the same request.
-- **Per-topic question allocation**: Admins can set independent MCQ/coding/subjective counts per topic. The backend calls the LLM once per topic and tags every question with its originating topic, enabling correct per-question routing.
+- **Jupyter Notebook mode**: Coding on jupyter-modality topics is delivered as a downloadable `.ipynb` template. Participants solve locally and submit for LLM grading.
+- **Mixed assessments**: Pyodide and Jupyter coding in one test; single **Submit answers** for in-browser work plus optional notebook upload in the same flow.
+- **Timed assessments**: Optional countdown per participant; auto-submit in-browser answers at expiry; configurable grace period for notebook upload with auto-grade on attach.
+- **Per-participant shuffle**: Deterministic question and MCQ option order from `assessment_id + employee_id`; display **Question N of M**; per-question feedback under each card after submit.
 - **LLM grading**: All answers (MCQ, coding, subjective, notebook cells) are scored via Groq with per-question written feedback.
 - **Code editor**: Tab indentation, `Ctrl+/` comment toggling, syntax highlighting, and per-question language override.
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [docs/assessment-generation.md](docs/assessment-generation.md) | Auto vs per-topic allocation, `routing_flag`, `notebook_expected`, template 404/409 |
+| [docs/timed-assessments.md](docs/timed-assessments.md) | Duration, grace period, attempts, enforcement |
+| [docs/participant-experience.md](docs/participant-experience.md) | Shuffle, labels, submit flows, mixed/jupyter UI |
 
 ## Tech stack
 
@@ -102,27 +114,27 @@ npm run dev
 
 1. Open the participant page and enter employee ID, name, and assessment ID.
 2. Answer MCQ questions and write/run Python code in the in-browser Pyodide terminal.
-3. Click **Submit answers** — all questions are graded immediately and a score card with per-question feedback appears.
+3. Click **Submit answers** — all questions are graded immediately and per-question feedback appears under each card.
 
-### Jupyter-only assessment
+### Jupyter-only assessment (with notebook coding)
 
-1. Open the participant page and load the assessment.
-2. Click **Download .ipynb** to get the notebook template (one markdown question cell + one empty code cell per question).
-3. Solve the notebook locally in JupyterLab / VS Code / Google Colab.
-4. Select the completed `.ipynb` file using the file picker on the page.
-5. Click **Submit answers** — the notebook is graded cell-by-cell and a score card with per-cell feedback appears.
+1. Open the participant page and load the assessment (`notebook_expected: true`).
+2. Click **Download .ipynb** for the template (jupyter **coding** questions only).
+3. Solve locally in JupyterLab / VS Code / Colab.
+4. Upload the completed `.ipynb` and click **Submit notebook**.
+
+If the assessment has jupyter topics but **no coding** on those tiers, the UI stays in-browser only (no template/download).
 
 ### Mixed assessment
 
-1. Open the participant page and load the assessment.
-2. Answer MCQ questions in the web UI.
-3. Write code for Pyodide topics directly in the in-browser terminal.
-4. For Jupyter topics, a **"Jupyter Required"** banner lists which topics need the notebook. Click **Download .ipynb** to get the template; solve it locally.
-5. Select the completed `.ipynb` file using the file picker at the bottom of the page.
-6. Click **Submit answers** once — in-browser questions and the notebook are both submitted and graded in the same action.
-7. Two result cards appear: one for in-browser questions, one for the Jupyter notebook.
+1. Load the assessment; answer MCQ and Pyodide coding in the web UI.
+2. When `notebook_expected` is true, use the **Jupyter Required** banner to download the template; jupyter coding items show a placeholder instead of Pyodide.
+3. Attach the completed `.ipynb` (optional until submit).
+4. Click **Submit answers** once — in-browser questions and the notebook are graded together when a file is attached.
 
-> If you click Submit without attaching a notebook, a confirmation dialog warns you so you can cancel and attach it first.
+> Submitting without a notebook while one is expected shows a confirmation dialog.
+
+See [docs/participant-experience.md](docs/participant-experience.md) for shuffle, labels, and timed behavior.
 
 ## Per-participant randomization (anti-cheating)
 
@@ -131,11 +143,11 @@ When a participant loads an assessment, they must enter their **employee ID** fi
 - **Question order** on the web UI (MCQ, Pyodide coding, subjective, Jupyter placeholders)
 - **MCQ option order** (letters A/B/C/D follow the shuffled list; grading still uses the option text)
 
-The shuffle seed is `assessment_id + employee_id` only (participant name is **not** used, so spelling variations do not change the layout). The same employee ID always sees the same order on reload.
+The shuffle seed is `assessment_id + employee_id` only (participant name is **not** used). The same employee ID always sees the same order on reload.
 
-Participants see **Question 3 of 7** (position in their shuffled list), not internal `Q1` / `Q4` IDs. After submit, feedback appears **under each question card** (score + comment), not in one combined block. Admin preview and submissions review keep **Q1, Q2, Q3…** by `question_id` for debugging.
+Participants see **Question 3 of 7** (position in their shuffled list), not internal `Q1` / `Q4` IDs. After submit, feedback appears **under each question card**.
 
-**Not randomized:** Jupyter `.ipynb` template download order (canonical order for coding tasks in the notebook).
+**Not randomized:** Jupyter `.ipynb` template download order (canonical order for notebook coding tasks).
 
 Admin preview and `GET /assessment/{id}/template` omit `employee_id` and return canonical order.
 
@@ -160,7 +172,7 @@ Admin preview and `GET /assessment/{id}/template` omit `employee_id` and return 
 
 ### Tier 2 — Applied Python
 
-Some Tier 2 topics can be evaluated in-browser (`pyodide` modality); others require a live runtime and are delivered via Jupyter Notebook (`jupyter` modality).
+Some Tier 2 topics use in-browser Pyodide; others require a live runtime and use Jupyter (`jupyter` modality) for **coding** questions.
 
 | Topic | Modality |
 |-------|----------|
@@ -175,60 +187,79 @@ Some Tier 2 topics can be evaluated in-browser (`pyodide` modality); others requ
 
 ## Assessment routing
 
-Assessments are automatically routed based on the topics selected:
+### `routing_flag` (topic mix)
 
-| `routing_flag` | Meaning | Participant experience |
-|----------------|---------|----------------------|
-| `pyodide` | All topics use in-browser execution | Regular questions + Pyodide terminal |
-| `jupyter` | All topics require a live environment | Download `.ipynb` template → solve locally → submit |
-| `mixed` | Mix of pyodide and jupyter topics | All questions shown; Pyodide terminal for pyodide coding questions; "Complete in Jupyter Notebook" placeholder for jupyter coding questions; download + submit panel included |
+| `routing_flag` | Meaning |
+|----------------|---------|
+| `pyodide` | All selected topics are pyodide-modality |
+| `jupyter` | All selected topics are jupyter-modality |
+| `mixed` | Both modalities in the topic selection |
 
-MCQ and subjective questions from jupyter-modality topics are always answered in the web UI — only **coding** questions from jupyter topics go into the downloadable notebook.
+### `notebook_expected` (participant notebook UI)
 
-## Per-topic question allocation (Admin)
+| Condition | Notebook download / upload |
+|-----------|----------------------------|
+| `notebook_expected: true` | At least one **coding** question configured on a jupyter-modality topic |
+| `notebook_expected: false` | No jupyter coding (e.g. MCQ-only tier-2, or pyodide-only assessment) |
 
-When generating an assessment with multiple catalog topics, admins can switch to **per-topic** allocation mode:
+MCQ and subjective questions on jupyter topics are always answered in the web UI. Only **coding** on jupyter topics goes into the `.ipynb` template.
 
-- Select a language and one or more topics.
-- Switch to "Per-topic" distribution mode.
-- Set independent MCQ / coding / subjective counts for each topic.
-- On generation, the backend calls the LLM **separately for each topic**, tagging every question with its originating topic name.
-- This enables correct routing: questions from `jupyter` topics are sent to the notebook; questions from `pyodide` topics use the in-browser terminal.
+Generation fails with **400** if jupyter coding was configured but no notebook coding rows were produced — regenerate with adjusted counts.
+
+Details: [docs/assessment-generation.md](docs/assessment-generation.md).
+
+## Per-topic and auto allocation (Admin)
+
+**Auto (default with multiple catalog topics):**
+
+- Select language and topics; set global MCQ / coding / subjective totals.
+- Backend derives per-topic counts (`derive_per_topic_config`) and calls the LLM once per topic.
+- Every question is stored with `topic_name` for routing.
+
+**Per-topic mode:**
+
+- Switch to “Per-topic” distribution and set counts per topic explicitly.
+- Same per-topic LLM loop; routing and notebook rules are unchanged.
 
 ## Jupyter Notebook internals
 
 ### Template generation
 
-`GET /assessment/{id}/template` builds a `.ipynb` with one markdown cell (question text) followed by one empty code cell (student answer) for each **coding** question from a jupyter-modality topic. MCQ and subjective questions from jupyter topics are excluded from the notebook — they are answered in the web UI.
+`GET /assessment/{id}/template`:
+
+- **404** if `notebook_expected` is false.
+- **409** if notebook is expected but no jupyter coding questions exist in storage.
+- **200** — `.ipynb` with one markdown cell + one empty code cell per jupyter coding question.
 
 ### Notebook grading
 
-`notebook_service.py` parses the submitted notebook and pairs each markdown question cell with the immediately following code cell:
+`notebook_service.py` pairs each markdown question cell with the following code cell, grades via LLM, and stores submission rows. Blank trailing cells are skipped.
 
-```
-[markdown: question text] → [code: student answer] → repeat
-```
+## Timed assessments
 
-- Blank trailing code cells with no associated markdown question are silently skipped (Jupyter always appends an empty cell at the bottom).
-- Each question/answer pair is graded individually by the LLM.
-- A combined score and per-cell feedback string are stored as a submission row and returned to the participant.
+Admins enable **Timed assessment** when generating:
+
+- **Duration (minutes)** — minimum 1; no fixed upper cap (short durations allowed for testing).
+- **Notebook grace (minutes)** — default 5; applies when `notebook_expected` is true.
+
+The timer starts when the participant loads the test with employee ID. At main expiry, in-browser answers auto-submit; notebook upload remains until grace ends (auto-grade on file select during grace).
+
+See [docs/timed-assessments.md](docs/timed-assessments.md).
 
 ## Code editor
-
-The in-browser code editor (`SimpleCodeEditor`) provides a comfortable Python editing experience:
 
 | Shortcut | Action |
 |----------|--------|
 | `Tab` | Insert 4-space indent (or indent selected lines) |
 | `Shift+Tab` | Dedent selected lines |
-| `Ctrl+/` / `Cmd+/` | Toggle `# ` comment on current line or all selected lines |
-| Standard clipboard | Copy / paste works normally |
+| `Ctrl+/` / `Cmd+/` | Toggle `# ` comment on current line or selection |
+| Standard clipboard | Copy / paste |
 
-Syntax mode is set from the catalog language of the assessment and can be overridden per coding question via the language selector.
+Syntax mode follows the assessment catalog language; participants can override per coding question.
 
 ## Port conflicts
 
-If another app already uses **8000** or **5173**, you may see the wrong API or UI.
+If another app already uses **8000** or **5173**:
 
 - Confirm the API: `curl -s http://127.0.0.1:8000/openapi.json` should report title **AI Assessment API**.
 - Run the backend on another port, e.g. `uvicorn app:app --reload --port 8010`, then:
@@ -252,29 +283,37 @@ Serve `frontend/dist` behind your reverse proxy and point `/api` to the FastAPI 
 ```
 assessment/
 ├── app.py                      # FastAPI routes and request validation
+├── docs/                       # Detailed feature documentation
 ├── services/
-│   ├── assessment_service.py   # LLM orchestration, per-topic generation, routing
+│   ├── assessment_service.py   # LLM orchestration, per-topic/auto generation
+│   ├── attempt_service.py      # Timed attempts, deadlines, submit guards
 │   ├── auth_service.py
 │   ├── catalog_service.py
-│   ├── db_service.py           # PostgreSQL read/write, routing flag logic
+│   ├── db_service.py           # PostgreSQL read/write, routing flag
 │   ├── database.py             # Engine, session factory, idempotent migrations
 │   ├── llm_service.py          # Groq wrappers for generation and grading
-│   ├── models.py               # SQLAlchemy ORM (modality, routing_flag, topic_name)
-│   ├── notebook_service.py     # Jupyter parsing, markdown↔code pairing, cell grading
-│   └── shuffle_service.py      # Per-participant question/MCQ option shuffle
-├── frontend/                   # React SPA (Vite)
+│   ├── models.py               # ORM (modality, routing_flag, timed columns)
+│   ├── notebook_plan_service.py # notebook_expected, derive_per_topic_config
+│   ├── notebook_service.py     # Jupyter parsing and cell grading
+│   └── shuffle_service.py      # Per-participant shuffle
+├── tests/
+│   ├── test_notebook_plan_service.py
+│   ├── test_attempt_service.py
+│   └── test_shuffle_service.py
+├── frontend/
 │   └── src/
 │       ├── components/
-│       │   ├── SimpleCodeEditor.jsx   # Code editor (Tab, Ctrl+/, syntax highlight)
-│       │   └── PythonRunPanel.jsx     # Pyodide execution panel
+│       │   ├── AssessmentTimerBar.jsx
+│       │   ├── SimpleCodeEditor.jsx
+│       │   └── PythonRunPanel.jsx
+│       ├── hooks/useAssessmentTimer.js
 │       └── pages/
-│           ├── AdminPage.jsx          # Generate assessment (per-topic allocation)
-│           ├── AdminCatalogPage.jsx   # Manage languages and topics
-│           └── ClientPage.jsx         # Take assessment (Pyodide + Jupyter mixed)
-├── scripts/
-│   ├── seed_sample_catalog.py         # Seed Python Tier 1/2, Java, Node.js catalog
-│   └── cleanup_python_topics.py      # Remove legacy Python topics
-├── docker-compose.yml          # PostgreSQL only
+│           ├── AdminPage.jsx
+│           ├── AdminAssessmentsPage.jsx
+│           ├── AdminCatalogPage.jsx
+│           └── ClientPage.jsx
+├── scripts/seed_sample_catalog.py
+├── docker-compose.yml
 ├── requirements.txt
 └── .env.example
 ```
@@ -285,32 +324,40 @@ assessment/
 |------|-------------|
 | `/` | Home |
 | `/login/admin` | Admin sign-in |
-| `/admin` | Generate assessment (per-topic or global allocation) |
+| `/admin` | Generate assessment (auto, per-topic, timed options) |
 | `/admin/assessments` | List / delete assessments |
 | `/admin/catalog` | Languages and topics (with modality) |
 | `/admin/submissions` | Submission review |
-| `/client` | Take assessment (Pyodide, Jupyter, or mixed) |
+| `/client` | Take assessment (Pyodide, Jupyter, mixed, timed) |
 
 ## API overview
 
 | Endpoint | Auth | Description |
 |----------|------|-------------|
 | `POST /auth/login` | — | Admin password or client ID |
-| `POST /generate-assessment` | Admin | Create assessment via LLM (supports `per_topic_config`) |
-| `GET /admin/assessments` | Admin | List assessments (includes `routing_flag`) |
+| `POST /generate-assessment` | Admin | Create assessment (`topic_names`, `per_topic_config`, `is_timed`, …) |
+| `GET /admin/assessments` | Admin | List assessments (`routing_flag`, `is_timed`, …) |
 | `DELETE /admin/assessments/{id}` | Admin | Delete assessment |
-| `GET /assessment/{id}?employee_id=…` | Public* | Questions with `topic_modality`; shuffled per employee ID |
-| `POST /submit-assessment` | Public* | Submit and grade in-browser questions (Pyodide + MCQ) |
-| `GET /assessment/{id}/template` | Public* | Download `.ipynb` template (jupyter coding questions only) |
-| `POST /submit-notebook-assessment` | Public* | Upload and grade completed `.ipynb` |
+| `GET /assessment/{id}?employee_id=…` | Public* | Questions, `topic_modality`, `notebook_expected`, `timer` |
+| `POST /submit-assessment` | Public* | Grade in-browser answers (`employee_id` for timed) |
+| `GET /assessment/{id}/template` | Public* | Download `.ipynb` (404/409 per notebook plan) |
+| `POST /submit-notebook-assessment` | Public* | Upload and grade `.ipynb` |
 
 \*Shared assessments only without client token; client-scoped assessments require client JWT.
+
+## Testing
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt pytest
+python -m pytest tests/ -q
+```
 
 ## Future roadmap
 
 | Goal | Notes |
 |------|--------|
-| **MCQ code snippets as formatted blocks** | When a generated MCQ embeds Python (or other code) in the question stem, render it in a syntax-highlighted code block—not as one long inline sentence. Detect code in stems at display time and/or steer the LLM prompt to emit a separate `code` field. |
+| **MCQ code snippets as formatted blocks** | Render code in MCQ stems as syntax-highlighted blocks; optional separate `code` field from the LLM. |
 
 ## License
 

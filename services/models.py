@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -82,11 +82,48 @@ class Assessment(Base):
         nullable=False,
         server_default=text("'pyodide'"),
     )
+    is_timed: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )
+    duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    notebook_grace_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     questions: Mapped[list["AssessmentQuestion"]] = relationship(
         "AssessmentQuestion",
         back_populates="assessment",
         cascade="all, delete-orphan",
+    )
+    attempts: Mapped[list["AssessmentAttempt"]] = relationship(
+        "AssessmentAttempt",
+        back_populates="assessment",
+        cascade="all, delete-orphan",
+    )
+
+
+class AssessmentAttempt(Base):
+    """Per-participant timed session (assessment_id + employee_id)."""
+
+    __tablename__ = "assessment_attempts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    assessment_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("assessments.assessment_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    employee_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    started_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    notebook_expires_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    submitted_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    assessment: Mapped["Assessment"] = relationship("Assessment", back_populates="attempts")
+
+    __table_args__ = (
+        UniqueConstraint("assessment_id", "employee_id", name="uq_assessment_attempt_employee"),
     )
 
 
