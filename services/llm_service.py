@@ -160,8 +160,13 @@ Types use these lowercase labels: "mcq", "coding", "subjective".
 
 Rules:
 - "mcq": provide "options" as an array of 4 strings and "answer" as the exact correct option text.
-- "coding": provide empty "options" [] and "answer" as a brief reference solution or rubric line.
-- "subjective": provide empty "options" [] and "answer" as a short model answer outline.
+  Put the entire stem in "question". Do NOT add a separate "code" field unless absolutely necessary.
+  For "what is the output of the following code" style items, put the prompt and the snippet in
+  "question" on one line after a colon (e.g. "... code snippet: x = 1; print(x)"). The platform
+  will format that snippet for display. Never use "code" for questions that ask the candidate to
+  write, implement, create, or design a function/program—those are prose-only.
+- "coding": provide empty "options" [] and "answer" as a brief reference solution. Do not use "code".
+- "subjective": provide empty "options" [] and "answer" as a short model answer outline. Do not use "code".
 
 Return ONLY valid JSON (no markdown fences) with this exact shape:
 {{
@@ -184,24 +189,21 @@ Use sequential integer "id" values starting at 1 across all questions."""
     if not isinstance(questions, list) or not questions:
         raise ValueError('Expected JSON with non-empty "questions" array')
 
+    from services.question_stem import normalize_generated_question
+
     normalized: list[dict[str, Any]] = []
     for q in questions:
         if not isinstance(q, dict):
             continue
-        qid = q.get("id")
-        qtype = str(q.get("type", "")).lower().strip()
-        text = str(q.get("question", "")).strip()
-        options = q.get("options") or []
-        if not isinstance(options, list):
-            options = []
-        answer = str(q.get("answer", "")).strip()
+        nq = normalize_generated_question(q)
         normalized.append(
             {
-                "id": qid,
-                "type": qtype,
-                "question": text,
-                "options": options,
-                "answer": answer,
+                "id": nq.get("id"),
+                "type": nq["type"],
+                "question": nq["question"],
+                "options": nq["options"],
+                "answer": nq["answer"],
+                "code_snippet": nq.get("code_snippet") or "",
             }
         )
     if not normalized:

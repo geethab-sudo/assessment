@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch } from "../api";
+import QuestionStem from "../components/QuestionStem.jsx";
 
 function formatAddedAt(isoText) {
   if (!isoText) return "—";
@@ -76,7 +77,12 @@ function AssessmentQuestionPreview({ assessmentId, questionCount }) {
                   <span className="pill">{q.type}</span>
                   <span className="muted">Q{q.question_id}</span>
                 </div>
-                <p className="admin-q-stem">{q.question}</p>
+                <QuestionStem
+                  question={q.question}
+                  code={q.code}
+                  languageCode={payload?.language_code}
+                  className="admin-q-stem-wrap"
+                />
                 {q.type === "mcq" && Array.isArray(q.options) && q.options.length > 0 && (
                   <ul className="admin-q-options muted">
                     {q.options.map((opt, idx) => (

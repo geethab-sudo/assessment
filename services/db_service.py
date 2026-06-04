@@ -207,6 +207,7 @@ def save_assessment_rows(
                     options=row.get("options", "") or "",
                     correct_answer=row.get("correct_answer", "") or "",
                     topic_name=str(row.get("topic_name") or ""),
+                    code_snippet=(row.get("code_snippet") or None) or None,
                 )
             )
         session.commit()
@@ -309,6 +310,7 @@ def save_shared_assessment_rows(
                     options=row.get("options", "") or "",
                     correct_answer=row.get("correct_answer", "") or "",
                     topic_name=str(row.get("topic_name") or ""),
+                    code_snippet=(row.get("code_snippet") or None) or None,
                 )
             )
         session.commit()
@@ -330,6 +332,7 @@ def read_questions_by_assessment(assessment_id: str) -> list[dict[str, Any]]:
                 "options": r.options or "",
                 "correct_answer": r.correct_answer or "",
                 "topic_name": r.topic_name or "",
+                "code_snippet": r.code_snippet or "",
             }
             for r in rows
         ]

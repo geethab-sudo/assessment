@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { apiFetch } from "../api";
 import SimpleCodeEditor from "../components/SimpleCodeEditor.jsx";
+import QuestionStem from "../components/QuestionStem.jsx";
 import PythonRunPanel from "../components/PythonRunPanel.jsx";
 import { catalogCodeToMonaco } from "../lib/monacoLanguageMap.js";
 import { isShellCodingTopic, resolveShellEditorCode } from "../lib/shellEditor.js";
@@ -643,7 +644,11 @@ export default function ClientPage() {
                         </span>
                       )}
                     </div>
-                    <p className="question-stem">{q.question}</p>
+                    <QuestionStem
+                      question={q.question}
+                      code={q.code}
+                      languageCode={assessment?.language_code}
+                    />
                     {q.type === "mcq" && Array.isArray(q.options) ? (
                       <div className="options" role="group" aria-label={`${displayLabel} choices`}>
                         {q.options.map((opt, idx) => (

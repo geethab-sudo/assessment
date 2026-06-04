@@ -17,6 +17,7 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 - **Timed assessments**: Optional countdown per participant; auto-submit in-browser answers at expiry; configurable grace period for notebook upload with auto-grade on attach.
 - **Per-participant shuffle**: Deterministic question and MCQ option order from `assessment_id + employee_id`; display **Question N of M**; per-question feedback under each card after submit.
 - **LLM grading**: All answers (MCQ, coding, subjective, notebook cells) are scored via Groq with per-question written feedback.
+- **MCQ code formatting**: When an MCQ embeds a one-line code snippet in the stem (e.g. “following Python code snippet: `x = 1; print(x)`”), the UI splits and syntax-highlights it. Write/implement questions stay prose-only—no extra code panel.
 - **Code editor**: Tab indentation, `Ctrl+/` comment toggling, syntax highlighting, and per-question language override.
 - **Shell-style coding (venv topic)**: Catalog topics can set `coding_editor_language` to `shell` or `powershell` so coding answers use a Bash/PowerShell editor only (no Pyodide console) — used for **Packaging and virtual environments (venv)** in Python Tier 1.
 
@@ -359,17 +360,29 @@ assessment/
 
 ## Testing
 
+Run from the **project root** (`assessment/`), not from inside `tests/`:
+
 ```bash
 source .venv/bin/activate
 pip install -r requirements.txt pytest
+
+# All tests
 python -m pytest tests/ -q
+
+# One file (pytest)
+python -m pytest tests/test_question_stem.py -q
+
+# One file (stdlib unittest — also works)
+python -m unittest tests.test_question_stem -v
 ```
+
+Do not run `python tests/test_question_stem.py` unless you use `python -m unittest tests.test_question_stem` from the repo root; plain script execution needs the project root on `PYTHONPATH`.
 
 ## Future roadmap
 
 | Goal | Notes |
 |------|--------|
-| **MCQ code snippets as formatted blocks** | Render code in MCQ stems as syntax-highlighted blocks; optional separate `code` field from the LLM. |
+| *(none queued)* | Add items here as new product goals are agreed. |
 
 ## License
 

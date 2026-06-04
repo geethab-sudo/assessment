@@ -1095,12 +1095,59 @@ button:disabled {
   font-size: 0.88rem;
 }
 
+.question-stem-block {
+  margin: 0 0 1rem;
+}
+
+.question-stem-block .question-stem {
+  margin: 0 0 0.75rem;
+}
+
 .question-stem {
   margin: 0 0 1rem;
   font-weight: 500;
   color: var(--text);
   line-height: 1.55;
   white-space: pre-line;
+}
+
+.mcq-code-block {
+  margin: 0 0 0.85rem;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+  background: #0d1117;
+}
+
+.mcq-code-block-lang {
+  margin: 0;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8b949e;
+  background: #161b22;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.mcq-code-block-pre {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: #e6edf3;
+}
+
+.mcq-code-block-code {
+  display: block;
+  white-space: pre;
+}
+
+.admin-q-stem-wrap.question-stem-block {
+  margin-bottom: 0.65rem;
 }
 
 .pill {

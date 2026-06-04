@@ -73,6 +73,7 @@ def init_db() -> None:
     _ensure_assessment_timed_columns(eng)
     _ensure_assessment_attempts_table(eng)
     _ensure_topic_coding_editor_language_column(eng)
+    _ensure_question_code_snippet_column(eng)
 
 
 def _ensure_raw_notebook_column(eng) -> None:
@@ -259,6 +260,28 @@ def _ensure_topic_coding_editor_language_column(eng) -> None:
                         WHERE table_name = 'topics' AND column_name = 'coding_editor_language'
                     ) THEN
                         ALTER TABLE topics ADD COLUMN coding_editor_language VARCHAR(32) NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
+
+
+def _ensure_question_code_snippet_column(eng) -> None:
+    """Add code_snippet to assessment_questions for MCQ code blocks."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessment_questions'
+                          AND column_name = 'code_snippet'
+                    ) THEN
+                        ALTER TABLE assessment_questions
+                        ADD COLUMN code_snippet TEXT NULL;
                     END IF;
                 END $$;
                 """

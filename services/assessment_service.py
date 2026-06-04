@@ -130,6 +130,7 @@ def create_assessment(
                     "options": _options_for_csv(opts),
                     "correct_answer": q.get("answer", ""),
                     "topic_name": tname,
+                    "code_snippet": q.get("code_snippet") or "",
                 })
                 global_q_id += 1
     else:
@@ -152,6 +153,7 @@ def create_assessment(
                 "options": _options_for_csv(opts),
                 "correct_answer": q.get("answer", ""),
                 "topic_name": "",
+                "code_snippet": q.get("code_snippet") or "",
             })
 
     from services.notebook_plan_service import jupyter_topic_names_from_list
@@ -370,14 +372,22 @@ def get_assessment_for_user(
         topic_modality = mod if mod else None
         coding_editor_language = editor_by_name.get(tname) if tname else None
 
+        from services.question_stem import split_stem_for_display
+
+        prose, code_snippet = split_stem_for_display(
+            r.get("question", ""),
+            r.get("code_snippet") or "",
+        )
         item: dict[str, Any] = {
             "question_id": r.get("question_id"),
             "type": qtype,
-            "question": r.get("question", ""),
+            "question": prose,
             "topic_name": tname,
             "topic_modality": topic_modality,
             "coding_editor_language": coding_editor_language,
         }
+        if code_snippet:
+            item["code"] = code_snippet
         if qtype == "mcq":
             item["options"] = options
         else:
@@ -458,7 +468,12 @@ def submit_assessment(
         if not row:
             continue
 
-        question_text = row.get("question", "")
+        from services.question_stem import format_question_for_grading
+
+        question_text = format_question_for_grading(
+            row.get("question", ""),
+            row.get("code_snippet") or "",
+        )
         qtype = (row.get("type") or "").lower()
 
         # Include options in prompt for MCQ so the model sees full context

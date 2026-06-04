@@ -143,6 +143,8 @@ class AssessmentQuestion(Base):
     correct_answer: Mapped[str] = mapped_column(Text, default="")
     #: Catalog topic name this question was generated for (empty for legacy questions)
     topic_name: Mapped[str] = mapped_column(String(512), nullable=False, server_default=text("''"))
+    #: Optional code block for MCQ stems (and other types); shown highlighted in the UI
+    code_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     assessment: Mapped["Assessment"] = relationship("Assessment", back_populates="questions")
 
