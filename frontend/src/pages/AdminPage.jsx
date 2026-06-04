@@ -2,6 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch } from "../api";
 import SearchableLanguageSelect from "../components/SearchableLanguageSelect.jsx";
+import {
+  applyPreset,
+  findPythonLanguageId,
+  getTier1Presets,
+  getPresetByName,
+  presetNameToLevel,
+} from "../lib/tier1Presets.js";
 
 /** Build the topic string for the LLM from a catalog topic row. */
 function buildTopicStringForApi(topicRow) {
@@ -102,6 +109,12 @@ export default function AdminPage() {
   const [durationMinutes, setDurationMinutes] = useState(45);
   const [notebookGraceMinutes, setNotebookGraceMinutes] = useState(5);
 
+  const [usePresetTier1, setUsePresetTier1] = useState(false);
+  const [selectedPresetName, setSelectedPresetName] = useState(null);
+  const [showDistributionEditor, setShowDistributionEditor] = useState(false);
+  const [presetMissingTopics, setPresetMissingTopics] = useState([]);
+
+  const tier1Presets = useMemo(() => getTier1Presets(), []);
 
   const topicById = useMemo(
     () => Object.fromEntries(topics.map((t) => [String(t.id), t])),
@@ -115,11 +128,18 @@ export default function AdminPage() {
 
   const resolvedTopic = useMemo(() => {
     if (topicMode !== "catalog") return customTopic.trim();
-    if (allocationMode === "per-topic") {
+    if (usePresetTier1 || allocationMode === "per-topic") {
       return buildPerTopicTopicString(selectedTopicRows, perTopicCounts);
     }
     return buildMultiTopicString(selectedTopicRows);
-  }, [topicMode, allocationMode, selectedTopicRows, perTopicCounts, customTopic]);
+  }, [topicMode, usePresetTier1, allocationMode, selectedTopicRows, perTopicCounts, customTopic]);
+
+  const effectiveLevel = useMemo(() => {
+    if (usePresetTier1 && selectedPresetName) {
+      return presetNameToLevel(selectedPresetName);
+    }
+    return level;
+  }, [usePresetTier1, selectedPresetName, level]);
 
 
   const loadLanguages = useCallback(async () => {
@@ -179,11 +199,89 @@ export default function AdminPage() {
   useEffect(() => {
     if (languageId === "") {
       setTopics([]);
-      setSelectedTopicIds([]);
+      if (!usePresetTier1) {
+        setSelectedTopicIds([]);
+      }
       return;
     }
     void loadTopicsForLanguage(languageId);
-  }, [languageId, loadTopicsForLanguage]);
+  }, [languageId, loadTopicsForLanguage, usePresetTier1]);
+
+  useEffect(() => {
+    if (!usePresetTier1 || topicMode !== "catalog" || languages.length === 0) return;
+    const pyId = findPythonLanguageId(languages);
+    if (pyId && languageId !== pyId) {
+      setLanguageId(pyId);
+    }
+  }, [usePresetTier1, topicMode, languages, languageId]);
+
+  const applySelectedPreset = useCallback(
+    (presetName) => {
+      const preset = getPresetByName(presetName);
+      if (!preset) return;
+      const applied = applyPreset(preset, topics);
+      setSelectedPresetName(presetName);
+      setSelectedTopicIds(applied.selectedTopicIds);
+      setPerTopicCounts(applied.perTopicCounts);
+      setLevel(applied.level);
+      setAllocationMode("per-topic");
+      setTypeMcq(true);
+      setTypeCoding(true);
+      setTypeSubjective(false);
+      setIsTimed(true);
+      setDurationMinutes(applied.durationMinutes);
+      setPresetMissingTopics(applied.missingTopicNames);
+      setError(null);
+    },
+    [topics]
+  );
+
+  const handlePresetTier1Toggle = (enabled) => {
+    setUsePresetTier1(enabled);
+    setError(null);
+    if (!enabled) {
+      setSelectedPresetName(null);
+      setShowDistributionEditor(false);
+      setPresetMissingTopics([]);
+      return;
+    }
+    setAllocationMode("per-topic");
+    setShowDistributionEditor(false);
+    setSelectedPresetName(null);
+    setSelectedTopicIds([]);
+    setPerTopicCounts({});
+  };
+
+  const handleSelectPresetCard = (presetName) => {
+    applySelectedPreset(presetName);
+    setShowDistributionEditor(false);
+  };
+
+  const handleResetPresetDistribution = () => {
+    if (selectedPresetName) {
+      applySelectedPreset(selectedPresetName);
+    }
+  };
+
+  const addPresetTopic = (topicId) => {
+    const sid = String(topicId);
+    if (!sid || selectedTopicIds.includes(sid)) return;
+    setSelectedTopicIds((prev) => [...prev, sid]);
+    setPerTopicCounts((prev) => ({
+      ...prev,
+      [sid]: prev[sid] || { mcq: 0, coding: 0, subjective: 0 },
+    }));
+  };
+
+  const removePresetTopic = (topicId) => {
+    const sid = String(topicId);
+    setSelectedTopicIds((prev) => prev.filter((x) => x !== sid));
+    setPerTopicCounts((prev) => {
+      const next = { ...prev };
+      delete next[sid];
+      return next;
+    });
+  };
 
   const toggleTopic = (id) => {
     const sid = String(id);
@@ -268,7 +366,7 @@ export default function AdminPage() {
   }, [selectedTopicIds, perTopicCounts]);
 
   const buildTypesAndCounts = useMemo(() => {
-    if (topicMode === "catalog" && allocationMode === "per-topic") {
+    if (topicMode === "catalog" && (usePresetTier1 || allocationMode === "per-topic")) {
       const types = [];
       const questions_per_type = {};
       const { mcq, coding, subjective } = totalCounts;
@@ -302,7 +400,7 @@ export default function AdminPage() {
       questions_per_type.subjective = Math.min(30, Math.max(1, countSubjective));
     }
     return { types, questions_per_type };
-  }, [topicMode, allocationMode, totalCounts, typeMcq, typeCoding, typeSubjective, countMcq, countCoding, countSubjective]);
+  }, [topicMode, usePresetTier1, allocationMode, totalCounts, typeMcq, typeCoding, typeSubjective, countMcq, countCoding, countSubjective]);
 
 
   const handleGenerate = async () => {
@@ -327,9 +425,22 @@ export default function AdminPage() {
           throw new Error("Could not build topic text for the API.");
         }
       }
+      if (usePresetTier1 && presetMissingTopics.length > 0) {
+        throw new Error(
+          `Catalog is missing preset topics. Run: python scripts/seed_sample_catalog.py\nMissing: ${presetMissingTopics.join("; ")}`
+        );
+      }
+      if (usePresetTier1 && !selectedPresetName) {
+        throw new Error("Select a Tier 1 preset: Beginner, Intermediate, or Advanced.");
+      }
+
       // Build per_topic_config when using per-topic allocation mode
       let per_topic_config = {};
-      if (topicMode === "catalog" && allocationMode === "per-topic" && selectedTopicIds.length > 0) {
+      if (
+        topicMode === "catalog" &&
+        (usePresetTier1 || allocationMode === "per-topic") &&
+        selectedTopicIds.length > 0
+      ) {
         for (const id of selectedTopicIds) {
           const row = topicById[String(id)];
           if (!row) continue;
@@ -347,7 +458,7 @@ export default function AdminPage() {
         authRole: "admin",
         body: JSON.stringify({
           topic: resolvedTopic,
-          level,
+          level: effectiveLevel,
           types,
           questions_per_type,
           ...(languageCodeForGenerate ? { language_code: languageCodeForGenerate } : {}),
@@ -373,19 +484,22 @@ export default function AdminPage() {
 
   const catalogReady =
     topicMode === "custom" ||
-    (Boolean(languageId) && selectedTopicRows.length > 0 && !loadingTopics);
+    (Boolean(languageId) &&
+      !loadingTopics &&
+      (usePresetTier1 ? topics.length > 0 : selectedTopicRows.length > 0));
 
   const hasAnyQuestions = useMemo(() => {
-    if (topicMode === "catalog" && allocationMode === "per-topic") {
+    if (topicMode === "catalog" && (usePresetTier1 || allocationMode === "per-topic")) {
       return totalCounts.mcq > 0 || totalCounts.coding > 0 || totalCounts.subjective > 0;
     }
     return typeMcq || typeCoding || typeSubjective;
-  }, [topicMode, allocationMode, totalCounts, typeMcq, typeCoding, typeSubjective]);
+  }, [topicMode, usePresetTier1, allocationMode, totalCounts, typeMcq, typeCoding, typeSubjective]);
 
   const canGenerate =
     !loading &&
     (topicMode === "catalog" ? catalogReady : customTopic.trim().length > 0) &&
-    hasAnyQuestions;
+    hasAnyQuestions &&
+    (!usePresetTier1 || (selectedPresetName && presetMissingTopics.length === 0));
 
 
   return (
@@ -409,23 +523,31 @@ export default function AdminPage() {
       <section className="card">
         <h2>Configuration</h2>
         <div className="grid">
-          <label>
-            Level
-            <select value={level} onChange={(e) => setLevel(e.target.value)}>
-              <option value="beginner">Beginner</option>
-              <option value="intermediate">Intermediate</option>
-              <option value="advanced">Advanced</option>
-            </select>
-            <span className="muted">Depth and difficulty of questions follow this level.</span>
-          </label>
+          {!(usePresetTier1 && topicMode === "catalog") && (
+            <label>
+              Level
+              <select value={level} onChange={(e) => setLevel(e.target.value)}>
+                <option value="beginner">Beginner</option>
+                <option value="intermediate">Intermediate</option>
+                <option value="advanced">Advanced</option>
+              </select>
+              <span className="muted">Depth and difficulty of questions follow this level.</span>
+            </label>
+          )}
           <label>
             Content source
             <select
               value={topicMode}
               onChange={(e) => {
-                setTopicMode(e.target.value);
+                const mode = e.target.value;
+                setTopicMode(mode);
                 setError(null);
                 setSelectedTopicIds([]);
+                if (mode === "custom") {
+                  setUsePresetTier1(false);
+                  setSelectedPresetName(null);
+                  setShowDistributionEditor(false);
+                }
               }}
             >
               <option value="catalog">Catalog: language + topics</option>
@@ -436,20 +558,203 @@ export default function AdminPage() {
 
         {topicMode === "catalog" && (
           <div className="stack" style={{ marginTop: "1rem" }}>
+            <label className="preset-tier1-toggle">
+              <input
+                type="checkbox"
+                checked={usePresetTier1}
+                onChange={(e) => handlePresetTier1Toggle(e.target.checked)}
+              />
+              <span>
+                <strong>Preset Tier 1 evaluation (Python)</strong>
+                <span className="muted small-print" style={{ display: "block", marginTop: "0.25rem" }}>
+                  Standard Beginner / Intermediate / Advanced combos — edit counts and duration before generating.
+                </span>
+              </span>
+            </label>
+
             <SearchableLanguageSelect
               label="Language"
               inputId="gen-form-lang"
               languages={languages}
               value={languageId}
               onChange={(v) => {
+                if (usePresetTier1) return;
                 setLanguageId(v);
                 setError(null);
               }}
               required
-              disabled={loadingLanguages}
-              hint="Search by name, code, or id. Add languages under Admin → Catalog if the list is empty."
+              disabled={loadingLanguages || usePresetTier1}
+              hint={
+                usePresetTier1
+                  ? "Locked to Python for Tier 1 presets."
+                  : "Search by name, code, or id. Add languages under Admin → Catalog if the list is empty."
+              }
             />
-            {languageId && !loadingTopics && topics.length > 0 && (
+
+            {usePresetTier1 && (
+              <div className="tier1-preset-panel" role="group" aria-label="Tier 1 preset selection">
+                <h3 className="tier1-preset-panel__title">Choose evaluation combo</h3>
+                <div className="tier1-preset-cards">
+                  {tier1Presets.map((preset) => {
+                    const cardMcq = selectedPresetName === preset.name
+                      ? totalCounts.mcq
+                      : (preset.topics || []).reduce((s, t) => s + (t.mcq || 0), 0);
+                    const cardCoding = selectedPresetName === preset.name
+                      ? totalCounts.coding
+                      : (preset.topics || []).reduce((s, t) => s + (t.coding || 0), 0);
+                    const selected = selectedPresetName === preset.name;
+                    return (
+                      <button
+                        key={preset.name}
+                        type="button"
+                        className={`tier1-preset-card${selected ? " tier1-preset-card--selected" : ""}`}
+                        onClick={() => handleSelectPresetCard(preset.name)}
+                        aria-pressed={selected}
+                      >
+                        <span className="tier1-preset-card__name">{preset.name}</span>
+                        <span className="tier1-preset-card__meta muted small-print">
+                          {cardMcq} MCQ · {cardCoding} coding · {cardMcq + cardCoding} total
+                        </span>
+                        <span className="tier1-preset-card__duration muted small-print">
+                          Suggested ~{preset.target_duration_minutes} min (timed, editable below)
+                        </span>
+                        <p className="tier1-preset-card__desc small-print">{preset.description}</p>
+                        <table className="tier1-preset-card__table">
+                          <thead>
+                            <tr>
+                              <th scope="col">Topic</th>
+                              <th scope="col">MCQ</th>
+                              <th scope="col">Code</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(preset.topics || []).map((t) => (
+                              <tr key={t.topic_name}>
+                                <td>{t.topic_name.replace(/^Tier 1 - /, "")}</td>
+                                <td>{t.mcq}</td>
+                                <td>{t.coding}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {selectedPresetName && (
+                  <div className="tier1-preset-actions">
+                    <button
+                      type="button"
+                      className="nav-btn"
+                      onClick={() => setShowDistributionEditor((v) => !v)}
+                    >
+                      {showDistributionEditor ? "Hide distribution editor" : "Edit question distribution"}
+                    </button>
+                    {showDistributionEditor && (
+                      <button
+                        type="button"
+                        className="nav-btn"
+                        onClick={handleResetPresetDistribution}
+                      >
+                        Reset to {selectedPresetName} preset
+                      </button>
+                    )}
+                    <p className="tier1-preset-totals muted" aria-live="polite">
+                      Current: <strong>{totalCounts.mcq} MCQ</strong> ·{" "}
+                      <strong>{totalCounts.coding} coding</strong> ·{" "}
+                      <strong>{totalCounts.mcq + totalCounts.coding + totalCounts.subjective} total</strong>
+                      {effectiveLevel && (
+                        <> · Level <strong>{effectiveLevel}</strong></>
+                      )}
+                    </p>
+                  </div>
+                )}
+
+                {presetMissingTopics.length > 0 && (
+                  <div className="error" role="alert" style={{ marginTop: "0.75rem" }}>
+                    Missing catalog topics. Run{" "}
+                    <code>python scripts/seed_sample_catalog.py</code>
+                    <ul style={{ margin: "0.5rem 0 0 1rem" }}>
+                      {presetMissingTopics.map((n) => (
+                        <li key={n}>{n}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {showDistributionEditor && selectedPresetName && selectedTopicRows.length > 0 && (
+                  <div className="tier1-distribution-editor">
+                    <label className="tier1-add-topic">
+                      Add topic from catalog
+                      <select
+                        defaultValue=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            addPresetTopic(e.target.value);
+                            e.target.value = "";
+                          }
+                        }}
+                      >
+                        <option value="">— Select —</option>
+                        {topics
+                          .filter((t) => !selectedTopicIds.includes(String(t.id)))
+                          .map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    {selectedTopicRows.map((t) => {
+                      const tid = String(t.id);
+                      return (
+                        <div key={t.id} className="topic-preview-card">
+                          <div className="tier1-distribution-editor__head">
+                            <h4 className="topic-preview-h">{t.name}</h4>
+                            <button
+                              type="button"
+                              className="nav-btn tier1-remove-topic"
+                              onClick={() => removePresetTopic(t.id)}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <div className="per-topic-inputs">
+                            <div className="per-topic-input-group">
+                              <span>MCQ:</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={30}
+                                value={perTopicCounts[tid]?.mcq ?? 0}
+                                onChange={(e) =>
+                                  handlePerTopicCountChange(tid, "mcq", e.target.value)
+                                }
+                              />
+                            </div>
+                            <div className="per-topic-input-group">
+                              <span>Coding:</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={30}
+                                value={perTopicCounts[tid]?.coding ?? 0}
+                                onChange={(e) =>
+                                  handlePerTopicCountChange(tid, "coding", e.target.value)
+                                }
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!usePresetTier1 && languageId && !loadingTopics && topics.length > 0 && (
               <div
                 className="topic-pick-card"
                 role="group"
@@ -561,7 +866,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {topicMode === "catalog" && selectedTopicIds.length > 0 && (
+        {!usePresetTier1 && topicMode === "catalog" && selectedTopicIds.length > 0 && (
           <div className="allocation-mode-selector" style={{ marginTop: "1rem", marginBottom: "1rem" }}>
             <label style={{ marginBottom: "0.4rem", display: "block" }}>
               Question Distribution
@@ -590,7 +895,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {selectedTopicRows.length > 0 && topicMode === "catalog" && (
+        {!usePresetTier1 && selectedTopicRows.length > 0 && topicMode === "catalog" && (
           <div className="topic-preview" aria-label="Selected topics summary">
             <h3 className="topic-preview-title">Selected topics</h3>
             {selectedTopicRows.map((t) => {
@@ -673,6 +978,8 @@ export default function AdminPage() {
         )}
 
 
+        {!(usePresetTier1 && topicMode === "catalog") && (
+          <>
         <h3 className="generate-subh" style={{ marginTop: "1.25rem" }}>
           Question types and counts
         </h3>
@@ -759,8 +1066,10 @@ export default function AdminPage() {
             </label>
           </div>
         </div>
+          </>
+        )}
 
-        {catalogHint && (
+        {catalogHint && !usePresetTier1 && (
           <p className="muted" role="status" style={{ marginTop: "0.75rem" }}>
             {catalogHint}
           </p>
@@ -814,6 +1123,9 @@ export default function AdminPage() {
           )}
           {isTimed && (
             <p className="muted small-print" style={{ margin: "0.65rem 0 0 0", lineHeight: 1.5 }}>
+              {usePresetTier1 && selectedPresetName
+                ? `Suggested duration for ${selectedPresetName} is pre-filled — change minutes here if needed. `
+                : null}
               Timer starts when the participant loads the test. At time zero, answers auto-submit.
               Grace minutes allow uploading the Jupyter notebook after the main timer ends.
             </p>

@@ -8,6 +8,7 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 
 - **Admin portal**: Sign in with a configured password; generate assessments (MCQ, coding, subjective); manage catalog languages/topics; browse all assessments (language, topics, routing, timed flag); delete assessments; review participant submissions.
 - **Participant portal**: Open a test with employee ID, name, and assessment ID — no account required for shared assessments.
+- **Tier 1 evaluation presets**: One-click **Beginner** / **Intermediate** / **Advanced** Python Tier 1 combos (25 questions: 15 MCQ + 10 coding) with editable per-topic counts and suggested timed duration (60 / 90 / 120 min).
 - **Auto topic allocation**: Select multiple catalog topics with global MCQ/coding counts — the backend splits counts evenly across topics, generates per topic, and tags each question with `topic_name` for correct routing (no manual per-topic grid required).
 - **Per-topic question allocation**: Optional admin mode with independent MCQ/coding/subjective counts per topic; one LLM call per topic either way when catalog topics are selected.
 - **Notebook-aware routing**: Jupyter download/upload appears only when the assessment **expects notebook coding** (`notebook_expected`), not merely because a jupyter-modality topic is selected (e.g. MCQ-only on a tier-2 topic skips the notebook UI).
@@ -17,7 +18,7 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 - **Timed assessments**: Optional countdown per participant; auto-submit in-browser answers at expiry; configurable grace period for notebook upload with auto-grade on attach.
 - **Per-participant shuffle**: Deterministic question and MCQ option order from `assessment_id + employee_id`; display **Question N of M**; per-question feedback under each card after submit.
 - **LLM grading**: All answers (MCQ, coding, subjective, notebook cells) are scored via Groq with per-question written feedback.
-- **MCQ code formatting**: When an MCQ embeds a one-line code snippet in the stem (e.g. “following Python code snippet: `x = 1; print(x)`”), the UI splits and syntax-highlights it. Write/implement questions stay prose-only—no extra code panel.
+- **MCQ code formatting**: Embedded snippets in MCQ stems (inline, fenced, or `code_snippet`) are split into prose + a dark syntax-highlighted block. One-liners are expanded (`if`/`with`/`class`/`def` bodies, semicolon chains). Mixed stems like “class … What is the output of the following code: print(…)” become a question line plus formatted code. Write/implement prompts stay prose-only.
 - **Code editor**: Tab indentation, `Ctrl+/` comment toggling, syntax highlighting, and per-question language override.
 - **Shell-style coding (venv topic)**: Catalog topics can set `coding_editor_language` to `shell` or `powershell` so coding answers use a Bash/PowerShell editor only (no Pyodide console) — used for **Packaging and virtual environments (venv)** in Python Tier 1.
 
@@ -26,6 +27,7 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 | Document | Description |
 |----------|-------------|
 | [docs/assessment-generation.md](docs/assessment-generation.md) | Auto vs per-topic allocation, `routing_flag`, `notebook_expected`, template 404/409 |
+| [docs/tier1-presets.md](docs/tier1-presets.md) | Beginner / Intermediate / Advanced Python Tier 1 preset combos |
 | [docs/timed-assessments.md](docs/timed-assessments.md) | Duration, grace period, attempts, enforcement |
 | [docs/participant-experience.md](docs/participant-experience.md) | Shuffle, labels, submit flows, mixed/jupyter UI |
 

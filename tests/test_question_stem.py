@@ -12,6 +12,7 @@ if str(_ROOT) not in sys.path:
 
 from services.question_stem import (
     extract_inline_code_from_prose,
+    extract_mixed_code_output_question,
     normalize_generated_question,
     prettify_inline_code,
     should_keep_stored_code,
@@ -20,6 +21,54 @@ from services.question_stem import (
 
 
 class TestQuestionStem(unittest.TestCase):
+    def test_double_prettify_keeps_indent(self) -> None:
+        raw = (
+            "x = 5\n"
+            "if x > 10: print('x is greater than 10')\n"
+            "    else: print('x is less than or equal to 10')"
+        )
+        once = prettify_inline_code(raw)
+        twice = prettify_inline_code(once)
+        self.assertIn("    print('x is greater than 10')", twice)
+        self.assertIn("    print('x is less than or equal to 10')", twice)
+
+    def test_prettify_with_statement(self) -> None:
+        raw = (
+            "x = 5\n"
+            "with open('example.txt', 'w') as f: f.write(str(x))\n"
+            "with open('example.txt', 'r') as f: print(f.read())"
+        )
+        out = prettify_inline_code(raw)
+        self.assertIn("with open('example.txt', 'w') as f:\n", out)
+        self.assertIn("    f.write(str(x))", out)
+        self.assertIn("    print(f.read())", out)
+
+    def test_mixed_class_and_output_question(self) -> None:
+        raw = (
+            "class Vehicle: def __init__(self, brand, model): self.__brand = brand\n"
+            "self.__model = model. What is the output of the following code: "
+            "print(Vehicle('Toyota', 'Camry')._Vehicle__brand):"
+        )
+        prose, code = split_stem_for_display(raw, "")
+        self.assertIn("What is the output", prose)
+        self.assertIn("class Vehicle:", code or "")
+        self.assertIn("def __init__", code or "")
+        self.assertIn("        self.__brand = brand", code or "")
+        self.assertIn("        self.__model = model", code or "")
+        self.assertIn("print(Vehicle", code or "")
+
+    def test_prettify_if_else_multiline(self) -> None:
+        raw = (
+            "x = 5\n"
+            "if x > 10: print('x is greater than 10')\n"
+            "    else: print('x is less than or equal to 10')"
+        )
+        out = prettify_inline_code(raw)
+        self.assertIn("if x > 10:\n", out)
+        self.assertIn("    print('x is greater than 10')", out)
+        self.assertIn("else:\n", out)
+        self.assertNotIn("    else:", out)
+
     def test_prettify_semicolon_one_liner(self) -> None:
         raw = (
             "x = 5; y = 3; if x > y: print('greater'); "
