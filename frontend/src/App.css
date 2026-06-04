@@ -869,6 +869,31 @@ body {
   margin-top: 1rem;
 }
 
+/* nav-btn is for the dark top bar only — use visible buttons on the admin form */
+.tier1-action-btn {
+  margin-top: 0;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.tier1-action-btn:hover {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.tier1-preset-actions .tier1-action-btn:first-of-type {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent-hover);
+}
+
 .tier1-preset-totals {
   margin: 0;
   width: 100%;

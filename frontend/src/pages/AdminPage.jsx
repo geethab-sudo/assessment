@@ -254,7 +254,7 @@ export default function AdminPage() {
 
   const handleSelectPresetCard = (presetName) => {
     applySelectedPreset(presetName);
-    setShowDistributionEditor(false);
+    setShowDistributionEditor(true);
   };
 
   const handleResetPresetDistribution = () => {
@@ -646,7 +646,7 @@ export default function AdminPage() {
                   <div className="tier1-preset-actions">
                     <button
                       type="button"
-                      className="nav-btn"
+                      className="tier1-action-btn"
                       onClick={() => setShowDistributionEditor((v) => !v)}
                     >
                       {showDistributionEditor ? "Hide distribution editor" : "Edit question distribution"}
@@ -654,7 +654,7 @@ export default function AdminPage() {
                     {showDistributionEditor && (
                       <button
                         type="button"
-                        className="nav-btn"
+                        className="tier1-action-btn"
                         onClick={handleResetPresetDistribution}
                       >
                         Reset to {selectedPresetName} preset
@@ -683,8 +683,14 @@ export default function AdminPage() {
                   </div>
                 )}
 
-                {showDistributionEditor && selectedPresetName && selectedTopicRows.length > 0 && (
+                {showDistributionEditor && selectedPresetName && (
                   <div className="tier1-distribution-editor">
+                    {selectedTopicRows.length === 0 && (
+                      <p className="muted small-print" role="status">
+                        Preset topics are not in the catalog yet — add topics below or run{" "}
+                        <code>python scripts/seed_sample_catalog.py</code>.
+                      </p>
+                    )}
                     <label className="tier1-add-topic">
                       Add topic from catalog
                       <select
@@ -714,7 +720,7 @@ export default function AdminPage() {
                             <h4 className="topic-preview-h">{t.name}</h4>
                             <button
                               type="button"
-                              className="nav-btn tier1-remove-topic"
+                              className="tier1-action-btn tier1-remove-topic"
                               onClick={() => removePresetTopic(t.id)}
                             >
                               Remove
