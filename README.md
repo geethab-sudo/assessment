@@ -168,7 +168,7 @@ Admin preview and `GET /assessment/{id}/template` omit `employee_id` and return 
 | Modules, Namespaces & Imports (Absolute/Relative, Circular imports) |
 | Generators & Iterables (yield, generator expressions) |
 | Testing (unittest, pytest) |
-| Packaging and virtual environments (venv) |
+| Packaging and virtual environments (venv) — coding answers use **Bash** or **PowerShell** editor highlighting, not Python |
 
 ### Tier 2 — Applied Python
 

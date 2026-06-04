@@ -2031,6 +2031,14 @@ button.btn-table-danger:disabled {
   min-height: 0;
 }
 
+.code-playground-editor-only {
+  padding: 0 0 0.5rem;
+}
+
+.code-playground-editor-only .code-editor-container {
+  border-radius: 8px;
+}
+
 .code-playground-console-fallback {
   padding: 0.85rem 1rem;
   line-height: 1.5;

@@ -50,6 +50,8 @@ class Topic(Base):
         nullable=False,
         server_default=text("'pyodide'"),
     )
+    #: Optional editor for coding questions: "shell" (bash) or "powershell"; NULL = assessment language
+    coding_editor_language: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     language: Mapped["Language"] = relationship("Language", back_populates="topics")
 

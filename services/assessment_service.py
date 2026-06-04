@@ -205,6 +205,14 @@ def create_assessment(
     }
 
 
+_SHELL_CODING_HINT = (
+    "\n\nCoding questions for this topic: expect terminal/shell answers "
+    "(bash on Unix/macOS, e.g. `python3 -m venv .venv` and `source .venv/bin/activate`, "
+    "or PowerShell on Windows, e.g. `python -m venv .venv` and `.venv\\Scripts\\Activate.ps1`). "
+    "Do not ask participants to write Python scripts for venv setup unless the task explicitly requires it."
+)
+
+
 def _build_per_topic_strings(topic_names: list[str]) -> dict[str, str]:
     """Build LLM topic strings for each catalog topic name by looking up related_documents."""
     from sqlalchemy import select
@@ -224,25 +232,26 @@ def _build_per_topic_strings(topic_names: list[str]) -> dict[str, str]:
 
     for tname in topic_names:
         row = by_name.get(tname)
-        if not row:
-            result[tname] = tname
-            continue
-        docs = row.related_documents or []
-        if not docs:
-            result[tname] = tname
-            continue
-        lines = []
-        for d in docs:
-            title = (d.get("title") or "").strip() or "Reference"
-            url = (d.get("url") or "").strip()
-            path = (d.get("path") or "").strip()
-            if url:
-                lines.append(f"- {title}: {url}")
-            elif path:
-                lines.append(f"- {title}: {path}")
-            else:
-                lines.append(f"- {title}")
-        result[tname] = f"{tname}\n\nContext (reference materials):\n" + "\n".join(lines)
+        text = tname
+        if row:
+            docs = row.related_documents or []
+            if docs:
+                lines = []
+                for d in docs:
+                    title = (d.get("title") or "").strip() or "Reference"
+                    url = (d.get("url") or "").strip()
+                    path = (d.get("path") or "").strip()
+                    if url:
+                        lines.append(f"- {title}: {url}")
+                    elif path:
+                        lines.append(f"- {title}: {path}")
+                    else:
+                        lines.append(f"- {title}")
+                text = f"{tname}\n\nContext (reference materials):\n" + "\n".join(lines)
+            cel = (row.coding_editor_language or "").strip().lower()
+            if cel in ("shell", "powershell"):
+                text += _SHELL_CODING_HINT
+        result[tname] = text
     return result
 
 
@@ -335,9 +344,11 @@ def get_assessment_for_user(
         }
 
     jupyter_topics = set(meta["jupyter_topic_names"])
-    modality_by_name = db_service.get_topic_modality_by_names(
-        list(dict.fromkeys((x.get("topic_name") or "").strip() for x in rows if x.get("topic_name")))
+    topic_names_on_rows = list(
+        dict.fromkeys((x.get("topic_name") or "").strip() for x in rows if x.get("topic_name"))
     )
+    modality_by_name = db_service.get_topic_modality_by_names(topic_names_on_rows)
+    editor_by_name = db_service.get_topic_coding_editor_by_names(topic_names_on_rows)
 
     questions_out: list[dict[str, Any]] = []
     for r in rows:
@@ -357,6 +368,7 @@ def get_assessment_for_user(
         tname = (r.get("topic_name") or "").strip()
         mod = resolve_question_modality(tname, jupyter_topics, modality_by_name)
         topic_modality = mod if mod else None
+        coding_editor_language = editor_by_name.get(tname) if tname else None
 
         item: dict[str, Any] = {
             "question_id": r.get("question_id"),
@@ -364,6 +376,7 @@ def get_assessment_for_user(
             "question": r.get("question", ""),
             "topic_name": tname,
             "topic_modality": topic_modality,
+            "coding_editor_language": coding_editor_language,
         }
         if qtype == "mcq":
             item["options"] = options

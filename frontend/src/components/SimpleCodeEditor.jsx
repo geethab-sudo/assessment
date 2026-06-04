@@ -1,48 +1,80 @@
 import { useRef, useEffect } from "react";
 
-function highlightPython(code) {
-  if (!code) return "";
-
-  // Escape HTML characters
-  let html = code
+function escapeHtml(code) {
+  return code
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
 
-  // Syntax highlighting regex
+function highlightPython(code) {
+  if (!code) return "";
+  let html = escapeHtml(code);
   const tokenRegex = /(#[^\n]*)|(f?(?:"""[\s\S]*?"""|'''[\s\S]*?'''|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'))|(\b(def|class|return|if|else|elif|import|from|as|for|while|in|try|except|finally|raise|assert|with|lambda|pass|break|continue|global|nonlocal|del|yield|and|or|not|is)\b)|(\b(None|True|False)\b)|(\b(print|len|range|str|int|float|list|dict|set|tuple|open|type|enumerate|zip|sum|min|max|any|all|map|filter)\b)|(@[a-zA-Z_][a-zA-Z0-9_]*)/g;
-
-  html = html.replace(tokenRegex, (match, comment, string, keyword, keywordWord, constant, constantWord, builtin, builtinWord, decorator) => {
-    if (comment) {
-      return `<span class="token-comment">${comment}</span>`;
-    }
-    if (string) {
-      return `<span class="token-string">${string}</span>`;
-    }
-    if (keyword) {
-      return `<span class="token-keyword">${keyword}</span>`;
-    }
-    if (constant) {
-      return `<span class="token-constant">${constant}</span>`;
-    }
-    if (builtin) {
-      return `<span class="token-builtin">${builtin}</span>`;
-    }
-    if (decorator) {
-      return `<span class="token-decorator">${decorator}</span>`;
-    }
+  html = html.replace(tokenRegex, (match, comment, string, keyword, _kw, constant, _c, builtin, _b, decorator) => {
+    if (comment) return `<span class="token-comment">${comment}</span>`;
+    if (string) return `<span class="token-string">${string}</span>`;
+    if (keyword) return `<span class="token-keyword">${keyword}</span>`;
+    if (constant) return `<span class="token-constant">${constant}</span>`;
+    if (builtin) return `<span class="token-builtin">${builtin}</span>`;
+    if (decorator) return `<span class="token-decorator">${decorator}</span>`;
     return match;
   });
-
   return html;
+}
+
+function highlightShell(code) {
+  if (!code) return "";
+  let html = escapeHtml(code);
+  const tokenRegex = /(#[^\n]*)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b(?:python3?|pip3?|source|export|cd|ls|mkdir|rm|chmod|venv|activate|deactivate|sudo|apt|brew)\b)|(\$[A-Za-z_][A-Za-z0-9_]*)|(\b\d+\b)/g;
+  html = html.replace(tokenRegex, (match, comment, string, keyword, variable, number) => {
+    if (comment) return `<span class="token-comment">${comment}</span>`;
+    if (string) return `<span class="token-string">${string}</span>`;
+    if (keyword) return `<span class="token-keyword">${keyword}</span>`;
+    if (variable) return `<span class="token-builtin">${variable}</span>`;
+    if (number) return `<span class="token-constant">${number}</span>`;
+    return match;
+  });
+  return html;
+}
+
+function highlightPowerShell(code) {
+  if (!code) return "";
+  let html = escapeHtml(code);
+  const tokenRegex = /(#[^\n]*)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\b(?:python|pip|cd|Set-Location|New-Item|Remove-Item|venv|Activate|deactivate|Import-Module)\b)|(\$[A-Za-z_][A-Za-z0-9_]*)|(\b\d+\b)/gi;
+  html = html.replace(tokenRegex, (match, comment, string, keyword, variable, number) => {
+    if (comment) return `<span class="token-comment">${comment}</span>`;
+    if (string) return `<span class="token-string">${string}</span>`;
+    if (keyword) return `<span class="token-keyword">${keyword}</span>`;
+    if (variable) return `<span class="token-builtin">${variable}</span>`;
+    if (number) return `<span class="token-constant">${number}</span>`;
+    return match;
+  });
+  return html;
+}
+
+function highlightForLanguage(code, language) {
+  const lang = (language || "python").toLowerCase();
+  if (lang === "shell" || lang === "sh" || lang === "bash") return highlightShell(code);
+  if (lang === "powershell" || lang === "ps1") return highlightPowerShell(code);
+  return highlightPython(code);
+}
+
+function defaultPlaceholder(language) {
+  const lang = (language || "python").toLowerCase();
+  if (lang === "shell" || lang === "sh" || lang === "bash" || lang === "powershell" || lang === "ps1") {
+    return "";
+  }
+  return "Type or paste your code here…";
 }
 
 export default function SimpleCodeEditor({
   value,
   onChange,
   readOnly = false,
-  placeholder = "Type or paste your code here…",
+  placeholder,
   minHeight = 280,
+  language = "python",
 }) {
   const textareaRef = useRef(null);
   const preRef = useRef(null);
@@ -56,12 +88,11 @@ export default function SimpleCodeEditor({
 
   useEffect(() => {
     syncScroll();
-  }, [value]);
+  }, [value, language]);
 
   const handleKeyDown = (e) => {
     const ta = textareaRef.current;
 
-    // Tab → insert 4 spaces
     if (e.key === "Tab" && !e.shiftKey) {
       e.preventDefault();
       const val = ta.value;
@@ -75,26 +106,19 @@ export default function SimpleCodeEditor({
       return;
     }
 
-    // Ctrl+/ or Cmd+/ → toggle line comment
     if ((e.ctrlKey || e.metaKey) && e.key === "/") {
       e.preventDefault();
       const val = ta.value;
       const start = ta.selectionStart;
       const end = ta.selectionEnd;
-
-      // Expand selection to full line boundaries
       const lineStart = val.lastIndexOf("\n", start - 1) + 1;
       const lineEndRaw = val.indexOf("\n", end);
       const lineEnd = lineEndRaw === -1 ? val.length : lineEndRaw;
-
       const block = val.substring(lineStart, lineEnd);
       const lines = block.split("\n");
-
-      // If every non-empty line already starts with #, uncomment; otherwise comment
       const allCommented = lines.every(
         (l) => l.trim() === "" || l.trimStart().startsWith("#")
       );
-
       let newBlock;
       if (allCommented) {
         newBlock = lines
@@ -109,10 +133,7 @@ export default function SimpleCodeEditor({
       } else {
         newBlock = lines.map((l) => (l === "" ? l : "# " + l)).join("\n");
       }
-
       onChange(val.substring(0, lineStart) + newBlock + val.substring(lineEnd));
-
-      // Restore selection to cover the whole modified block
       setTimeout(() => {
         if (ta) {
           ta.selectionStart = lineStart;
@@ -122,10 +143,11 @@ export default function SimpleCodeEditor({
     }
   };
 
-  const highlighted = highlightPython(value);
+  const highlighted = highlightForLanguage(value, language);
+  const resolvedPlaceholder = placeholder ?? defaultPlaceholder(language);
 
   return (
-    <div className="code-editor-container" style={{ minHeight }}>
+    <div className={`code-editor-container code-editor-container--${language}`} style={{ minHeight }}>
       <pre
         ref={preRef}
         className="code-editor-highlight"
@@ -141,15 +163,14 @@ export default function SimpleCodeEditor({
         onScroll={syncScroll}
         onKeyDown={handleKeyDown}
         readOnly={readOnly}
-        placeholder={placeholder}
+        placeholder={resolvedPlaceholder}
         spellCheck={false}
         autoComplete="off"
         autoCapitalize="off"
         autoCorrect="off"
         style={{ minHeight }}
-        aria-label="Code answer"
+        aria-label={language === "python" ? "Code answer" : "Shell commands answer"}
       />
     </div>
   );
 }
-

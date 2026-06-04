@@ -72,6 +72,7 @@ def init_db() -> None:
     _ensure_question_topic_name_column(eng)
     _ensure_assessment_timed_columns(eng)
     _ensure_assessment_attempts_table(eng)
+    _ensure_topic_coding_editor_language_column(eng)
 
 
 def _ensure_raw_notebook_column(eng) -> None:
@@ -238,6 +239,26 @@ def _ensure_assessment_timed_columns(eng) -> None:
                         WHERE table_name = 'assessments' AND column_name = 'notebook_grace_minutes'
                     ) THEN
                         ALTER TABLE assessments ADD COLUMN notebook_grace_minutes INTEGER NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
+
+
+def _ensure_topic_coding_editor_language_column(eng) -> None:
+    """Add coding_editor_language to topics (shell / powershell for terminal-style coding)."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'topics' AND column_name = 'coding_editor_language'
+                    ) THEN
+                        ALTER TABLE topics ADD COLUMN coding_editor_language VARCHAR(32) NULL;
                     END IF;
                 END $$;
                 """

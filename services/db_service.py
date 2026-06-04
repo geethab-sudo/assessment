@@ -363,6 +363,23 @@ def get_topic_modality_by_names(topic_names: list[str]) -> dict[str, str]:
         return {r.name: (r.modality or "pyodide") for r in rows}
 
 
+def get_topic_coding_editor_by_names(names: list[str]) -> dict[str, str | None]:
+    """Map catalog topic name → coding_editor_language ('shell', 'powershell', or None)."""
+    cleaned = [n.strip() for n in names if n and str(n).strip()]
+    if not cleaned:
+        return {}
+    with _session() as session:
+        rows = session.scalars(select(Topic).where(Topic.name.in_(cleaned))).all()
+        out: dict[str, str | None] = {}
+        for r in rows:
+            cel = (r.coding_editor_language or "").strip().lower() or None
+            if cel in ("shell", "powershell"):
+                out[r.name] = cel
+            else:
+                out[r.name] = None
+        return out
+
+
 def get_assessment_metadata(assessment_id: str) -> dict[str, Any]:
     """Return language_code, routing_flag, topic_names, and jupyter_topic_names in one query."""
     with _session() as session:

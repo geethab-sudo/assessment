@@ -28,13 +28,22 @@ Seed: `assessment_id + employee_id` (name is **not** used).
 
 See `services/shuffle_service.py` and `tests/test_shuffle_service.py`.
 
+## Shell / terminal coding (venv topic)
+
+Some catalog topics set `coding_editor_language` to `shell` or `powershell` (e.g. **Packaging and virtual environments (venv)**). For those coding questions:
+
+- The editor uses Bash or PowerShell syntax highlighting (switchable via **Shell** dropdown). There is no in-browser terminal — participants type commands in the editor only.
+- Answers are graded by the LLM on submit; generation prompts steer toward shell commands, not Python scripts for `venv` setup.
+
+Re-run `python scripts/seed_sample_catalog.py` after deploy to set `coding_editor_language` on existing catalog rows.
+
 ## Modality on the page
 
 | Question type | `topic_modality` | UI |
 |---------------|------------------|-----|
 | MCQ | any | Radio options |
 | Subjective | any | Textarea |
-| Coding | `pyodide` | Code playground + Pyodide run |
+| Coding | `pyodide` | Code playground + Pyodide run (or **Bash/PowerShell terminal** for topics like venv — see `coding_editor_language`) |
 | Coding | `jupyter` | “Complete in Jupyter” placeholder |
 | Coding | `null` (legacy) | Code playground |
 

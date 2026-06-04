@@ -156,6 +156,7 @@ SAMPLE: list[dict] = [
             },
             {
                 "name": "Tier 1 - Packaging and virtual environments (venv)",
+                "coding_editor_language": "shell",
                 "related_documents": [
                     {"title": "venv", "url": "https://docs.python.org/3/library/venv.html"},
                     {"title": "PyPA - Installing Packages", "url": "https://packaging.python.org/en/latest/tutorials/installing-packages/"}
@@ -375,6 +376,11 @@ def main() -> None:
                 tname = t["name"]
                 docs = t.get("related_documents") or []
                 modality = t.get("modality", "pyodide")
+                coding_editor = t.get("coding_editor_language")
+                if coding_editor:
+                    coding_editor = str(coding_editor).strip().lower()
+                    if coding_editor not in ("shell", "powershell"):
+                        coding_editor = None
                 existing = session.scalar(
                     select(Topic).where(
                         Topic.language_id == lid,
@@ -384,6 +390,7 @@ def main() -> None:
                 if existing:
                     existing.modality = modality
                     existing.related_documents = docs
+                    existing.coding_editor_language = coding_editor
                     skipped_topic += 1
                     continue
                 session.add(
@@ -392,6 +399,7 @@ def main() -> None:
                         name=tname,
                         related_documents=docs,
                         modality=modality,
+                        coding_editor_language=coding_editor,
                     )
                 )
                 created_topic += 1

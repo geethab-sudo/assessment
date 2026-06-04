@@ -4,6 +4,7 @@ import { apiFetch } from "../api";
 import SimpleCodeEditor from "../components/SimpleCodeEditor.jsx";
 import PythonRunPanel from "../components/PythonRunPanel.jsx";
 import { catalogCodeToMonaco } from "../lib/monacoLanguageMap.js";
+import { isShellCodingTopic, resolveShellEditorCode } from "../lib/shellEditor.js";
 import { participantQuestionLabel } from "../lib/participantQuestionLabels.js";
 import AssessmentTimerBar from "../components/AssessmentTimerBar.jsx";
 import { useAssessmentTimer } from "../hooks/useAssessmentTimer.js";
@@ -615,12 +616,17 @@ export default function ClientPage() {
                 );
                 const qr = resultByQid[String(q.question_id)];
                 const qk = String(q.question_id);
+                const shellTopic = q.type === "coding" && isShellCodingTopic(q.coding_editor_language);
+                const effectiveCatalogCode = shellTopic
+                  ? resolveShellEditorCode(
+                      qk in codeLangByQid ? codeLangByQid[qk] : null,
+                      q.coding_editor_language
+                    )
+                  : (qk in codeLangByQid ? codeLangByQid[qk] : null) || assessment?.language_code;
                 const codingMonaco =
-                  q.type === "coding"
-                    ? catalogCodeToMonaco(
-                        (qk in codeLangByQid ? codeLangByQid[qk] : null) || assessment?.language_code
-                      )
-                    : "python";
+                  q.type === "coding" ? catalogCodeToMonaco(effectiveCatalogCode) : "python";
+                const useShellTerminal =
+                  shellTopic && (codingMonaco === "shell" || codingMonaco === "powershell");
                 return (
                   <div key={String(q.question_id)} className="question">
                     <div className="qhead">
@@ -681,18 +687,53 @@ export default function ClientPage() {
                         </span>
                       </div>
                     ) : q.type === "coding" ? (
-                      <div className="code-playground" aria-label="Code playground">
+                      <div
+                        className={`code-playground${useShellTerminal ? " code-playground--shell" : ""}`}
+                        aria-label={useShellTerminal ? "Shell commands editor" : "Code playground"}
+                      >
                         <header className="code-playground-chrome">
                           <div className="code-playground-chrome-top">
-                            <span className="code-playground-chrome-title">Code playground</span>
-                            <span className="code-playground-chrome-pill" title="Language mode (Execute uses Python)">
-                              {codingMonaco}
+                            <span className="code-playground-chrome-title">
+                              {useShellTerminal ? "Shell commands" : "Code playground"}
+                            </span>
+                            <span
+                              className="code-playground-chrome-pill"
+                              title={
+                                useShellTerminal
+                                  ? "Shell mode — commands are graded on submit"
+                                  : "Language mode (Execute uses Python)"
+                              }
+                            >
+                              {useShellTerminal
+                                ? codingMonaco === "powershell"
+                                  ? "PowerShell"
+                                  : "Bash"
+                                : codingMonaco}
                             </span>
                             <span className="code-playground-chrome-pill" style={{ opacity: 0.6, fontSize: "0.72rem", fontFamily: "monospace" }} title="Toggle comment on selected lines">
                               Ctrl+/
                             </span>
                           </div>
-                          {catalogLanguages.length > 0 && (
+                          {shellTopic ? (
+                            <div className="code-playground-lang">
+                              <label className="code-playground-lang-label">
+                                <span className="code-playground-lang-text">Shell</span>
+                                <select
+                                  value={qk in codeLangByQid ? (codeLangByQid[qk] || "") : ""}
+                                  onChange={(e) => setCodeLanguageForQuestion(q.question_id, e.target.value)}
+                                  disabled={formLocked}
+                                >
+                                  <option value="">
+                                    {q.coding_editor_language === "powershell"
+                                      ? "Default (PowerShell)"
+                                      : "Default (Bash)"}
+                                  </option>
+                                  <option value="shell">Bash / sh</option>
+                                  <option value="powershell">PowerShell</option>
+                                </select>
+                              </label>
+                            </div>
+                          ) : catalogLanguages.length > 0 ? (
                             <div className="code-playground-lang">
                               <label className="code-playground-lang-label">
                                 <span className="code-playground-lang-text">Language</span>
@@ -714,41 +755,54 @@ export default function ClientPage() {
                                 </select>
                               </label>
                             </div>
-                          )}
+                          ) : null}
                         </header>
-                        <div className="code-playground-split">
-                          <section className="code-playground-pane code-playground-pane--editor">
-                            <div className="code-playground-pane-tab" aria-hidden="true">
-                              Editor
-                            </div>
-                            <div className="code-playground-editor-wrap">
-                              <SimpleCodeEditor
-                                value={answers[qk] ?? ""}
-                                onChange={(v) => setAnswer(q.question_id, v)}
-                                readOnly={formLocked}
-                                minHeight={320}
-                              />
-                            </div>
-                          </section>
-                          <section className="code-playground-pane code-playground-pane--console">
-                            <div className="code-playground-pane-tab" aria-hidden="true">
-                              Console
-                            </div>
-                            {codingMonaco === "python" ? (
-                              <PythonRunPanel
-                                code={answers[qk] ?? ""}
-                                disabled={formLocked}
-                                variant="playground"
-                              />
-                            ) : (
-                              <div className="code-playground-console-fallback muted small-print">
-                                In-browser <strong>Execute</strong> (Pyodide) needs the editor in{" "}
-                                <strong>Python</strong> mode. Use the language control above, or pick an assessment whose
-                                default maps to Python.
+                        {useShellTerminal ? (
+                          <div className="code-playground-editor-only">
+                            <SimpleCodeEditor
+                              value={answers[qk] ?? ""}
+                              onChange={(v) => setAnswer(q.question_id, v)}
+                              readOnly={formLocked}
+                              minHeight={320}
+                              language={codingMonaco}
+                            />
+                          </div>
+                        ) : (
+                          <div className="code-playground-split">
+                            <section className="code-playground-pane code-playground-pane--editor">
+                              <div className="code-playground-pane-tab" aria-hidden="true">
+                                Editor
                               </div>
-                            )}
-                          </section>
-                        </div>
+                              <div className="code-playground-editor-wrap">
+                                <SimpleCodeEditor
+                                  value={answers[qk] ?? ""}
+                                  onChange={(v) => setAnswer(q.question_id, v)}
+                                  readOnly={formLocked}
+                                  minHeight={320}
+                                  language={codingMonaco}
+                                />
+                              </div>
+                            </section>
+                            <section className="code-playground-pane code-playground-pane--console">
+                              <div className="code-playground-pane-tab" aria-hidden="true">
+                                Console
+                              </div>
+                              {codingMonaco === "python" ? (
+                                <PythonRunPanel
+                                  code={answers[qk] ?? ""}
+                                  disabled={formLocked}
+                                  variant="playground"
+                                />
+                              ) : (
+                                <div className="code-playground-console-fallback muted small-print">
+                                  In-browser <strong>Execute</strong> (Pyodide) needs the editor in{" "}
+                                  <strong>Python</strong> mode. Use the language control above, or pick an assessment whose
+                                  default maps to Python.
+                                </div>
+                              )}
+                            </section>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <textarea
