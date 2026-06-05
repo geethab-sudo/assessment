@@ -166,9 +166,7 @@ def save_assessment_rows(
     lbl = _normalize_language_label(language_label)
     topics = _normalize_topic_names(topic_names)
     with _session() as session:
-        # Determine routing flag:
-        routing_flag = "pyodide"
-# Preserve routing_flag determined earlier (supports mixed modalities)
+        routing_flag = "pyodide"  # client-scoped assessments are always pyodide
 
         existing = session.get(Assessment, assessment_id)
         if existing:
@@ -207,16 +205,26 @@ def save_assessment_rows(
                     options=row.get("options", "") or "",
                     correct_answer=row.get("correct_answer", "") or "",
                     topic_name=str(row.get("topic_name") or ""),
-                    code_snippet=(row.get("code_snippet") or None) or None,
+                    code_snippet=row.get("code_snippet") or None,
                 )
             )
         session.commit()
+
+
+def get_topics_by_names(topic_names: list[str]):
+    """Return Topic ORM rows matching the given names (used by assessment_service)."""
+    names = [n.strip() for n in topic_names if n and str(n).strip()]
+    if not names:
+        return []
+    with _session() as session:
+        return session.scalars(select(Topic).where(Topic.name.in_(names))).all()
 
 
 def save_shared_assessment_rows(
     assessment_id: str,
     rows: list[dict[str, Any]],
     *,
+    routing_flag: str = "pyodide",
     language_code: str | None = None,
     language_label: str | None = None,
     topic_names: list[str] | None = None,
@@ -224,7 +232,11 @@ def save_shared_assessment_rows(
     duration_minutes: int | None = None,
     notebook_grace_minutes: int | None = None,
 ) -> None:
-    """Shared assessment: owner_client_id is NULL (any client may access)."""
+    """Shared assessment: owner_client_id is NULL (any client may access).
+
+    ``routing_flag`` must be computed by the caller (assessment_service._compute_routing_flag)
+    before persisting — this function is a pure persistence layer.
+    """
     with _session() as session:
         existing = session.get(Assessment, assessment_id)
         lang = _normalize_language_code(language_code)
@@ -232,35 +244,6 @@ def save_shared_assessment_rows(
         topics = _normalize_topic_names(
             topic_names if topic_names is not None else []
         )
-        # Determine routing flag (supports mixed modalities)
-        routing_flag = "pyodide"
-        # Detect presence of Jupyter modality among topics
-        has_jupyter = False
-        has_other = False
-        if topics:
-            has_jupyter = session.scalar(
-                select(Topic.id).where(
-                    Topic.name.in_(topics),
-                    Topic.modality == "jupyter"
-                ).limit(1)
-            )
-            has_other = session.scalar(
-                select(Topic.id).where(
-                    Topic.name.in_(topics),
-                    Topic.modality != "jupyter"
-                ).limit(1)
-            )
-        # Determine flag based on language code and topic modalities
-        if lang == "ipynb":
-            if has_other:
-                routing_flag = "mixed"
-            else:
-                routing_flag = "jupyter"
-        elif has_jupyter and has_other:
-            routing_flag = "mixed"
-        elif has_jupyter:
-            routing_flag = "jupyter"
-        # else remains "pyodide"
 
 
 
@@ -310,7 +293,7 @@ def save_shared_assessment_rows(
                     options=row.get("options", "") or "",
                     correct_answer=row.get("correct_answer", "") or "",
                     topic_name=str(row.get("topic_name") or ""),
-                    code_snippet=(row.get("code_snippet") or None) or None,
+                    code_snippet=row.get("code_snippet") or None,
                 )
             )
         session.commit()

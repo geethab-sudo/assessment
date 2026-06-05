@@ -12,6 +12,10 @@ from sqlalchemy import select
 from services.database import get_session_factory
 from services.models import Assessment, AssessmentAttempt, Submission
 
+
+def _session():
+    return get_session_factory()()
+
 MIN_DURATION_MINUTES = 1
 MIN_NOTEBOOK_GRACE_MINUTES = 0
 DEFAULT_NOTEBOOK_GRACE_MINUTES = 5
@@ -61,8 +65,7 @@ def user_has_submitted(assessment_id: str, employee_id: str) -> bool:
     if not eid:
         return False
     prefix = f"{employee_id.strip()} |"
-    sf = get_session_factory()
-    with sf() as session:
+    with _session() as session:
         row = session.scalar(
             select(Submission.id)
             .where(
@@ -88,8 +91,7 @@ def user_has_submitted(assessment_id: str, employee_id: str) -> bool:
 
 def _get_attempt_row(assessment_id: str, employee_id: str) -> AssessmentAttempt | None:
     eid = normalize_employee_id(employee_id)
-    sf = get_session_factory()
-    with sf() as session:
+    with _session() as session:
         return session.scalar(
             select(AssessmentAttempt).where(
                 AssessmentAttempt.assessment_id == assessment_id.strip(),
@@ -115,8 +117,7 @@ def get_or_create_attempt(assessment: Assessment, employee_id: str) -> dict[str,
     duration = assessment.duration_minutes or MIN_DURATION_MINUTES
     grace = assessment.notebook_grace_minutes or DEFAULT_NOTEBOOK_GRACE_MINUTES
 
-    sf = get_session_factory()
-    with sf() as session:
+    with _session() as session:
         row = session.scalar(
             select(AssessmentAttempt).where(
                 AssessmentAttempt.assessment_id == aid,
@@ -150,8 +151,7 @@ def get_or_create_attempt(assessment: Assessment, employee_id: str) -> dict[str,
 
 def mark_attempt_submitted(assessment_id: str, employee_id: str) -> None:
     eid = normalize_employee_id(employee_id)
-    sf = get_session_factory()
-    with sf() as session:
+    with _session() as session:
         row = session.scalar(
             select(AssessmentAttempt).where(
                 AssessmentAttempt.assessment_id == assessment_id.strip(),

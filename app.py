@@ -20,12 +20,26 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+import json
+import uuid
+
 from services import assessment_service, auth_service, catalog_service, notebook_service
 from services import db_service
 from services.database import init_db, ping_database
 from services.llm_service import groq_key_configured
 
 ALLOWED_TYPES = frozenset({"mcq", "coding", "subjective"})
+MAX_NOTEBOOK_BYTES = 5 * 1024 * 1024  # 5 MiB
+
+
+def _require_valid_assessment_id(raw: str) -> str:
+    """Strip and validate that the path param is a well-formed UUID. Raises HTTPException."""
+    aid = raw.strip()
+    try:
+        uuid.UUID(aid)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid assessment ID format") from None
+    return aid
 
 
 @asynccontextmanager
@@ -428,11 +442,10 @@ def generate_assessment(
 ) -> dict[str, Any]:
     """Admin: generate questions via LLM and persist to PostgreSQL."""
     try:
-        types_norm = [t.strip().lower() for t in body.types]
         return assessment_service.create_assessment(
             topic=body.topic.strip(),
             level=body.level,
-            types=types_norm,
+            types=body.types,  # already normalized by Pydantic validator
             questions_per_type=body.questions_per_type,
             language_code=body.language_code,
             language_label=body.language_label,
@@ -459,11 +472,11 @@ def public_list_languages() -> dict[str, Any]:
 @app.get("/assessment/{assessment_id}")
 def get_assessment(
     assessment_id: str,
-    employee_id: str | None = None,
+    employee_id: str | None = Query(default=None, max_length=64),
 ) -> dict[str, Any]:
     """Public: fetch questions (no correct answers). Pass employee_id for per-participant shuffle."""
     try:
-        aid = assessment_id.strip()
+        aid = _require_valid_assessment_id(assessment_id)
         if not db_service.client_may_access_assessment(aid, None):
             raise HTTPException(
                 status_code=403,
@@ -480,11 +493,15 @@ def get_assessment(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+class _AssessmentExpiredError(ValueError):
+    """Raised when a timed assessment deadline has passed."""
+
+
 @app.post("/submit-assessment")
 def submit_assessment(body: SubmitAssessmentBody) -> dict[str, Any]:
     """Public: submit answers; LLM evaluates; participant identified by employee_id + name."""
     try:
-        aid = body.assessment_id.strip()
+        aid = _require_valid_assessment_id(body.assessment_id)
         if not db_service.client_may_access_assessment(aid, None):
             raise HTTPException(
                 status_code=403,
@@ -503,7 +520,8 @@ def submit_assessment(body: SubmitAssessmentBody) -> dict[str, Any]:
         )
     except ValueError as e:
         msg = str(e)
-        if "expired" in msg.lower() or "attempt" in msg.lower():
+        # Deadline-related errors from attempt_service carry specific messages
+        if "expired" in msg.lower() or "grace" in msg.lower() or "attempt" in msg.lower():
             raise HTTPException(status_code=403, detail=msg) from e
         raise HTTPException(status_code=400, detail=msg) from e
     except RuntimeError as e:
@@ -520,10 +538,10 @@ async def submit_notebook_assessment(
     client_id: str | None = Header(None),
 ):
     contents = await file.read()
-    if len(contents) > 5 * 1024 * 1024:
+    if len(contents) > MAX_NOTEBOOK_BYTES:
         raise HTTPException(status_code=413, detail="File too large (max 5 MiB)")
     try:
-        aid = assessment_id.strip()
+        aid = _require_valid_assessment_id(assessment_id)
         if not db_service.client_may_access_assessment(aid, client_id):
             raise HTTPException(
                 status_code=403,
@@ -544,8 +562,9 @@ async def submit_notebook_assessment(
 
 @app.get("/assessment/{assessment_id}/template")
 def get_notebook_template(assessment_id: str, client_id: str | None = Header(None)):
+    """Public: download Jupyter notebook template for coding questions."""
     try:
-        aid = assessment_id.strip()
+        aid = _require_valid_assessment_id(assessment_id)
         if not db_service.client_may_access_assessment(aid, client_id):
             raise HTTPException(
                 status_code=403,
@@ -573,41 +592,13 @@ def get_notebook_template(assessment_id: str, client_id: str | None = Header(Non
             )
 
         notebook_questions = assessment_service.get_notebook_template_questions(aid)
-
-        cells = []
-        for i, q in enumerate(notebook_questions):
-            cells.append({
-                "cell_type": "markdown",
-                "metadata": {},
-                "source": [
-                    f"# Question {i + 1}\n",
-                    f"{q['question']}\n"
-                ]
-            })
-            cells.append({
-                "cell_type": "code",
-                "execution_count": None,
-                "metadata": {},
-                "outputs": [],
-                "source": []
-            })
-            
-        nb_dict = {
-            "cells": cells,
-            "metadata": {
-                "language_info": {
-                    "name": "python"
-                }
-            },
-            "nbformat": 4,
-            "nbformat_minor": 2
-        }
-        
-        import json
+        nb_dict = assessment_service.build_notebook_template(notebook_questions, aid)
         nb_json = json.dumps(nb_dict, indent=1)
-        return Response(content=nb_json, media_type="application/x-ipynb+json", headers={
-            "Content-Disposition": f"attachment; filename=assessment_{aid}.ipynb"
-        })
+        return Response(
+            content=nb_json,
+            media_type="application/x-ipynb+json",
+            headers={"Content-Disposition": f"attachment; filename=assessment_{aid}.ipynb"},
+        )
     except HTTPException:
         raise
     except Exception as e:
