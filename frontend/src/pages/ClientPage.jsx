@@ -287,14 +287,19 @@ export default function ClientPage() {
     });
   }, [needsNotebook, notebookResult, notebookFile, handleSubmit]);
 
+  const assessmentSubmitted = Boolean(result);
+
   const timerState = useAssessmentTimer(assessment, {
     onMainExpire,
     onNotebookGraceEnd,
+    paused: assessmentSubmitted,
   });
 
-  // Auto-grade notebook as soon as it is attached during the grace window
+  // Auto-grade notebook when attached during grace (or after in-browser submit in mixed timed tests)
   useEffect(() => {
-    if (!timerState.inNotebookGrace || !notebookFile || notebookResult || !result) return;
+    const inNotebookUploadWindow =
+      timerState.inNotebookGrace || (assessmentSubmitted && needsNotebook);
+    if (!inNotebookUploadWindow || !notebookFile || notebookResult || !result) return;
     if (lastGraceSubmittedFile.current === notebookFile.name) return;
     lastGraceSubmittedFile.current = notebookFile.name;
     graceNotebookSubmitLock.current = true;
@@ -305,6 +310,8 @@ export default function ClientPage() {
     });
   }, [
     timerState.inNotebookGrace,
+    assessmentSubmitted,
+    needsNotebook,
     notebookFile,
     notebookResult,
     result,
@@ -316,9 +323,14 @@ export default function ClientPage() {
 
   const notebookUploadEnabled =
     !notebookResult &&
-    (!timerState.isTimed || timerState.inMainWindow || timerState.inNotebookGrace);
+    (!timerState.isTimed ||
+      timerState.inMainWindow ||
+      timerState.inNotebookGrace ||
+      (assessmentSubmitted && needsNotebook));
 
-  const showFixedTimer = Boolean(assessment?.is_timed && assessment?.timer);
+  const showFixedTimer = Boolean(
+    assessment?.is_timed && assessment?.timer && !assessmentSubmitted
+  );
 
   return (
     <div className={`page${showFixedTimer ? " page--timed-assessment" : ""}`}>
@@ -388,7 +400,7 @@ export default function ClientPage() {
 
       {assessment && (
         <section className={`card${result ? " card-after-submit" : ""}`}>
-          {needsNotebook && !notebookResult && (
+          {needsNotebook && !notebookResult && !assessmentSubmitted && (
             <TimerExpiredBanner
               timeExpiredBanner={timeExpiredBanner}
               inNotebookGrace={timerState.inNotebookGrace}

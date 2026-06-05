@@ -7,8 +7,30 @@ function parseScore(s) {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Format an ISO datetime string into a short, readable local time. */
+function formatDate(iso) {
+  if (!iso || iso === "—") return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** Extract the employee ID portion from "empid | Full Name" labels. */
+function extractEmployeeId(userId) {
+  if (!userId) return "";
+  const pipe = userId.indexOf("|");
+  return pipe === -1 ? userId.trim() : userId.slice(0, pipe).trim();
+}
+
 /**
- * Group flat CSV rows by (client_id, assessment_id), then by (user_id, timestamp) per submit session.
+ * Group flat submission rows by (client_id, assessment_id), then by (user_id, timestamp)
+ * per submit session. Returns groups sorted by their most recent attempt (newest first).
  */
 function groupSubmissions(rows) {
   const byClientAssessment = new Map();
@@ -52,16 +74,20 @@ function groupSubmissions(rows) {
       });
     }
     attempts.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)));
+    const latestTimestamp = attempts[0]?.timestamp ?? "";
     groups.push({
       client_id: client_id || "—",
       assessment_id: assessment_id || "—",
+      latestTimestamp,
       attempts,
     });
   }
 
+  // Sort groups by the most recent attempt within each group (newest first by default)
   groups.sort(
     (a, b) =>
-      a.client_id.localeCompare(b.client_id) || a.assessment_id.localeCompare(b.assessment_id)
+      String(b.latestTimestamp).localeCompare(String(a.latestTimestamp)) ||
+      a.assessment_id.localeCompare(b.assessment_id)
   );
   return groups;
 }
@@ -70,8 +96,31 @@ export default function AdminSubmissionsPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [employeeFilter, setEmployeeFilter] = useState("");
+  const [assessmentFilter, setAssessmentFilter] = useState("");
+  const [dateSort, setDateSort] = useState("desc"); // "desc" | "asc"
 
-  const groups = useMemo(() => groupSubmissions(rows), [rows]);
+  const filteredRows = useMemo(() => {
+    const empQ = employeeFilter.trim().toLowerCase();
+    const assQ = assessmentFilter.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (empQ && !extractEmployeeId(r.user_id).toLowerCase().includes(empQ)) return false;
+      if (assQ && !(r.assessment_id ?? "").toLowerCase().includes(assQ)) return false;
+      return true;
+    });
+  }, [rows, employeeFilter, assessmentFilter]);
+
+  const groups = useMemo(() => {
+    const gs = groupSubmissions(filteredRows);
+    if (dateSort === "asc") {
+      gs.sort(
+        (a, b) =>
+          String(a.latestTimestamp).localeCompare(String(b.latestTimestamp)) ||
+          a.assessment_id.localeCompare(b.assessment_id)
+      );
+    }
+    return gs;
+  }, [filteredRows, dateSort]);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,6 +162,50 @@ export default function AdminSubmissionsPage() {
           <div className="empty-state">No submissions yet.</div>
         )}
         {!loading && !error && rows.length > 0 && (
+          <>
+            <div className="submissions-toolbar">
+              <label className="submissions-toolbar-field">
+                <span className="submissions-toolbar-label">Employee ID</span>
+                <input
+                  type="search"
+                  placeholder="Filter by employee ID…"
+                  value={employeeFilter}
+                  onChange={(e) => setEmployeeFilter(e.target.value)}
+                  className="submissions-toolbar-input"
+                />
+              </label>
+              <label className="submissions-toolbar-field">
+                <span className="submissions-toolbar-label">Assessment ID</span>
+                <input
+                  type="search"
+                  placeholder="Filter by assessment ID…"
+                  value={assessmentFilter}
+                  onChange={(e) => setAssessmentFilter(e.target.value)}
+                  className="submissions-toolbar-input"
+                />
+              </label>
+              <label className="submissions-toolbar-field">
+                <span className="submissions-toolbar-label">Sort by date</span>
+                <select
+                  value={dateSort}
+                  onChange={(e) => setDateSort(e.target.value)}
+                  className="submissions-toolbar-select"
+                >
+                  <option value="desc">Newest first</option>
+                  <option value="asc">Oldest first</option>
+                </select>
+              </label>
+              {(employeeFilter || assessmentFilter) && (
+                <span className="submissions-toolbar-count muted small-print">
+                  {groups.reduce((n, g) => n + g.attempts.length, 0)} session
+                  {groups.reduce((n, g) => n + g.attempts.length, 0) !== 1 ? "s" : ""} matching
+                </span>
+              )}
+            </div>
+
+            {groups.length === 0 ? (
+              <div className="empty-state">No submissions match the current filters.</div>
+            ) : (
           <div className="submission-groups">
             {groups.map((g) => (
               <article
@@ -128,6 +221,12 @@ export default function AdminSubmissionsPage() {
                     <span className="submission-group-label">Assessment ID</span>
                     <code className="cell-id submission-group-code">{g.assessment_id}</code>
                   </div>
+                  <div className="submission-group-field">
+                    <span className="submission-group-label">Latest submission</span>
+                    <span className="submission-group-value submission-group-date">
+                      {formatDate(g.latestTimestamp)}
+                    </span>
+                  </div>
                   <div className="submission-group-badge">
                     {g.attempts.length} session{g.attempts.length !== 1 ? "s" : ""}
                   </div>
@@ -142,8 +241,8 @@ export default function AdminSubmissionsPage() {
                       <summary className="submission-attempt-summary">
                         <span className="attempt-pill">User</span>
                         <span className="attempt-user">{att.user_id}</span>
-                        <span className="attempt-pill">Time</span>
-                        <span className="attempt-time">{att.timestamp}</span>
+                        <span className="attempt-pill">Date</span>
+                        <span className="attempt-time">{formatDate(att.timestamp)}</span>
                         <span className="attempt-result">
                           Avg score <strong>{att.avgScore ?? "—"}</strong>
                           <span className="attempt-result-muted">/ 100</span>
@@ -178,10 +277,12 @@ export default function AdminSubmissionsPage() {
                       </div>
                     </details>
                   ))}
-                </div>
-              </article>
+              </div>
+            </article>
             ))}
           </div>
+            )}
+          </>
         )}
       </section>
 

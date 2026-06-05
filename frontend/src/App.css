@@ -1881,6 +1881,54 @@ code {
   background: var(--bg-subtle);
 }
 
+/* ── Submissions toolbar (filter + sort) ───────────────────────── */
+.submissions-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1.25rem;
+  padding: 0 0 1.25rem 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1.25rem;
+}
+
+.submissions-toolbar-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.submissions-toolbar-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.submissions-toolbar-input,
+.submissions-toolbar-select {
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  background: var(--bg-elevated);
+  color: var(--text);
+  min-width: 14rem;
+}
+
+.submissions-toolbar-count {
+  align-self: flex-end;
+  padding-bottom: 0.45rem;
+}
+
+/* ── Submission group ──────────────────────────────────────────── */
+.submission-group-date {
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
 .submission-group-header {
   display: flex;
   flex-wrap: wrap;

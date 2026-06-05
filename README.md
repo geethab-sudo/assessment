@@ -6,7 +6,7 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 
 ## Features
 
-- **Admin portal**: Sign in with a configured password; generate assessments (MCQ, coding, subjective); manage catalog languages/topics; browse all assessments (language, topics, routing, timed flag); delete assessments; review participant submissions.
+- **Admin portal**: Sign in with a configured password; generate assessments (MCQ, coding, subjective); manage catalog languages/topics; browse all assessments (language, topics, routing, timed flag); delete assessments; review participant submissions with date display, sort by date, and filter by employee ID or assessment ID.
 - **Participant portal**: Open a test with employee ID, name, and assessment ID — no account required for shared assessments.
 - **Tier 1 evaluation presets**: One-click **Beginner** / **Intermediate** / **Advanced** Python Tier 1 combos (25 questions: 15 MCQ + 10 coding) with editable per-topic counts and suggested timed duration (60 / 90 / 120 min).
 - **Auto topic allocation**: Select multiple catalog topics with global MCQ/coding counts — the backend splits counts evenly across topics, generates per topic, and tags each question with `topic_name` for correct routing (no manual per-topic grid required).
@@ -21,6 +21,9 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 - **MCQ code formatting**: Embedded snippets in MCQ stems (inline, fenced, or `code_snippet`) are split into prose + a dark syntax-highlighted block. One-liners are expanded (`if`/`with`/`class`/`def` bodies, semicolon chains). Mixed stems like “class … What is the output of the following code: print(…)” become a question line plus formatted code. Write/implement prompts stay prose-only.
 - **Code editor**: Tab indentation, `Ctrl+/` comment toggling, syntax highlighting, and per-question language override.
 - **Shell-style coding (venv topic)**: Catalog topics can set `coding_editor_language` to `shell` or `powershell` so coding answers use a Bash/PowerShell editor only (no Pyodide console) — used for **Packaging and virtual environments (venv)** in Python Tier 1.
+- **Re-submission guard**: Participants cannot submit the same assessment twice — enforced server-side for both timed and untimed assessments.
+- **Session-scoped auth tokens**: Admin and client JWTs are stored in `sessionStorage` (tab-scoped), not `localStorage`, reducing XSS exposure across tabs.
+- **Timer stops on submit**: The countdown bar is hidden and the interval cleared as soon as the participant's submission succeeds; auto-expire callbacks no longer fire after that point.
 
 ## Documentation
 
@@ -35,7 +38,7 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 
 | Layer | Stack |
 |-------|--------|
-| Backend | FastAPI, SQLAlchemy 2, PostgreSQL, PyJWT |
+| Backend | FastAPI, SQLAlchemy 2, PostgreSQL, PyJWT, bcrypt |
 | Frontend | React 18, Vite 6, React Router |
 | LLM | Groq (OpenAI-compatible API) |
 | In-browser Python | Pyodide |
@@ -61,8 +64,16 @@ Edit `.env` and set at minimum:
 |----------|---------|
 | `GROQ_API_KEY` | Groq API key |
 | `JWT_SECRET` | Long random string for JWT signing |
-| `ADMIN_PASSWORD` | Admin portal password |
+| `ADMIN_PASSWORD` | Admin portal password — plain text or a bcrypt hash (recommended for production) |
 | `DATABASE_URL` | PostgreSQL URL, e.g. `postgresql+psycopg://postgres:postgres@127.0.0.1:5433/assesment` |
+
+**Generating a bcrypt hash for `ADMIN_PASSWORD`** (recommended for production):
+
+```bash
+python3 -c "import bcrypt; print(bcrypt.hashpw(b'yourpassword', bcrypt.gensalt()).decode())"
+```
+
+Paste the output (`$2b$12$...`) as the value of `ADMIN_PASSWORD`. Plain-text values continue to work for local development.
 
 ### 2. Database (Docker)
 
@@ -296,36 +307,50 @@ Serve `frontend/dist` behind your reverse proxy and point `/api` to the FastAPI 
 
 ```
 assessment/
-├── app.py                      # FastAPI routes and request validation
+├── app.py                      # FastAPI routes, UUID validation, request models
 ├── docs/                       # Detailed feature documentation
 ├── services/
-│   ├── assessment_service.py   # LLM orchestration, per-topic/auto generation
-│   ├── attempt_service.py      # Timed attempts, deadlines, submit guards
-│   ├── auth_service.py
+│   ├── assessment_service.py   # LLM orchestration: _generate_rows_*, _compute_routing_flag, build_notebook_template
+│   ├── attempt_service.py      # Timed attempts, deadlines, TimedAssessmentError
+│   ├── auth_service.py         # JWT + bcrypt-aware ADMIN_PASSWORD verification
 │   ├── catalog_service.py
-│   ├── db_service.py           # PostgreSQL read/write, routing flag
+│   ├── db_service.py           # PostgreSQL persistence; routing_flag accepted as param (not re-derived)
 │   ├── database.py             # Engine, session factory, idempotent migrations
 │   ├── llm_service.py          # Groq wrappers for generation and grading
 │   ├── models.py               # ORM (modality, routing_flag, timed columns)
 │   ├── notebook_plan_service.py # notebook_expected, derive_per_topic_config
 │   ├── notebook_service.py     # Jupyter parsing and cell grading
+│   ├── question_stem.py        # Stem parsing/prettification (split_stem_for_display)
 │   └── shuffle_service.py      # Per-participant shuffle
-├── frontend/src/lib/shellEditor.js  # Bash/PowerShell topic editor helpers
 ├── tests/
-│   ├── test_notebook_plan_service.py
+│   ├── test_assessment_service_unit.py  # 26 unit tests for refactored helpers
 │   ├── test_attempt_service.py
-│   └── test_shuffle_service.py
+│   ├── test_notebook_plan_service.py
+│   ├── test_question_stem.py
+│   ├── test_shuffle_service.py
+│   └── test_tier1_presets.py
 ├── frontend/
 │   └── src/
+│       ├── api.js              # apiFetch; JWT stored in sessionStorage (tab-scoped)
 │       ├── components/
 │       │   ├── AssessmentTimerBar.jsx
+│       │   ├── JupyterWorkspacePanel.jsx  # Pure-jupyter 2-step download/upload panel
+│       │   ├── McqCodeBlock.jsx           # Syntax-highlighted code block (HTML-escaped)
+│       │   ├── MixedNotebookPanel.jsx     # Mixed-routing compact upload + JupyterRequiredBanner
+│       │   ├── PythonRunPanel.jsx
 │       │   ├── SimpleCodeEditor.jsx
-│       │   └── PythonRunPanel.jsx
-│       ├── hooks/useAssessmentTimer.js
+│       │   └── TimerExpiredBanner.jsx     # Grace-period notification bar
+│       ├── hooks/useAssessmentTimer.js  # paused option stops ticker + callbacks after submit
+│       ├── lib/
+│       │   ├── codeHighlight.js       # escapeHtml + token highlighters
+│       │   ├── resolveQuestionStem.js # Pass-through (server pre-splits prose/code)
+│       │   ├── shellEditor.js
+│       │   └── tier1Presets.js
 │       └── pages/
 │           ├── AdminPage.jsx
 │           ├── AdminAssessmentsPage.jsx
 │           ├── AdminCatalogPage.jsx
+│           ├── AdminSubmissionsPage.jsx  # Formatted dates, sort, employee/assessment filter
 │           └── ClientPage.jsx
 ├── scripts/seed_sample_catalog.py
 ├── docker-compose.yml
@@ -342,7 +367,7 @@ assessment/
 | `/admin` | Generate assessment (auto, per-topic, timed options) |
 | `/admin/assessments` | List / delete assessments |
 | `/admin/catalog` | Languages and topics (with modality) |
-| `/admin/submissions` | Submission review |
+| `/admin/submissions` | Submission review — formatted dates, sort by date, filter by employee / assessment ID |
 | `/client` | Take assessment (Pyodide, Jupyter, mixed, timed) |
 
 ## API overview
@@ -368,7 +393,7 @@ Run from the **project root** (`assessment/`), not from inside `tests/`:
 source .venv/bin/activate
 pip install -r requirements.txt pytest
 
-# All tests
+# All tests (60 total)
 python -m pytest tests/ -q
 
 # One file (pytest)
@@ -379,6 +404,25 @@ python -m unittest tests.test_question_stem -v
 ```
 
 Do not run `python tests/test_question_stem.py` unless you use `python -m unittest tests.test_question_stem` from the repo root; plain script execution needs the project root on `PYTHONPATH`.
+
+| Test file | Coverage |
+|-----------|----------|
+| `test_assessment_service_unit.py` | `create_assessment` helpers, routing flag, notebook template builder, row normalization |
+| `test_question_stem.py` | Stem parsing, inline/fenced code extraction, compound-statement prettification |
+| `test_tier1_presets.py` | Preset totals, topic names, suggested durations |
+| `test_shuffle_service.py` | Per-participant shuffle determinism, MCQ option ordering |
+| `test_attempt_service.py` | Timed config validation, deadline enforcement, `TimedAssessmentError` |
+| `test_notebook_plan_service.py` | Per-topic config derivation, notebook plan logic |
+
+## Security notes
+
+| Concern | Mitigation |
+|---------|------------|
+| `ADMIN_PASSWORD` storage | Store as a bcrypt hash (`$2b$...`) in `.env`; plain-text fallback for local dev |
+| JWT tokens | Stored in `sessionStorage` (tab-scoped); cleared on tab close |
+| Public route UUID injection | `_require_valid_assessment_id` validates UUID format on all `assessment_id` path params |
+| MCQ code snippets | `dangerouslySetInnerHTML` only after `escapeHtml` runs inside `highlightForLanguage` |
+| `GROQ_API_KEY` / `JWT_SECRET` | Never committed; loaded from `.env` via `python-dotenv` |
 
 ## Future roadmap
 

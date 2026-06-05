@@ -19,15 +19,19 @@ function formatRemaining(ms) {
 
 /**
  * @param {object|null} assessment
- * @param {{ onMainExpire?: () => void, onNotebookGraceEnd?: () => void }} callbacks
+ * @param {{ onMainExpire?: () => void, onNotebookGraceEnd?: () => void, paused?: boolean }} callbacks
  */
-export function useAssessmentTimer(assessment, { onMainExpire, onNotebookGraceEnd } = {}) {
+export function useAssessmentTimer(
+  assessment,
+  { onMainExpire, onNotebookGraceEnd, paused = false } = {}
+) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [mainExpiredFired, setMainExpiredFired] = useState(false);
   const [graceEndFired, setGraceEndFired] = useState(false);
 
   const timer = assessment?.timer;
   const isTimed = Boolean(assessment?.is_timed && timer);
+  const isActive = isTimed && !paused;
 
   const clockOffsetMs = useMemo(() => {
     const server = parseMs(timer?.server_now);
@@ -44,9 +48,9 @@ export function useAssessmentTimer(assessment, { onMainExpire, onNotebookGraceEn
   const notebookRemainingMs =
     notebookExpiresMs != null ? Math.max(0, notebookExpiresMs - serverNowMs) : null;
 
-  const inMainWindow = isTimed && mainRemainingMs != null && mainRemainingMs > 0;
+  const inMainWindow = isActive && mainRemainingMs != null && mainRemainingMs > 0;
   const inNotebookGrace =
-    isTimed &&
+    isActive &&
     mainRemainingMs === 0 &&
     notebookRemainingMs != null &&
     notebookRemainingMs > 0;
@@ -60,26 +64,26 @@ export function useAssessmentTimer(assessment, { onMainExpire, onNotebookGraceEn
   }, [isTimed, mainRemainingMs]);
 
   useEffect(() => {
-    if (!isTimed) return undefined;
+    if (!isActive) return undefined;
     const id = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [isTimed]);
+  }, [isActive]);
 
   useEffect(() => {
-    if (!isTimed || mainExpiredFired) return;
+    if (!isActive || mainExpiredFired) return;
     if (mainRemainingMs === 0) {
       setMainExpiredFired(true);
       onMainExpire?.();
     }
-  }, [isTimed, mainRemainingMs, mainExpiredFired, onMainExpire]);
+  }, [isActive, mainRemainingMs, mainExpiredFired, onMainExpire]);
 
   useEffect(() => {
-    if (!isTimed || graceEndFired) return;
+    if (!isActive || graceEndFired) return;
     if (mainRemainingMs === 0 && notebookRemainingMs === 0) {
       setGraceEndFired(true);
       onNotebookGraceEnd?.();
     }
-  }, [isTimed, mainRemainingMs, notebookRemainingMs, graceEndFired, onNotebookGraceEnd]);
+  }, [isActive, mainRemainingMs, notebookRemainingMs, graceEndFired, onNotebookGraceEnd]);
 
   useEffect(() => {
     setMainExpiredFired(false);
@@ -88,6 +92,7 @@ export function useAssessmentTimer(assessment, { onMainExpire, onNotebookGraceEn
 
   return {
     isTimed,
+    isPaused: paused,
     inMainWindow,
     inNotebookGrace,
     mainLabel: mainRemainingMs != null ? formatRemaining(mainRemainingMs) : null,
