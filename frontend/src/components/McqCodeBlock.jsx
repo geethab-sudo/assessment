@@ -2,6 +2,12 @@ import { highlightForLanguage } from "../lib/codeHighlight.js";
 
 /**
  * Read-only syntax-highlighted code block for MCQ / question stems.
+ *
+ * Safety: `dangerouslySetInnerHTML` is used intentionally here.
+ * `highlightForLanguage` calls `escapeHtml` (& → &amp;, < → &lt;, > → &gt;)
+ * before applying any token <span> wrappers, so the raw LLM/DB string is
+ * always HTML-escaped before it touches the DOM.  Never pass `html` from any
+ * other source without going through `highlightForLanguage` first.
  */
 export default function McqCodeBlock({ code, language = "python" }) {
   const src = (code || "").trim();

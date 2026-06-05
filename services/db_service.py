@@ -40,6 +40,14 @@ __all__ = [
     "save_submission_row",
 ]
 
+# Field-length caps — must stay in sync with the ORM column definitions in models.py
+_MAX_LANGUAGE_CODE = 32
+_MAX_LANGUAGE_LABEL = 256
+_MAX_TOPIC_NAME = 512
+_MAX_TOPIC_NAME_STORED = 1024   # coercion limit for values already in the DB
+_MAX_TOPIC_NAMES_PER_ASSESSMENT = 50
+_MAX_TOPIC_NAMES_COERCE = 80    # upper bound when reading back from JSON column
+
 
 def _session() -> Session:
     return get_session_factory()()
@@ -88,12 +96,12 @@ def client_may_access_assessment(assessment_id: str, client_id: str | None) -> b
 
 def _normalize_language_code(language_code: str | None) -> str | None:
     s = (language_code or "").strip()
-    return s[:32] if s else None
+    return s[:_MAX_LANGUAGE_CODE] if s else None
 
 
 def _normalize_language_label(language_label: str | None) -> str | None:
     s = (language_label or "").strip()
-    return s[:256] if s else None
+    return s[:_MAX_LANGUAGE_LABEL] if s else None
 
 
 def _normalize_topic_names(names: list[str] | None) -> list[str]:
@@ -103,8 +111,8 @@ def _normalize_topic_names(names: list[str] | None) -> list[str]:
     for x in names:
         s = str(x).strip()
         if s:
-            out.append(s[:512])
-        if len(out) >= 50:
+            out.append(s[:_MAX_TOPIC_NAME])
+        if len(out) >= _MAX_TOPIC_NAMES_PER_ASSESSMENT:
             break
     return out
 
@@ -120,7 +128,7 @@ def _coerce_stored_topic_names(raw: Any) -> list[str]:
         try:
             parsed = json.loads(s)
         except json.JSONDecodeError:
-            return [s[:512]]
+            return [s[:_MAX_TOPIC_NAME]]
         raw = parsed
     if isinstance(raw, dict):
         raw = raw.get("topics") or raw.get("names") or raw.get("topic_names") or []
@@ -128,8 +136,8 @@ def _coerce_stored_topic_names(raw: Any) -> list[str]:
         return [
             str(x).strip()
             for x in raw
-            if str(x).strip() and len(str(x).strip()) <= 1024
-        ][:80]
+            if str(x).strip() and len(str(x).strip()) <= _MAX_TOPIC_NAME_STORED
+        ][:_MAX_TOPIC_NAMES_COERCE]
     return []
 
 
@@ -412,7 +420,7 @@ def list_assessments_summary() -> list[dict[str, Any]]:
         for lg in langs:
             k = _normalize_language_code(lg.code)
             if k:
-                lang_name_by_code_cf[k.casefold()] = (lg.name or "").strip()[:256] or k
+                lang_name_by_code_cf[k.casefold()] = (lg.name or "").strip()[:_MAX_LANGUAGE_LABEL] or k
 
         # Single GROUP BY query replaces N per-row COUNT(*) calls
         counts_rows = session.execute(

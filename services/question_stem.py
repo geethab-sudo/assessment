@@ -11,6 +11,14 @@ from __future__ import annotations
 import re
 from typing import Any
 
+# Maximum number of compound-statement expansion passes before we accept the result.
+# 12 covers arbitrarily nested class/def/if blocks without risking an infinite loop.
+_MAX_EXPANSION_PASSES = 12
+
+# Minimum character length for an inline code candidate to be separated out.
+# Avoids splitting very short tokens like "x = 1" that look like code but are prose.
+_MIN_INLINE_CODE_LENGTH = 12
+
 _FENCE_RE = re.compile(r"```(\w*)\s*\n([\s\S]*?)```", re.MULTILINE)
 
 # MCQ asks candidate to write/implement — never show a separate code block
@@ -167,7 +175,7 @@ def _indent_orphan_body_lines(text: str) -> str:
 def format_compound_statement_lines(text: str) -> str:
     """Expand inline compound statements; repeat until stable (nested class/def)."""
     result = text or ""
-    for _ in range(12):
+    for _ in range(_MAX_EXPANSION_PASSES):
         next_result = _format_compound_pass(result)
         if next_result == result:
             break
@@ -233,7 +241,7 @@ def extract_inline_code_from_prose(text: str) -> tuple[str, str | None]:
     if not prose.endswith("?"):
         prose = prose.rstrip(":").strip() + "?"
     raw_code = m.group(2).strip().rstrip("?")
-    if len(raw_code) < 12:
+    if len(raw_code) < _MIN_INLINE_CODE_LENGTH:
         return stem, None
     if not re.search(r"[;=()]|def |class |print\(|return |if |for ", raw_code):
         return stem, None

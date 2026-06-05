@@ -1,7 +1,14 @@
 """
 JWT auth for admin vs client API access. Set in .env:
   JWT_SECRET=<long random string>
-  ADMIN_PASSWORD=<admin portal password>
+  ADMIN_PASSWORD=<password or bcrypt hash>
+
+ADMIN_PASSWORD may be stored as:
+  - A plain string (existing installs keep working, but upgrade to a hash for production)
+  - A bcrypt hash starting with "$2b$" (recommended for production)
+
+To generate a hash:
+  python3 -c "import bcrypt; print(bcrypt.hashpw(b'yourpassword', bcrypt.gensalt()).decode())"
 
 Clients sign in with their client_id only (same format as admin uses when generating assessments).
 """
@@ -13,6 +20,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import bcrypt
 import jwt
 
 JWT_ALG = "HS256"
@@ -80,9 +88,21 @@ def admin_password_configured() -> bool:
 
 
 def verify_admin_password(password: str) -> bool:
+    """Verify against ADMIN_PASSWORD.
+
+    If the stored value starts with "$2b$" it is treated as a bcrypt hash and
+    verified with bcrypt.checkpw.  Otherwise a timing-safe plain-text comparison
+    is used (legacy installs; upgrade to a hash for production).
+    """
     expected = (os.environ.get("ADMIN_PASSWORD") or "").strip()
     if not expected:
         return False
+    if expected.startswith("$2b$") or expected.startswith("$2a$"):
+        try:
+            return bcrypt.checkpw(password.encode(), expected.encode())
+        except Exception:
+            return False
+    # Plain-text fallback — timing-safe to prevent brute-force timing attacks
     try:
         return secrets.compare_digest(password, expected)
     except TypeError:
