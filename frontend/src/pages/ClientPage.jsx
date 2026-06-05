@@ -9,6 +9,9 @@ import { isShellCodingTopic, resolveShellEditorCode } from "../lib/shellEditor.j
 import { participantQuestionLabel } from "../lib/participantQuestionLabels.js";
 import AssessmentTimerBar from "../components/AssessmentTimerBar.jsx";
 import { useAssessmentTimer } from "../hooks/useAssessmentTimer.js";
+import TimerExpiredBanner from "../components/TimerExpiredBanner.jsx";
+import JupyterWorkspacePanel from "../components/JupyterWorkspacePanel.jsx";
+import MixedNotebookPanel, { JupyterRequiredBanner } from "../components/MixedNotebookPanel.jsx";
 
 export default function ClientPage() {
   const location = useLocation();
@@ -385,229 +388,33 @@ export default function ClientPage() {
 
       {assessment && (
         <section className={`card${result ? " card-after-submit" : ""}`}>
-          {(timeExpiredBanner || timerState.inNotebookGrace) && needsNotebook && !notebookResult && (
-            <p
-              className="assessment-timer-banner"
-              role="status"
-              style={{
-                margin: "0 0 1rem 0",
-                padding: "0.75rem 1rem",
-                borderRadius: "8px",
-                background: "rgba(243,112,33,0.1)",
-                border: "1px solid rgba(243,112,33,0.35)",
-                fontSize: "0.9rem",
-              }}
-            >
-              {timeExpiredBanner
-                ? "Time expired — your in-browser answers were submitted. "
-                : ""}
-              {timerState.inNotebookGrace
-                ? `Upload your Jupyter notebook (${timerState.notebookLabel} left) — it will be graded automatically when you select the file or when grace ends.`
-                : null}
-            </p>
+          {needsNotebook && !notebookResult && (
+            <TimerExpiredBanner
+              timeExpiredBanner={timeExpiredBanner}
+              inNotebookGrace={timerState.inNotebookGrace}
+              notebookLabel={timerState.notebookLabel}
+            />
           )}
         {assessment.routing_flag === "jupyter" && needsNotebook ? (
-            <div className="jupyter-workspace-panel" style={{ padding: "10px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
-                <span className="pill" style={{ background: "#f37021", color: "#fff", fontWeight: "bold" }}>Jupyter Sandbox</span>
-                <span className="muted">Assessment ID: {assessment.assessment_id}</span>
-              </div>
-              <h2 style={{ fontSize: "1.5rem", marginBottom: "8px", fontWeight: "700" }}>Jupyter Notebook Assessment</h2>
-              <p className="muted" style={{ marginBottom: "24px", lineHeight: "1.6" }}>
-                This assessment is conducted in a Jupyter Notebook environment. Download the template below, open and solve it in your local Jupyter workspace, then upload the solved file here.
-              </p>
-
-              <div className="steps-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "20px", marginBottom: "32px" }}>
-                {/* Step 1 */}
-                <div className="step-card" style={{
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(0,0,0,0.08)",
-                  borderRadius: "12px",
-                  padding: "24px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "12px"
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                    <div style={{
-                      width: "28px",
-                      height: "28px",
-                      borderRadius: "50%",
-                      background: "var(--primary-color, #1a73e8)",
-                      color: "#fff",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontWeight: "bold",
-                      fontSize: "0.9rem"
-                    }}>1</div>
-                    <h3 style={{ fontSize: "1.1rem", margin: 0, fontWeight: "600" }}>Download Template</h3>
-                  </div>
-                  <p className="muted small-print" style={{ margin: 0, lineHeight: "1.5" }}>
-                    Obtain the official notebook template containing all questions and guidelines.
-                  </p>
-                  <a
-                    href={`${import.meta.env.VITE_API_URL || "/api"}/assessment/${encodeURIComponent(assessment.assessment_id)}/template`}
-                    download={`assessment_${assessment.assessment_id}.ipynb`}
-                    className="button secondary download-btn"
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      textDecoration: "none",
-                      gap: "8px",
-                      marginTop: "auto",
-                      padding: "10px 16px",
-                      borderRadius: "8px",
-                      background: "rgba(0,0,0,0.05)",
-                      color: "inherit",
-                      fontWeight: "500",
-                      transition: "background 0.2s"
-                    }}
-                  >
-                    <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"></path></svg>
-                    Download .ipynb Template
-                  </a>
-                </div>
-
-                {/* Step 2 */}
-                <div className="step-card" style={{
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid rgba(0,0,0,0.08)",
-                  borderRadius: "12px",
-                  padding: "24px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "12px"
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                    <div style={{
-                      width: "28px",
-                      height: "28px",
-                      borderRadius: "50%",
-                      background: "var(--primary-color, #1a73e8)",
-                      color: "#fff",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontWeight: "bold",
-                      fontSize: "0.9rem"
-                    }}>2</div>
-                    <h3 style={{ fontSize: "1.1rem", margin: 0, fontWeight: "600" }}>Upload Solved Notebook</h3>
-                  </div>
-                  <p className="muted small-print" style={{ margin: 0, lineHeight: "1.5" }}>
-                    Upload your completed Jupyter Notebook file (.ipynb) containing your solutions.
-                  </p>
-                  
-                  <div className="file-upload-zone" style={{
-                    border: "2px dashed var(--border, #ccc)",
-                    borderRadius: "8px",
-                    padding: "16px",
-                    textAlign: "center",
-                    marginTop: "auto",
-                    background: "rgba(0,0,0,0.02)",
-                    cursor: "pointer",
-                    transition: "border-color 0.2s, background-color 0.2s"
-                  }}>
-                    <input
-                      type="file"
-                      accept=".ipynb"
-                      id="notebook-file-input"
-                      style={{ display: "none" }}
-                      disabled={!notebookUploadEnabled}
-                      onChange={(e) => {
-                        if (e.target.files?.[0]) {
-                          setNotebookFile(e.target.files[0]);
-                        }
-                      }}
-                    />
-                    <label htmlFor="notebook-file-input" style={{ cursor: notebookUploadEnabled ? "pointer" : "not-allowed", display: "block" }}>
-                      <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ margin: "0 auto 8px auto", opacity: 0.7 }}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"></path></svg>
-                      {notebookFile ? (
-                        <div className="file-info" style={{ wordBreak: "break-all" }}>
-                          <strong style={{ fontSize: "0.95rem" }}>{notebookFile.name}</strong>
-                          <p className="muted small-print" style={{ margin: "4px 0 0 0" }}>{(notebookFile.size / 1024).toFixed(1)} KB</p>
-                        </div>
-                      ) : (
-                        <span className="muted" style={{ fontSize: "0.9rem" }}>Select solved notebook file</span>
-                      )}
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ marginTop: "16px" }}>
-                <button
-                  type="button"
-                  className="primary"
-                  onClick={() => handleSubmit()}
-                  disabled={
-                    loading ||
-                    autoSubmitting ||
-                    !!result ||
-                    (timerState.isTimed &&
-                      !timerState.inMainWindow &&
-                      !(timerState.inNotebookGrace && notebookFile))
-                  }
-                  style={{ width: "100%", padding: "12px 24px", fontSize: "1rem", fontWeight: "600", borderRadius: "8px" }}
-                >
-                  {result ? "Submitted" : loading ? "Submitting…" : "Submit notebook"}
-                </button>
-              </div>
-            </div>
+            <JupyterWorkspacePanel
+              assessmentId={assessment.assessment_id}
+              notebookFile={notebookFile}
+              notebookUploadEnabled={notebookUploadEnabled}
+              notebookResult={notebookResult}
+              loading={loading}
+              autoSubmitting={autoSubmitting}
+              result={result}
+              timerState={timerState}
+              onFileChange={setNotebookFile}
+              onSubmit={() => handleSubmit()}
+            />
           ) : (
             <>
               {needsNotebook && (
-                <div style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: "16px",
-                  background: "rgba(243,112,33,0.08)",
-                  border: "1px solid rgba(243,112,33,0.35)",
-                  borderRadius: "10px",
-                  padding: "16px 20px",
-                  marginBottom: "24px",
-                  flexWrap: "wrap",
-                }}>
-                  <div style={{ flex: 1, minWidth: "200px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "8px" }}>
-                      <span className="pill" style={{ background: "#f37021", color: "#fff", fontWeight: "bold", fontSize: "0.78rem" }}>
-                        Jupyter Required
-                      </span>
-                    </div>
-                    <p style={{ margin: "0 0 6px 0", fontWeight: "600", fontSize: "0.95rem" }}>
-                      The following topics must be completed in a Jupyter Notebook:
-                    </p>
-                    <ul style={{ margin: "0 0 0 16px", padding: 0, fontSize: "0.88rem" }}>
-                      {assessment.jupyter_topic_names.map((name) => (
-                        <li key={name} style={{ marginBottom: "2px" }}>{name}</li>
-                      ))}
-                    </ul>
-                  </div>
-                  <a
-                    href={`${import.meta.env.VITE_API_URL || "/api"}/assessment/${encodeURIComponent(assessment.assessment_id)}/template`}
-                    download={`assessment_${assessment.assessment_id}.ipynb`}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "8px",
-                      padding: "10px 18px",
-                      borderRadius: "8px",
-                      background: "#f37021",
-                      color: "#fff",
-                      fontWeight: "600",
-                      fontSize: "0.9rem",
-                      textDecoration: "none",
-                      whiteSpace: "nowrap",
-                      alignSelf: "center",
-                    }}
-                  >
-                    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
-                    </svg>
-                    Download .ipynb
-                  </a>
-                </div>
+                <JupyterRequiredBanner
+                  assessmentId={assessment.assessment_id}
+                  jupyterTopicNames={assessment.jupyter_topic_names}
+                />
               )}
               {assessment.questions.map((q, questionIndex) => {
                 const totalQuestions = assessment.questions.length;
@@ -679,12 +486,12 @@ export default function ClientPage() {
                         alignItems: "center",
                         gap: "12px",
                         padding: "16px 20px",
-                        background: "rgba(243,112,33,0.07)",
-                        border: "1px solid rgba(243,112,33,0.3)",
+                        background: "var(--brand-orange-soft)",
+                        border: "1px solid var(--brand-orange-border)",
                         borderRadius: "8px",
                         fontSize: "0.9rem",
                       }}>
-                        <svg width="20" height="20" fill="none" stroke="#f37021" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
+                        <svg width="20" height="20" fill="none" stroke="var(--brand-orange)" strokeWidth="2" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
                           <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
                         </svg>
                         <span>
@@ -866,50 +673,14 @@ export default function ClientPage() {
               </button>
 
               {needsNotebook && (
-                <div style={{
-                  marginTop: "32px",
-                  padding: "20px 24px",
-                  background: "rgba(243,112,33,0.07)",
-                  border: "1px solid rgba(243,112,33,0.3)",
-                  borderRadius: "10px",
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
-                    <span className="pill" style={{ background: "#f37021", color: "#fff", fontWeight: "bold", fontSize: "0.78rem" }}>
-                      Jupyter Notebook
-                    </span>
-                    <span style={{ fontWeight: "600", fontSize: "0.95rem" }}>Upload your completed notebook</span>
-                  </div>
-                  <p className="muted small-print" style={{ margin: "0 0 14px 0" }}>
-                    Select your completed <code>.ipynb</code> file below — it is graded automatically on submit or during the grace period after time expires.
-                  </p>
-                  <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
-                    <input
-                      type="file"
-                      accept=".ipynb"
-                      id="mixed-notebook-input"
-                      style={{ display: "none" }}
-                      disabled={!notebookUploadEnabled}
-                      onChange={(e) => { if (e.target.files?.[0]) setNotebookFile(e.target.files[0]); }}
-                    />
-                    <label htmlFor="mixed-notebook-input" style={{
-                      display: "inline-flex", alignItems: "center", gap: "8px",
-                      padding: "9px 16px", borderRadius: "7px", cursor: notebookResult ? "not-allowed" : "pointer",
-                      background: "rgba(0,0,0,0.06)", fontWeight: "500", fontSize: "0.9rem",
-                      border: "1px solid rgba(0,0,0,0.12)",
-                      opacity: notebookResult ? 0.5 : 1,
-                    }}>
-                      <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
-                      </svg>
-                      {notebookFile ? notebookFile.name : "Choose .ipynb file"}
-                    </label>
-                    {notebookFile && (
-                      <span style={{ fontSize: "0.85rem", color: "#2a7a2a", fontWeight: "500" }}>
-                        ✓ Ready — will be submitted with your answers
-                      </span>
-                    )}
-                  </div>
-                </div>
+                <MixedNotebookPanel
+                  assessmentId={assessment.assessment_id}
+                  jupyterTopicNames={assessment.jupyter_topic_names}
+                  notebookFile={notebookFile}
+                  notebookResult={notebookResult}
+                  notebookUploadEnabled={notebookUploadEnabled}
+                  onFileChange={setNotebookFile}
+                />
               )}
             </>
           )}

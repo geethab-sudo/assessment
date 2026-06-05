@@ -82,20 +82,3 @@ export function sumPresetTotals(perTopicCounts) {
   return { mcq, coding, subjective, total: mcq + coding + subjective };
 }
 
-export function buildTypesAndCountsFromTotals({ mcq, coding, subjective }) {
-  const types = [];
-  const questions_per_type = {};
-  if (mcq > 0) {
-    types.push("mcq");
-    questions_per_type.mcq = mcq;
-  }
-  if (coding > 0) {
-    types.push("coding");
-    questions_per_type.coding = coding;
-  }
-  if (subjective > 0) {
-    types.push("subjective");
-    questions_per_type.subjective = subjective;
-  }
-  return { types, questions_per_type };
-}

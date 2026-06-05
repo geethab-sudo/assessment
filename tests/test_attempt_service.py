@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 from services.attempt_service import (
     DEFAULT_NOTEBOOK_GRACE_MINUTES,
     MAIN_SUBMIT_SLACK_SECONDS,
+    TimedAssessmentError,
     normalize_employee_id,
     validate_timed_config,
 )
@@ -63,7 +64,7 @@ class TestAssertMainSubmit(unittest.TestCase):
             notebook_expires_at=(expires + timedelta(minutes=5)).isoformat(),
         )
         mock_now.return_value = expires + timedelta(seconds=MAIN_SUBMIT_SLACK_SECONDS + 1)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TimedAssessmentError):
             assert_main_submit_allowed("aid", "E1", is_timed=True)
 
 

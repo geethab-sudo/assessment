@@ -406,39 +406,38 @@ def list_assessments_summary() -> list[dict[str, Any]]:
     with _session() as session:
         assessments = session.scalars(select(Assessment)).all()
         langs = session.scalars(select(Language)).all()
-        #: Case-insensitive lookup: assessment may store catalog code with different casing
+
+        # Case-insensitive lookup: assessment may store catalog code with different casing
         lang_name_by_code_cf: dict[str, str] = {}
         for lg in langs:
             k = _normalize_language_code(lg.code)
             if k:
-                lang_name_by_code_cf[k.casefold()] = (
-                    (lg.name or "").strip()[:256] or k
-                )
+                lang_name_by_code_cf[k.casefold()] = (lg.name or "").strip()[:256] or k
+
+        # Single GROUP BY query replaces N per-row COUNT(*) calls
+        counts_rows = session.execute(
+            select(
+                AssessmentQuestion.assessment_id,
+                func.count().label("n"),
+            ).group_by(AssessmentQuestion.assessment_id)
+        ).all()
+        count_by_id: dict[str, int] = {r.assessment_id: int(r.n) for r in counts_rows}
 
         result: list[dict[str, Any]] = []
         for a in assessments:
-            n = session.scalar(
-                select(func.count())
-                .select_from(AssessmentQuestion)
-                .where(AssessmentQuestion.assessment_id == a.assessment_id)
-            )
             cid = a.owner_client_id or "common"
             source = "shared" if a.owner_client_id is None else "client"
             lc = _normalize_language_code(a.language_code)
             stored_label = (a.language_label or "").strip() or None
-            catalog_name = (
-                lang_name_by_code_cf.get(lc.casefold()) if lc else None
-            )
-            # Prefer catalog name; then stored UI label (name-only from generator); avoid showing code unless no alternative
-            language_name = catalog_name or stored_label or None
-            if not language_name and lc:
-                language_name = lc
+            catalog_name = lang_name_by_code_cf.get(lc.casefold()) if lc else None
+            # Prefer catalog name; then stored UI label; fall back to code
+            language_name = catalog_name or stored_label or (lc if lc else None)
             topics = _coerce_stored_topic_names(a.topic_names)
             result.append(
                 {
                     "assessment_id": a.assessment_id,
                     "client_id": cid,
-                    "question_count": int(n or 0),
+                    "question_count": count_by_id.get(a.assessment_id, 0),
                     "source": source,
                     "language_code": lc,
                     "language_label": stored_label,

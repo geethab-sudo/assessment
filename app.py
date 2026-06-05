@@ -25,6 +25,7 @@ import uuid
 
 from services import assessment_service, auth_service, catalog_service, notebook_service
 from services import db_service
+from services.attempt_service import TimedAssessmentError
 from services.database import init_db, ping_database
 from services.llm_service import groq_key_configured
 
@@ -493,10 +494,6 @@ def get_assessment(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-class _AssessmentExpiredError(ValueError):
-    """Raised when a timed assessment deadline has passed."""
-
-
 @app.post("/submit-assessment")
 def submit_assessment(body: SubmitAssessmentBody) -> dict[str, Any]:
     """Public: submit answers; LLM evaluates; participant identified by employee_id + name."""
@@ -518,12 +515,10 @@ def submit_assessment(body: SubmitAssessmentBody) -> dict[str, Any]:
             employee_id=body.employee_id.strip(),
             submitter_client_id=None,
         )
+    except TimedAssessmentError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
     except ValueError as e:
-        msg = str(e)
-        # Deadline-related errors from attempt_service carry specific messages
-        if "expired" in msg.lower() or "grace" in msg.lower() or "attempt" in msg.lower():
-            raise HTTPException(status_code=403, detail=msg) from e
-        raise HTTPException(status_code=400, detail=msg) from e
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
@@ -551,11 +546,10 @@ async def submit_notebook_assessment(
             aid, user_id, contents, submitter_client_id=client_id
         )
         return result
+    except TimedAssessmentError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
     except ValueError as e:
-        msg = str(e)
-        if "expired" in msg.lower() or "grace" in msg.lower() or "attempt" in msg.lower():
-            raise HTTPException(status_code=403, detail=msg) from e
-        raise HTTPException(status_code=400, detail=msg) from e
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

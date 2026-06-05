@@ -508,6 +508,10 @@ def submit_assessment(
 
     meta = db_service.get_assessment_metadata(assessment_id)
     eid = (employee_id or attempt_service.parse_employee_id_from_user_label(user_id)).strip()
+
+    if eid and attempt_service.user_has_submitted(assessment_id, eid):
+        raise ValueError("You have already submitted this assessment.")
+
     if meta.get("is_timed") and eid:
         attempt_service.assert_main_submit_allowed(assessment_id, eid, is_timed=True)
 

@@ -20,6 +20,10 @@
   --accent-soft: #eef2ff;
   --accent-border: #c7d2fe;
 
+  --brand-orange: #f37021;
+  --brand-orange-soft: rgba(243, 112, 33, 0.08);
+  --brand-orange-border: rgba(243, 112, 33, 0.3);
+
   --success: #059669;
   --success-bg: #ecfdf5;
   --danger: #dc2626;

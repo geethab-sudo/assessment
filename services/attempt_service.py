@@ -22,6 +22,10 @@ DEFAULT_NOTEBOOK_GRACE_MINUTES = 5
 MAIN_SUBMIT_SLACK_SECONDS = 2
 
 
+class TimedAssessmentError(ValueError):
+    """Raised when a timed-assessment enforcement rule is violated (deadline, grace, etc.)."""
+
+
 def normalize_employee_id(employee_id: str) -> str:
     return employee_id.strip().casefold()
 
@@ -175,11 +179,11 @@ def assert_main_submit_allowed(assessment_id: str, employee_id: str, *, is_timed
         return
     deadlines = _deadlines_for(assessment_id, employee_id)
     if not deadlines:
-        raise ValueError("No timed attempt found. Load the assessment first.")
+        raise TimedAssessmentError("No timed attempt found. Load the assessment first.")
     expires_at, _ = deadlines
     now = _utc_now()
     if now > expires_at + timedelta(seconds=MAIN_SUBMIT_SLACK_SECONDS):
-        raise ValueError("Assessment time has expired.")
+        raise TimedAssessmentError("Assessment time has expired.")
 
 
 def assert_notebook_submit_allowed(assessment_id: str, employee_id: str, *, is_timed: bool) -> None:
@@ -187,10 +191,10 @@ def assert_notebook_submit_allowed(assessment_id: str, employee_id: str, *, is_t
         return
     deadlines = _deadlines_for(assessment_id, employee_id)
     if not deadlines:
-        raise ValueError("No timed attempt found. Load the assessment first.")
+        raise TimedAssessmentError("No timed attempt found. Load the assessment first.")
     _, notebook_expires_at = deadlines
     if _utc_now() > notebook_expires_at:
-        raise ValueError("Notebook upload grace period has ended.")
+        raise TimedAssessmentError("Notebook upload grace period has ended.")
 
 
 def parse_employee_id_from_user_label(user_id: str) -> str:
