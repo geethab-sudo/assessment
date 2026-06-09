@@ -1,7 +1,9 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch } from "../api";
+import Pagination from "../components/Pagination.jsx";
 import QuestionStem from "../components/QuestionStem.jsx";
+import { usePagination } from "../hooks/usePagination.js";
 
 function formatAddedAt(isoText) {
   if (!isoText) return "—";
@@ -38,9 +40,7 @@ function AssessmentQuestionPreview({ assessmentId, questionCount }) {
     setPhase("loading");
     setErr(null);
     try {
-      const data = await apiFetch(`/admin/assessment/${encodeURIComponent(assessmentId)}`, {
-        authRole: "admin",
-      });
+      const data = await apiFetch(`/admin/assessment/${encodeURIComponent(assessmentId)}`);
       setPayload(data);
       setPhase("done");
     } catch (e) {
@@ -114,12 +114,21 @@ export default function AdminAssessmentsPage() {
   const [actionError, setActionError] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
 
+  const {
+    page,
+    setPage,
+    pageSize,
+    totalItems,
+    totalPages,
+    paginatedItems,
+  } = usePagination(rows);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setError(null);
       try {
-        const data = await apiFetch("/admin/assessments", { authRole: "admin" });
+        const data = await apiFetch("/admin/assessments");
         if (!cancelled) setRows(data.assessments ?? []);
       } catch (e) {
         if (!cancelled) setError(e.message);
@@ -180,6 +189,15 @@ export default function AdminAssessmentsPage() {
           </div>
         )}
         {!loading && !error && (
+          <>
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              itemLabel="assessments"
+            />
           <div className="table-wrap">
             <table className="data-table">
               <thead>
@@ -202,7 +220,7 @@ export default function AdminAssessmentsPage() {
                     </td>
                   </tr>
                 ) : (
-                  rows.map((r) => (
+                  paginatedItems.map((r) => (
                     <Fragment key={r.assessment_id}>
                       <tr>
                         <td>
@@ -265,6 +283,15 @@ export default function AdminAssessmentsPage() {
               </tbody>
             </table>
           </div>
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              itemLabel="assessments"
+            />
+          </>
         )}
       </section>
 

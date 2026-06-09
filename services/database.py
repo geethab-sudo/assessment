@@ -74,6 +74,7 @@ def init_db() -> None:
     _ensure_assessment_attempts_table(eng)
     _ensure_topic_coding_editor_language_column(eng)
     _ensure_question_code_snippet_column(eng)
+    _ensure_required_indexes(eng)
 
 
 def _ensure_raw_notebook_column(eng) -> None:
@@ -284,6 +285,25 @@ def _ensure_question_code_snippet_column(eng) -> None:
                         ADD COLUMN code_snippet TEXT NULL;
                     END IF;
                 END $$;
+                """
+            )
+        )
+
+
+def _ensure_required_indexes(eng) -> None:
+    """Add btree indexes used by frequent filters/sorts (idempotent on PostgreSQL)."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS ix_submissions_assessment_id_user_id
+                    ON submissions (assessment_id, user_id);
+                CREATE INDEX IF NOT EXISTS ix_submissions_timestamp
+                    ON submissions (timestamp DESC);
+                CREATE INDEX IF NOT EXISTS ix_topics_name
+                    ON topics (name);
+                CREATE INDEX IF NOT EXISTS ix_assessments_created_at
+                    ON assessments (created_at DESC NULLS LAST);
                 """
             )
         )

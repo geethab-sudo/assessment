@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import (
+    Boolean,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -57,6 +66,7 @@ class Topic(Base):
 
     __table_args__ = (
         UniqueConstraint("language_id", "name", name="uq_topic_name_per_language"),
+        Index("ix_topics_name", "name"),
     )
 
 
@@ -102,6 +112,8 @@ class Assessment(Base):
         back_populates="assessment",
         cascade="all, delete-orphan",
     )
+
+    __table_args__ = (Index("ix_assessments_created_at", "created_at"),)
 
 
 class AssessmentAttempt(Base):
@@ -175,3 +187,8 @@ class Submission(Base):
     )
     #: Client session that submitted (for admin reporting)
     submitter_client_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    __table_args__ = (
+        Index("ix_submissions_assessment_id_user_id", "assessment_id", "user_id"),
+        Index("ix_submissions_timestamp", "timestamp"),
+    )

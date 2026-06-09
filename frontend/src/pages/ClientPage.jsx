@@ -12,6 +12,8 @@ import { useAssessmentTimer } from "../hooks/useAssessmentTimer.js";
 import TimerExpiredBanner from "../components/TimerExpiredBanner.jsx";
 import JupyterWorkspacePanel from "../components/JupyterWorkspacePanel.jsx";
 import MixedNotebookPanel, { JupyterRequiredBanner } from "../components/MixedNotebookPanel.jsx";
+import Pagination from "../components/Pagination.jsx";
+import { usePagination } from "../hooks/usePagination.js";
 
 export default function ClientPage() {
   const location = useLocation();
@@ -332,6 +334,16 @@ export default function ClientPage() {
     assessment?.is_timed && assessment?.timer && !assessmentSubmitted
   );
 
+  const questions = useMemo(() => assessment?.questions ?? [], [assessment?.questions]);
+  const {
+    page: questionPage,
+    setPage: setQuestionPage,
+    pageSize: questionPageSize,
+    totalItems: totalQuestions,
+    totalPages: questionTotalPages,
+    paginatedItems: paginatedQuestions,
+  } = usePagination(questions, { resetKey: assessment?.assessment_id });
+
   return (
     <div className={`page${showFixedTimer ? " page--timed-assessment" : ""}`}>
       {showFixedTimer && (
@@ -428,10 +440,18 @@ export default function ClientPage() {
                   jupyterTopicNames={assessment.jupyter_topic_names}
                 />
               )}
-              {assessment.questions.map((q, questionIndex) => {
-                const totalQuestions = assessment.questions.length;
+              <Pagination
+                page={questionPage}
+                totalPages={questionTotalPages}
+                totalItems={totalQuestions}
+                pageSize={questionPageSize}
+                onPageChange={setQuestionPage}
+                itemLabel="questions"
+              />
+              {paginatedQuestions.map((q, questionIndex) => {
+                const globalIndex = (questionPage - 1) * questionPageSize + questionIndex;
                 const displayLabel = participantQuestionLabel(
-                  questionIndex + 1,
+                  globalIndex + 1,
                   totalQuestions
                 );
                 const qr = resultByQid[String(q.question_id)];
@@ -658,6 +678,14 @@ export default function ClientPage() {
                   </div>
                 );
               })}
+              <Pagination
+                page={questionPage}
+                totalPages={questionTotalPages}
+                totalItems={totalQuestions}
+                pageSize={questionPageSize}
+                onPageChange={setQuestionPage}
+                itemLabel="questions"
+              />
               <button
                 type="button"
                 className="primary"

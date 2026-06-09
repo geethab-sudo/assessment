@@ -146,7 +146,7 @@ export default function AdminPage() {
     setLoadingLanguages(true);
     setCatalogHint(null);
     try {
-      const data = await apiFetch("/admin/languages", { authRole: "admin" });
+      const data = await apiFetch("/admin/languages");
       const list = data.languages ?? [];
       setLanguages(list);
       if (list.length === 0) {
@@ -173,8 +173,7 @@ export default function AdminPage() {
     setSelectedTopicIds([]);
     try {
       const data = await apiFetch(
-        `/admin/topics?language_id=${encodeURIComponent(lid)}`,
-        { authRole: "admin" }
+        `/admin/topics?language_id=${encodeURIComponent(lid)}`
       );
       const list = data.topics ?? [];
       setTopics(list);
@@ -235,6 +234,12 @@ export default function AdminPage() {
     },
     [topics]
   );
+
+  // Re-match preset topic ids when catalog topics finish loading (or after seeding).
+  useEffect(() => {
+    if (!usePresetTier1 || !selectedPresetName || loadingTopics) return;
+    applySelectedPreset(selectedPresetName);
+  }, [usePresetTier1, selectedPresetName, topics, loadingTopics, applySelectedPreset]);
 
   const handlePresetTier1Toggle = (enabled) => {
     setUsePresetTier1(enabled);
@@ -427,7 +432,7 @@ export default function AdminPage() {
       }
       if (usePresetTier1 && presetMissingTopics.length > 0) {
         throw new Error(
-          `Catalog is missing preset topics. Run: python scripts/seed_sample_catalog.py\nMissing: ${presetMissingTopics.join("; ")}`
+          `Catalog is missing preset topics. Run: python3 scripts/seed_sample_catalog.py\nMissing: ${presetMissingTopics.join("; ")}`
         );
       }
       if (usePresetTier1 && !selectedPresetName) {
@@ -674,7 +679,7 @@ export default function AdminPage() {
                 {presetMissingTopics.length > 0 && (
                   <div className="error" role="alert" style={{ marginTop: "0.75rem" }}>
                     Missing catalog topics. Run{" "}
-                    <code>python scripts/seed_sample_catalog.py</code>
+                    <code>python3 scripts/seed_sample_catalog.py</code>
                     <ul style={{ margin: "0.5rem 0 0 1rem" }}>
                       {presetMissingTopics.map((n) => (
                         <li key={n}>{n}</li>
@@ -688,7 +693,7 @@ export default function AdminPage() {
                     {selectedTopicRows.length === 0 && (
                       <p className="muted small-print" role="status">
                         Preset topics are not in the catalog yet — add topics below or run{" "}
-                        <code>python scripts/seed_sample_catalog.py</code>.
+                        <code>python3 scripts/seed_sample_catalog.py</code>.
                       </p>
                     )}
                     <label className="tier1-add-topic">

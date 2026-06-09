@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 from dotenv import load_dotenv
 
@@ -15,21 +15,43 @@ _root = Path(__file__).resolve().parent
 load_dotenv(_root / ".env", override=True)
 load_dotenv(override=True)
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Form, File, UploadFile, Header, Response
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field, field_validator, model_validator
-
 import json
 import uuid
 
-from services import assessment_service, auth_service, catalog_service, notebook_service
+from fastapi import FastAPI, File, Form, Header, HTTPException, Path, Query, Request, Response, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
+
+from middleware.rate_limit import RateLimitMiddleware
+from middleware.security_headers import SecurityHeadersMiddleware
+
+from openapi_config import (
+    API_DESCRIPTION,
+    ERROR_400,
+    ERROR_401,
+    ERROR_413,
+    ERROR_422,
+    ERROR_500,
+    ERROR_503,
+    OPENAPI_TAGS,
+    public_assessment_errors,
+)
+from routers.admin import admin_ops_router, admin_router
+from schemas.assessment import (
+    AssessmentResponse,
+    NotebookSubmitResponse,
+    SubmitAssessmentBody,
+    SubmitAssessmentResponse,
+)
+from schemas.auth import ClientLoginResponse, LoginBody, LoginResponse
+from schemas.catalog import LanguagesResponse
+from schemas.common import ErrorDetail, HealthResponse, ValidationErrorItem, ValidationErrorResponse
+from services import assessment_service, audit_log, auth_service, catalog_service, notebook_service
 from services import db_service
 from services.attempt_service import TimedAssessmentError
 from services.database import init_db, ping_database
 from services.llm_service import groq_key_configured
 
-ALLOWED_TYPES = frozenset({"mcq", "coding", "subjective"})
 MAX_NOTEBOOK_BYTES = 5 * 1024 * 1024  # 5 MiB
 
 
@@ -45,11 +67,19 @@ def _require_valid_assessment_id(raw: str) -> str:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    audit_log.configure_audit_logging()
     init_db()
     yield
 
 
-app = FastAPI(title="AI Assessment API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(
+    title="AI Assessment API",
+    version="1.0.0",
+    description=API_DESCRIPTION,
+    lifespan=lifespan,
+    openapi_tags=OPENAPI_TAGS,
+    swagger_ui_parameters={"docExpansion": "list", "defaultModelsExpandDepth": 2},
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -65,235 +95,158 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-security = HTTPBearer(auto_error=False)
-
-
-def get_bearer_token(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
-) -> str:
-    if credentials is None or credentials.scheme.lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return credentials.credentials
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimitMiddleware)
 
 
-def require_admin(_token: Annotated[str, Depends(get_bearer_token)]) -> None:
-    try:
-        role = auth_service.decode_token_get_role(_token)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid or expired token") from None
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-
-class LoginBody(BaseModel):
-    role: Literal["admin", "client"]
-    password: str | None = None
-    client_id: str | None = None
-
-    @model_validator(mode="after")
-    def validate_login_fields(self) -> LoginBody:
-        if self.role == "admin":
-            if not (self.password or "").strip():
-                raise ValueError("password is required for admin login")
-        else:
-            if not (self.client_id or "").strip():
-                raise ValueError("client_id is required for client login")
-        return self
-
-
-class GenerateAssessmentBody(BaseModel):
-    topic: str = Field(..., min_length=1)
-    level: str = Field(..., min_length=1)
-    types: list[str] = Field(..., min_length=1)
-    questions_per_type: dict[str, int] = Field(
-        ...,
-        description="Count per question type; keys must match types (e.g. mcq: 2, coding: 1).",
+def custom_openapi() -> dict[str, Any]:
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+        tags=OPENAPI_TAGS,
     )
-    #: Optional catalog `languages.code` for code-editor mode on coding questions (e.g. py, js)
-    language_code: str | None = Field(default=None, max_length=32)
-    #: Catalog language name for admin list (not the syntax code); code is stored separately.
-    language_label: str | None = Field(default=None, max_length=256)
-    #: Selected catalog topic titles (or custom topic preview), in order
-    topic_names: list[str] = Field(default_factory=list)
-    #: Per-topic question counts: { "Topic name": { "mcq": 1, "coding": 1, "subjective": 0 } }
-    per_topic_config: dict[str, dict[str, int]] = Field(default_factory=dict)
-    is_timed: bool = False
-    duration_minutes: int | None = Field(default=None, ge=1)
-    notebook_grace_minutes: int | None = Field(default=None, ge=0)
-
-    @field_validator("topic", mode="before")
-    @classmethod
-    def strip_topic(cls, v: str) -> str:
-        if isinstance(v, str):
-            return v.strip()
-        return v
-
-    @field_validator("language_code", mode="before")
-    @classmethod
-    def strip_language_code(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        if isinstance(v, str) and (s := v.strip()):
-            return s[:32]
-        return None
-
-    @field_validator("language_label", mode="before")
-    @classmethod
-    def strip_language_label(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        if isinstance(v, str) and (s := v.strip()):
-            return s[:256]
-        return None
-
-    @field_validator("topic_names", mode="before")
-    @classmethod
-    def normalize_topic_names(cls, v: object) -> list[str]:
-        if v is None:
-            return []
-        if not isinstance(v, list):
-            raise ValueError("topic_names must be a list of strings")
-        out: list[str] = []
-        for item in v[:50]:
-            s = str(item).strip()
-            if s:
-                out.append(s[:512])
-        return out
-
-    @field_validator("level")
-    @classmethod
-    def normalize_level(cls, v: str) -> str:
-        lv = v.strip().lower()
-        if lv not in ("beginner", "intermediate", "advanced"):
-            raise ValueError("level must be one of: beginner, intermediate, advanced")
-        return lv
-
-    @field_validator("types")
-    @classmethod
-    def normalize_types(cls, v: list[str]) -> list[str]:
-        out = list(
-            dict.fromkeys(t.strip().lower() for t in v if t.strip())
-        )
-        bad = [t for t in out if t not in ALLOWED_TYPES]
-        if bad:
-            raise ValueError(
-                f"Invalid question types: {bad}. Allowed: mcq, coding, subjective"
-            )
-        if not out:
-            raise ValueError("Provide at least one valid question type")
-        return out
-
-    @field_validator("questions_per_type", mode="before")
-    @classmethod
-    def normalize_questions_per_type(
-        cls, v: object
-    ) -> dict[str, int]:
-        if not isinstance(v, dict) or not v:
-            raise ValueError(
-                "questions_per_type must be a non-empty object, e.g. "
-                '{"mcq": 2, "coding": 1}'
-            )
-        out: dict[str, int] = {}
-        for k, n in v.items():
-            if not str(k).strip():
-                continue
-            key = str(k).strip().lower()
-            try:
-                out[key] = int(n)
-            except (TypeError, ValueError) as e:
-                raise ValueError(f"Invalid count for {k!r}") from e
-        if not out:
-            raise ValueError("questions_per_type must include at least one type")
-        return out
-
-    @model_validator(mode="after")
-    def match_types_and_counts(self) -> GenerateAssessmentBody:
-        st = set(self.types)
-        sk = set(self.questions_per_type.keys())
-        if st != sk:
-            raise ValueError(
-                "questions_per_type keys must match the types list exactly: "
-                f"types={sorted(st)}, got keys={sorted(sk)}"
-            )
-        for t, n in self.questions_per_type.items():
-            if n < 1 or n > 30:
-                raise ValueError(f"Count for {t} must be between 1 and 30 (got {n})")
-        if self.is_timed and self.duration_minutes is None:
-            raise ValueError("duration_minutes is required when is_timed is true")
-        if not self.is_timed:
-            object.__setattr__(self, "duration_minutes", None)
-            object.__setattr__(self, "notebook_grace_minutes", None)
-        return self
+    components = schema.setdefault("components", {})
+    components.setdefault("securitySchemes", {})["BearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": (
+            "JWT from `POST /auth/login`. Use an **admin** token for mutating "
+            "`/admin/*` routes and `POST /generate-assessment`."
+        ),
+    }
+    extra_schemas = components.setdefault("schemas", {})
+    ref = "#/components/schemas/{model}"
+    extra_schemas["ErrorDetail"] = ErrorDetail.model_json_schema(ref_template=ref)
+    extra_schemas["ValidationErrorItem"] = ValidationErrorItem.model_json_schema(ref_template=ref)
+    extra_schemas["ValidationErrorResponse"] = ValidationErrorResponse.model_json_schema(ref_template=ref)
+    app.openapi_schema = schema
+    return schema
 
 
-class AnswerItem(BaseModel):
-    question_id: str | int
-    answer: str
+app.openapi = custom_openapi  # type: ignore[method-assign]
+
+app.include_router(admin_router)
+app.include_router(admin_ops_router)
 
 
-class SubmitAssessmentBody(BaseModel):
-    assessment_id: str
-    employee_id: str = Field(..., min_length=1, max_length=64)
-    participant_name: str = Field(..., min_length=1, max_length=256)
-    answers: list[AnswerItem]
+@app.get(
+    "/health",
+    tags=["health"],
+    summary="Health check",
+    response_model=HealthResponse,
+    responses={
+        200: {
+            "description": "Service is running.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "status": "ok",
+                        "database": True,
+                        "groq_configured": True,
+                        "auth_configured": True,
+                    }
+                }
+            },
+        }
+    },
+)
+def health() -> HealthResponse:
+    """
+    Returns service status and whether critical environment variables are configured.
 
-    @field_validator("assessment_id", "employee_id", "participant_name", mode="before")
-    @classmethod
-    def strip_participant_fields(cls, v: str) -> str:
-        if isinstance(v, str):
-            return v.strip()
-        return v
-
-
-class RelatedDocumentItem(BaseModel):
-    """One reference (title required; at least one of url or path is typical)."""
-
-    title: str = Field(..., min_length=1, max_length=512)
-    url: str | None = Field(default=None, max_length=2048)
-    path: str | None = Field(default=None, max_length=2048)
-
-
-class LanguageCreateBody(BaseModel):
-    code: str = Field(..., min_length=1, max_length=32)
-    name: str = Field(..., min_length=1, max_length=128)
-
-    @field_validator("code", "name", mode="before")
-    @classmethod
-    def strip_s(cls, v: str) -> str:
-        if isinstance(v, str):
-            return v.strip()
-        return v
-
-
-class TopicCreateBody(BaseModel):
-    language_id: int = Field(..., ge=1, description="FK to languages.id")
-    name: str = Field(..., min_length=1, max_length=256)
-    related_documents: list[RelatedDocumentItem] = Field(
-        default_factory=list,
-        description="Related docs as JSON objects (stored in JSONB).",
+    Does not require authentication. Use for load-balancer probes and deployment checks.
+    """
+    return HealthResponse(
+        status="ok",
+        database=ping_database(),
+        groq_configured=groq_key_configured(),
+        auth_configured=bool(
+            auth_service.jwt_configured() and auth_service.admin_password_configured()
+        ),
     )
 
-    @field_validator("name", mode="before")
-    @classmethod
-    def strip_name(cls, v: str) -> str:
-        return v.strip() if isinstance(v, str) else v
 
+@app.post(
+    "/auth/login",
+    tags=["auth"],
+    summary="Obtain JWT access token",
+    response_model=LoginResponse | ClientLoginResponse,
+    responses={
+        200: {
+            "description": "Authentication successful; bearer token issued.",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "admin": {
+                            "summary": "Admin login",
+                            "value": {
+                                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                                "token_type": "bearer",
+                                "role": "admin",
+                            },
+                        },
+                        "client": {
+                            "summary": "Client login",
+                            "value": {
+                                "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                                "token_type": "bearer",
+                                "role": "client",
+                                "client_id": "participant-1",
+                            },
+                        },
+                    }
+                }
+            },
+        },
+        400: ERROR_400,
+        401: {
+            "description": "Invalid admin password.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid credentials"},
+                }
+            },
+        },
+        422: ERROR_422,
+        503: ERROR_503,
+    },
+)
+def login(request: Request, body: LoginBody) -> LoginResponse | ClientLoginResponse:
+    """
+    Authenticate as **admin** or **client** and receive a JWT bearer token.
 
-@app.post("/auth/login")
-def login(body: LoginBody) -> dict[str, str]:
+    - **Admin**: requires `password` matching `ADMIN_PASSWORD` in server `.env`.
+    - **Client**: requires `client_id` (alphanumeric, `_`, `-`; max 64 chars).
+
+    Neither role is required for public shared-assessment routes.
+    """
     if body.role == "admin":
         if not auth_service.admin_password_configured():
+            audit_log.auth_login_failure(request, role="admin", reason="admin_not_configured")
             raise HTTPException(
                 status_code=503,
                 detail="Admin login is not configured. Set ADMIN_PASSWORD in the server .env file.",
             )
+        if not auth_service.jwt_configured():
+            audit_log.auth_login_failure(request, role="admin", reason="jwt_not_configured")
+            raise HTTPException(
+                status_code=503,
+                detail="JWT_SECRET is not set in the server .env file.",
+            )
         if not auth_service.verify_admin_password(body.password or ""):
+            audit_log.auth_login_failure(request, role="admin", reason="invalid_credentials")
             raise HTTPException(status_code=401, detail="Invalid credentials")
         token = auth_service.create_access_token("admin")
-        return {"access_token": token, "token_type": "bearer", "role": "admin"}
+        audit_log.auth_login_success(request, role="admin")
+        return LoginResponse(access_token=token, token_type="bearer", role="admin")
 
     if not auth_service.jwt_configured():
+        audit_log.auth_login_failure(request, role="client", reason="jwt_not_configured")
         raise HTTPException(
             status_code=503,
             detail="JWT_SECRET is not set in the server .env file.",
@@ -301,181 +254,94 @@ def login(body: LoginBody) -> dict[str, str]:
     try:
         safe_cid = db_service.sanitize_client_id(body.client_id or "")
     except ValueError as e:
+        audit_log.auth_login_failure(
+            request,
+            role="client",
+            reason="invalid_client_id",
+            actor=body.client_id,
+        )
         raise HTTPException(status_code=400, detail=str(e)) from e
     token = auth_service.create_access_token("client", client_id=safe_cid)
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-        "role": "client",
-        "client_id": safe_cid,
-    }
+    audit_log.auth_login_success(request, role="client", actor=safe_cid)
+    return ClientLoginResponse(
+        access_token=token,
+        token_type="bearer",
+        role="client",
+        client_id=safe_cid,
+    )
 
 
-@app.get("/admin/assessments")
-def admin_list_assessments(_: None = Depends(require_admin)) -> dict[str, Any]:
-    return {"assessments": db_service.list_assessments_summary()}
+@app.get(
+    "/catalog/languages",
+    tags=["catalog"],
+    summary="List catalog languages",
+    response_model=LanguagesResponse,
+    responses={
+        200: {
+            "description": "Languages available in the reference catalog.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "languages": [
+                            {"id": 1, "code": "python", "name": "Python"},
+                            {"id": 2, "code": "javascript", "name": "JavaScript"},
+                        ]
+                    }
+                }
+            },
+        },
+        500: ERROR_500,
+    },
+)
+def public_list_languages() -> LanguagesResponse:
+    """
+    Public read-only list of programming languages for the participant code editor.
+
+    No authentication required.
+    """
+    return LanguagesResponse(languages=catalog_service.list_languages())
 
 
-@app.get("/admin/assessment/{assessment_id}")
-def admin_get_assessment_preview(
-    assessment_id: str, _: None = Depends(require_admin)
-) -> dict[str, Any]:
-    """Admin: load questions for preview (same shape as the participant view; no correct answers)."""
-    aid = assessment_id.strip()
-    data = assessment_service.get_assessment_for_user(aid)
-    if not data.get("found"):
-        raise HTTPException(status_code=404, detail="Assessment not found")
-    return data
-
-
-@app.delete("/admin/assessments/{assessment_id}")
-def admin_delete_assessment(
-    assessment_id: str, _: None = Depends(require_admin)
-) -> dict[str, Any]:
-    aid = assessment_id.strip()
-    if not aid:
-        raise HTTPException(status_code=400, detail="Assessment ID is required")
-    try:
-        db_service.delete_assessment(aid)
-    except ValueError as e:
-        msg = str(e)
-        status = 404 if msg == "Assessment not found" else 400
-        raise HTTPException(status_code=status, detail=msg) from e
-    return {"ok": True, "deleted": aid}
-
-
-@app.get("/admin/submissions")
-def admin_list_submissions(_: None = Depends(require_admin)) -> dict[str, Any]:
-    return {"submissions": db_service.list_all_submissions()}
-
-
-@app.get("/admin/languages")
-def admin_list_languages(_: None = Depends(require_admin)) -> dict[str, Any]:
-    return {"languages": catalog_service.list_languages()}
-
-
-@app.post("/admin/languages")
-def admin_create_language(
-    body: LanguageCreateBody, _: None = Depends(require_admin)
-) -> dict[str, Any]:
-    try:
-        return {"language": catalog_service.create_language(code=body.code, name=body.name)}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-
-@app.put("/admin/languages/{language_id}")
-def admin_update_language(
-    language_id: int, body: LanguageCreateBody, _: None = Depends(require_admin)
-) -> dict[str, Any]:
-    try:
-        return {
-            "language": catalog_service.update_language(
-                language_id=language_id, code=body.code, name=body.name
-            )
-        }
-    except ValueError as e:
-        msg = str(e)
-        status = 404 if msg == "Language not found" else 400
-        raise HTTPException(status_code=status, detail=msg) from e
-
-
-@app.get("/admin/topics")
-def admin_list_topics(
-    language_id: Annotated[int | None, Query()] = None,
-    _: None = Depends(require_admin),
-) -> dict[str, Any]:
-    return {"topics": catalog_service.list_topics(language_id=language_id)}
-
-
-@app.post("/admin/topics")
-def admin_create_topic(
-    body: TopicCreateBody, _: None = Depends(require_admin)
-) -> dict[str, Any]:
-    try:
-        docs = [d.model_dump(exclude_none=True) for d in body.related_documents]
-        return {
-            "topic": catalog_service.create_topic(
-                language_id=body.language_id,
-                name=body.name,
-                related_documents=docs,
-            )
-        }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-
-
-@app.put("/admin/topics/{topic_id}")
-def admin_update_topic(
-    topic_id: int, body: TopicCreateBody, _: None = Depends(require_admin)
-) -> dict[str, Any]:
-    try:
-        docs = [d.model_dump(exclude_none=True) for d in body.related_documents]
-        return {
-            "topic": catalog_service.update_topic(
-                topic_id=topic_id,
-                language_id=body.language_id,
-                name=body.name,
-                related_documents=docs,
-            )
-        }
-    except ValueError as e:
-        msg = str(e)
-        status = 404 if msg == "Topic not found" else 400
-        raise HTTPException(status_code=status, detail=msg) from e
-
-
-@app.delete("/admin/topics/{topic_id}")
-def admin_delete_topic(
-    topic_id: int, _: None = Depends(require_admin)
-) -> dict[str, Any]:
-    try:
-        catalog_service.delete_topic(topic_id=topic_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
-    return {"ok": True, "deleted": topic_id}
-
-
-@app.post("/generate-assessment")
-def generate_assessment(
-    body: GenerateAssessmentBody,
-    _: None = Depends(require_admin),
-) -> dict[str, Any]:
-    """Admin: generate questions via LLM and persist to PostgreSQL."""
-    try:
-        return assessment_service.create_assessment(
-            topic=body.topic.strip(),
-            level=body.level,
-            types=body.types,  # already normalized by Pydantic validator
-            questions_per_type=body.questions_per_type,
-            language_code=body.language_code,
-            language_label=body.language_label,
-            topic_names=body.topic_names,
-            per_topic_config=body.per_topic_config or {},
-            is_timed=body.is_timed,
-            duration_minutes=body.duration_minutes,
-            notebook_grace_minutes=body.notebook_grace_minutes,
-        )
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e)) from e
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Generation failed: {e}") from e
-
-
-@app.get("/catalog/languages")
-def public_list_languages() -> dict[str, Any]:
-    """Public: language codes and names for participant code editor (read-only)."""
-    return {"languages": catalog_service.list_languages()}
-
-
-@app.get("/assessment/{assessment_id}")
+@app.get(
+    "/assessment/{assessment_id}",
+    tags=["assessments"],
+    summary="Fetch assessment questions",
+    response_model=AssessmentResponse,
+    responses={
+        200: {
+            "description": "Assessment metadata and questions (correct answers are never included).",
+        },
+        **public_assessment_errors(),
+    },
+)
 def get_assessment(
-    assessment_id: str,
-    employee_id: str | None = Query(default=None, max_length=64),
-) -> dict[str, Any]:
-    """Public: fetch questions (no correct answers). Pass employee_id for per-participant shuffle."""
+    assessment_id: Annotated[
+        str,
+        Path(
+            description="UUID of the assessment.",
+            examples=["550e8400-e29b-41d4-a716-446655440000"],
+        ),
+    ],
+    employee_id: Annotated[
+        str | None,
+        Query(
+            max_length=64,
+            description=(
+                "Optional participant employee id. When provided, question and MCQ option "
+                "order are shuffled deterministically. Required to start a timed attempt."
+            ),
+            examples=["EMP-10042"],
+        ),
+    ] = None,
+) -> AssessmentResponse:
+    """
+    Load an assessment for a participant or admin preview.
+
+    **Access**: shared assessments are open; client-scoped assessments return 403 on open routes.
+
+    **Timed assessments**: pass `employee_id` to receive `timer` state and start the clock on first load.
+    If the participant already submitted, `already_submitted` is `true` and `questions` is empty.
+    """
     try:
         aid = _require_valid_assessment_id(assessment_id)
         if not db_service.client_may_access_assessment(aid, None):
@@ -487,16 +353,48 @@ def get_assessment(
         data = assessment_service.get_assessment_for_user(aid, employee_id=eid)
         if not data.get("found"):
             raise HTTPException(status_code=404, detail="Assessment not found")
-        return data
+        return AssessmentResponse.model_validate(data)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@app.post("/submit-assessment")
-def submit_assessment(body: SubmitAssessmentBody) -> dict[str, Any]:
-    """Public: submit answers; LLM evaluates; participant identified by employee_id + name."""
+@app.post(
+    "/submit-assessment",
+    tags=["assessments"],
+    summary="Submit in-browser answers",
+    response_model=SubmitAssessmentResponse,
+    responses={
+        200: {"description": "Answers graded and persisted."},
+        400: ERROR_400,
+        403: {
+            "description": "Assessment unavailable, timed window expired, or duplicate submission.",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "expired": {"value": {"detail": "Assessment time has expired."}},
+                        "duplicate": {
+                            "value": {"detail": "You have already submitted this assessment."}
+                        },
+                    }
+                }
+            },
+        },
+        422: ERROR_422,
+        500: ERROR_500,
+        503: ERROR_503,
+    },
+)
+def submit_assessment(body: SubmitAssessmentBody) -> SubmitAssessmentResponse:
+    """
+    Submit participant answers for LLM grading.
+
+    **Access**: shared assessments only on this public route.
+
+    **Validation**: `assessment_id` must be a UUID; at least one answer must match a question.
+    Duplicate submissions for the same `employee_id` are rejected with HTTP 400.
+    """
     try:
         aid = _require_valid_assessment_id(body.assessment_id)
         if not db_service.client_may_access_assessment(aid, None):
@@ -508,13 +406,14 @@ def submit_assessment(body: SubmitAssessmentBody) -> dict[str, Any]:
             {"question_id": a.question_id, "answer": a.answer} for a in body.answers
         ]
         user_label = f"{body.employee_id} | {body.participant_name}"
-        return assessment_service.submit_assessment(
+        result = assessment_service.submit_assessment(
             assessment_id=aid,
             user_id=user_label,
             answers=answers_payload,
             employee_id=body.employee_id.strip(),
             submitter_client_id=None,
         )
+        return SubmitAssessmentResponse.model_validate(result)
     except TimedAssessmentError as e:
         raise HTTPException(status_code=403, detail=str(e)) from e
     except ValueError as e:
@@ -525,13 +424,66 @@ def submit_assessment(body: SubmitAssessmentBody) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@app.post("/submit-notebook-assessment")
+@app.post(
+    "/submit-notebook-assessment",
+    tags=["assessments"],
+    summary="Upload Jupyter notebook for grading",
+    response_model=NotebookSubmitResponse,
+    responses={
+        200: {"description": "Notebook parsed, graded, and stored."},
+        400: ERROR_400,
+        403: {
+            "description": "Assessment unavailable or notebook grace period ended.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Notebook upload grace period has ended."}
+                }
+            },
+        },
+        413: ERROR_413,
+        422: ERROR_422,
+        500: ERROR_500,
+    },
+)
 async def submit_notebook_assessment(
-    assessment_id: str = Form(...),
-    user_id: str = Form(...),
-    file: UploadFile = File(...),
-    client_id: str | None = Header(None),
-):
+    assessment_id: Annotated[
+        str,
+        Form(
+            description="UUID of the assessment.",
+            examples=["550e8400-e29b-41d4-a716-446655440000"],
+        ),
+    ],
+    user_id: Annotated[
+        str,
+        Form(
+            description="Participant label, typically `employee_id | participant_name`.",
+            examples=["EMP-10042 | Jane Doe"],
+        ),
+    ],
+    file: Annotated[
+        UploadFile,
+        File(description="`.ipynb` notebook file (max 5 MiB)."),
+    ],
+    client_id: Annotated[
+        str | None,
+        Header(
+            description=(
+                "Optional client id for client-scoped assessments. Must match the assessment owner."
+            ),
+            examples=["participant-1"],
+        ),
+    ] = None,
+) -> NotebookSubmitResponse:
+    """
+    Upload a completed Jupyter notebook for grading.
+
+    Uses `multipart/form-data` with fields `assessment_id`, `user_id`, and `file`.
+
+    **Access**: shared assessments allow missing `client_id`; client-scoped assessments require
+    a matching `client_id` header.
+
+    **Size limit**: 5 MiB (HTTP 413 if exceeded).
+    """
     contents = await file.read()
     if len(contents) > MAX_NOTEBOOK_BYTES:
         raise HTTPException(status_code=413, detail="File too large (max 5 MiB)")
@@ -545,7 +497,7 @@ async def submit_notebook_assessment(
         result = notebook_service.submit_notebook_assessment(
             aid, user_id, contents, submitter_client_id=client_id
         )
-        return result
+        return NotebookSubmitResponse.model_validate(result)
     except TimedAssessmentError as e:
         raise HTTPException(status_code=403, detail=str(e)) from e
     except ValueError as e:
@@ -554,9 +506,84 @@ async def submit_notebook_assessment(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@app.get("/assessment/{assessment_id}/template")
-def get_notebook_template(assessment_id: str, client_id: str | None = Header(None)):
-    """Public: download Jupyter notebook template for coding questions."""
+@app.get(
+    "/assessment/{assessment_id}/template",
+    tags=["assessments"],
+    summary="Download Jupyter notebook template",
+    responses={
+        200: {
+            "description": "Notebook template (`.ipynb` JSON).",
+            "content": {
+                "application/x-ipynb+json": {
+                    "schema": {"type": "object"},
+                    "example": {
+                        "nbformat": 4,
+                        "nbformat_minor": 2,
+                        "metadata": {"language_info": {"name": "python"}},
+                        "cells": [],
+                    },
+                }
+            },
+        },
+        400: ERROR_400,
+        403: {
+            "description": "Client-scoped assessment without matching `client_id` header.",
+            "content": {
+                "application/json": {"example": {"detail": "This assessment is not available for open access."}}
+            },
+        },
+        404: {
+            "description": "Assessment not found or does not require a notebook.",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "not_found": {"value": {"detail": "Assessment not found"}},
+                        "no_notebook": {
+                            "value": {"detail": "This assessment does not require a Jupyter notebook."}
+                        },
+                    }
+                }
+            },
+        },
+        409: {
+            "description": "Notebook expected but template is not ready.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": (
+                            "This assessment expects notebook coding questions, but none are "
+                            "available in the template. Regenerate the assessment."
+                        )
+                    }
+                }
+            },
+        },
+        500: ERROR_500,
+    },
+)
+def get_notebook_template(
+    assessment_id: Annotated[
+        str,
+        Path(
+            description="UUID of the assessment.",
+            examples=["550e8400-e29b-41d4-a716-446655440000"],
+        ),
+    ],
+    client_id: Annotated[
+        str | None,
+        Header(
+            description="Optional client id for client-scoped assessments.",
+            examples=["participant-1"],
+        ),
+    ] = None,
+) -> Response:
+    """
+    Download a starter `.ipynb` with markdown prompts for notebook coding questions.
+
+    Returns raw notebook JSON with `Content-Disposition: attachment`.
+
+    **Authentication**: none for shared assessments; `client_id` header when scoped.
+    """
     try:
         aid = _require_valid_assessment_id(assessment_id)
         if not db_service.client_may_access_assessment(aid, client_id):
@@ -597,15 +624,3 @@ def get_notebook_template(assessment_id: str, client_id: str | None = Header(Non
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
-
-
-@app.get("/health")
-def health() -> dict[str, str | bool]:
-    return {
-        "status": "ok",
-        "database": ping_database(),
-        "groq_configured": groq_key_configured(),
-        "auth_configured": bool(
-            auth_service.jwt_configured() and auth_service.admin_password_configured()
-        ),
-    }
