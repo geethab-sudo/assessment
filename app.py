@@ -227,6 +227,65 @@ class GenerateAssessmentBody(BaseModel):
         return self
 
 
+class ReviewQuestionItem(BaseModel):
+    """One question as returned by preview and submitted back via confirm."""
+    question_id: str
+    type: str
+    question: str = Field(..., min_length=1)
+    code_snippet: str = ""
+    options: list[str] = Field(default_factory=list)
+    correct_answer: str = ""
+    topic_name: str = ""
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        t = v.strip().lower()
+        if t not in ALLOWED_TYPES:
+            raise ValueError(f"Invalid question type: {v!r}")
+        return t
+
+    @field_validator("question", "code_snippet", "correct_answer", "topic_name", mode="before")
+    @classmethod
+    def strip_str(cls, v: object) -> str:
+        return v.strip() if isinstance(v, str) else (v or "")
+
+
+class ConfirmAssessmentBody(BaseModel):
+    questions: list[ReviewQuestionItem] = Field(..., min_length=1)
+    topic: str = Field(..., min_length=1)
+    level: str = Field(..., min_length=1)
+    language_code: str | None = Field(default=None, max_length=32)
+    language_label: str | None = Field(default=None, max_length=256)
+    topic_names: list[str] = Field(default_factory=list)
+    per_topic_config: dict[str, dict[str, int]] = Field(default_factory=dict)
+    is_timed: bool = False
+    duration_minutes: int | None = Field(default=None, ge=1)
+    notebook_grace_minutes: int | None = Field(default=None, ge=0)
+
+    @field_validator("level")
+    @classmethod
+    def normalize_level(cls, v: str) -> str:
+        lv = v.strip().lower()
+        if lv not in ("beginner", "intermediate", "advanced"):
+            raise ValueError("level must be one of: beginner, intermediate, advanced")
+        return lv
+
+
+class PatchQuestionBody(BaseModel):
+    question: str | None = None
+    code_snippet: str | None = None
+    options: list[str] | None = None
+    correct_answer: str | None = None
+
+    @field_validator("question", "code_snippet", "correct_answer", mode="before")
+    @classmethod
+    def strip_str(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        return v.strip() if isinstance(v, str) else str(v)
+
+
 class AnswerItem(BaseModel):
     question_id: str | int
     answer: str
@@ -462,6 +521,86 @@ def generate_assessment(
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Generation failed: {e}") from e
+
+
+@app.post("/admin/preview-questions")
+def preview_questions(
+    body: GenerateAssessmentBody,
+    _: None = Depends(require_admin),
+) -> dict[str, Any]:
+    """Admin: generate questions via LLM for review — nothing is written to the DB.
+
+    Returns the full question list including correct_answer so the admin can verify
+    and edit before confirming. Call POST /admin/confirm-assessment to persist.
+    """
+    try:
+        return assessment_service.preview_questions(
+            topic=body.topic.strip(),
+            level=body.level,
+            types=body.types,
+            questions_per_type=body.questions_per_type,
+            topic_names=body.topic_names,
+            per_topic_config=body.per_topic_config or {},
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Preview generation failed: {e}") from e
+
+
+@app.post("/admin/confirm-assessment")
+def confirm_assessment(
+    body: ConfirmAssessmentBody,
+    _: None = Depends(require_admin),
+) -> dict[str, Any]:
+    """Admin: persist the reviewed (and possibly edited) question list to the DB."""
+    try:
+        questions = [q.model_dump() for q in body.questions]
+        return assessment_service.confirm_assessment(
+            questions,
+            topic=body.topic.strip(),
+            level=body.level,
+            language_code=body.language_code,
+            language_label=body.language_label,
+            topic_names=body.topic_names,
+            per_topic_config=body.per_topic_config or {},
+            is_timed=body.is_timed,
+            duration_minutes=body.duration_minutes,
+            notebook_grace_minutes=body.notebook_grace_minutes,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Confirm failed: {e}") from e
+
+
+@app.patch("/admin/assessment/{assessment_id}/question/{question_id}")
+def patch_assessment_question(
+    assessment_id: str,
+    question_id: str,
+    body: PatchQuestionBody,
+    _: None = Depends(require_admin),
+) -> dict[str, Any]:
+    """Admin: update a single question on an already-saved assessment (post-hoc correction)."""
+    aid = _require_valid_assessment_id(assessment_id)
+    options_str: str | None = None
+    if body.options is not None:
+        options_str = json.dumps(body.options, ensure_ascii=False)
+    updated = db_service.update_assessment_question(
+        aid,
+        question_id.strip(),
+        question=body.question,
+        code_snippet=body.code_snippet,
+        options=options_str,
+        correct_answer=body.correct_answer,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return {"ok": True, "assessment_id": aid, "question_id": question_id.strip()}
 
 
 @app.get("/catalog/languages")

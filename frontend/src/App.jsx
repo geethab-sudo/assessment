@@ -3,6 +3,7 @@ import NavBar from "./components/NavBar.jsx";
 import { ProtectedAdmin } from "./components/ProtectedRoute.jsx";
 import AdminPage from "./pages/AdminPage.jsx";
 import AdminAssessmentsPage from "./pages/AdminAssessmentsPage.jsx";
+import AdminReviewPage from "./pages/AdminReviewPage.jsx";
 import AdminSubmissionsPage from "./pages/AdminSubmissionsPage.jsx";
 import AdminCatalogPage from "./pages/AdminCatalogPage.jsx";
 import ClientPage from "./pages/ClientPage.jsx";
@@ -64,6 +65,14 @@ function Layout() {
           element={
             <ProtectedAdmin>
               <AdminAssessmentsPage />
+            </ProtectedAdmin>
+          }
+        />
+        <Route
+          path="/admin/review"
+          element={
+            <ProtectedAdmin>
+              <AdminReviewPage />
             </ProtectedAdmin>
           }
         />

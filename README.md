@@ -6,7 +6,7 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 
 ## Features
 
-- **Admin portal**: Sign in with a configured password; generate assessments (MCQ, coding, subjective); manage catalog languages/topics; browse all assessments (language, topics, routing, timed flag); delete assessments; review participant submissions with date display, sort by date, and filter by employee ID or assessment ID.
+- **Admin portal**: Sign in with a configured password; generate assessments (MCQ, coding, subjective); **review and edit generated questions before saving**; manage catalog languages/topics; browse all assessments with filter by Assessment ID and language, sort by date; delete assessments; review participant submissions with date display, sort by date, and filter by employee ID or assessment ID.
 - **Participant portal**: Open a test with employee ID, name, and assessment ID — no account required for shared assessments.
 - **Tier 1 evaluation presets**: One-click **Beginner** / **Intermediate** / **Advanced** Python Tier 1 combos (25 questions: 15 MCQ + 10 coding) with editable per-topic counts and suggested timed duration (60 / 90 / 120 min).
 - **Auto topic allocation**: Select multiple catalog topics with global MCQ/coding counts — the backend splits counts evenly across topics, generates per topic, and tags each question with `topic_name` for correct routing (no manual per-topic grid required).
@@ -17,13 +17,43 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 - **Mixed assessments**: Pyodide and Jupyter coding in one test; single **Submit answers** for in-browser work plus optional notebook upload in the same flow.
 - **Timed assessments**: Optional countdown per participant; auto-submit in-browser answers at expiry; configurable grace period for notebook upload with auto-grade on attach.
 - **Per-participant shuffle**: Deterministic question and MCQ option order from `assessment_id + employee_id`; display **Question N of M**; per-question feedback under each card after submit.
-- **LLM grading**: All answers (MCQ, coding, subjective, notebook cells) are scored via Groq with per-question written feedback.
+- **LLM grading**: Coding, subjective, and notebook answers are scored via Groq with per-question written feedback. **MCQ answers are graded locally** (string match against the stored correct answer) — no LLM call on submit.
 - **MCQ code formatting**: Embedded snippets in MCQ stems (inline, fenced, or `code_snippet`) are split into prose + a dark syntax-highlighted block. One-liners are expanded (`if`/`with`/`class`/`def` bodies, semicolon chains). Mixed stems like “class … What is the output of the following code: print(…)” become a question line plus formatted code. Write/implement prompts stay prose-only.
 - **Code editor**: Tab indentation, `Ctrl+/` comment toggling, syntax highlighting, and per-question language override.
 - **Shell-style coding (venv topic)**: Catalog topics can set `coding_editor_language` to `shell` or `powershell` so coding answers use a Bash/PowerShell editor only (no Pyodide console) — used for **Packaging and virtual environments (venv)** in Python Tier 1.
 - **Re-submission guard**: Participants cannot submit the same assessment twice — enforced server-side for both timed and untimed assessments.
 - **Session-scoped auth tokens**: Admin and client JWTs are stored in `sessionStorage` (tab-scoped), not `localStorage`, reducing XSS exposure across tabs.
 - **Timer stops on submit**: The countdown bar is hidden and the interval cleared as soon as the participant's submission succeeds; auto-expire callbacks no longer fire after that point.
+- **Admin question review**: After generation, admins land on a review page to edit question text, MCQ options, correct answer, and code snippets (Tab inserts 4-space indent). Coding questions do not show a code-snippet field. Nothing is written to the DB until **Confirm & save**.
+
+## How do we use LLM calls? Is it expensive?
+
+This section is for engineers who care about **token usage and API cost**, not UI details.
+
+### When the LLM is called
+
+| Stage | What happens | LLM calls |
+|-------|----------------|-----------|
+| **Assessment generation** (admin) | Groq generates the question set from topic/level/counts. May be one call per catalog topic when using per-topic allocation. | **Yes** — proportional to topics × generation retries |
+| **Admin review** | Admin edits questions on `/admin/review`; confirm persists to PostgreSQL. | **No** |
+| **Participant load** | Questions are read from the DB; shuffle is deterministic (no LLM). | **No** |
+| **Submit — MCQ** | Answer compared to stored `correct_answer` (case-insensitive string match). Wrong-answer “feedback” is the stored correct text, not a new model response. | **No** |
+| **Submit — coding / subjective** | Each answer is sent to Groq once for score + written feedback. | **Yes** — **one call per coding/subjective question** |
+| **Submit — Jupyter notebook** | Each paired markdown/code cell is graded via Groq. | **Yes** — **one call per graded notebook cell** |
+
+### Cost intuition (examples)
+
+- **10 MCQ only** → generation LLM cost only; **0** LLM calls on submit.
+- **5 MCQ + 3 coding** → **3** LLM calls on submit (coding only).
+- **Mixed + notebook** → in-browser coding/subjective calls + one call per notebook coding cell when the `.ipynb` is graded.
+
+### Design choices that keep cost down
+
+1. **MCQ is source-of-truth grading** — The value saved at confirm time (including admin edits on the review page) is what submission uses. We do **not** re-ask the LLM whether “Fish” is correct for an MCQ.
+2. **Generation is separate from grading** — Pay for generation once per assessment; grading cost scales with **non-MCQ** answers submitted.
+3. **Retries only where JSON breaks** — Question generation may retry on malformed JSON from Groq; grading does not double-call MCQs.
+
+Implementation references: `_is_answer_correct` in `services/assessment_service.py` (MCQ branch), `llm_service.py` (generation + grading).
 
 ## Documentation
 
@@ -347,8 +377,9 @@ assessment/
 │       │   ├── shellEditor.js
 │       │   └── tier1Presets.js
 │       └── pages/
-│           ├── AdminPage.jsx
-│           ├── AdminAssessmentsPage.jsx
+│           ├── AdminPage.jsx             # Generate → preview (no DB write)
+│           ├── AdminReviewPage.jsx       # Edit questions; Confirm & save
+│           ├── AdminAssessmentsPage.jsx  # Filter by ID/language, sort by date
 │           ├── AdminCatalogPage.jsx
 │           ├── AdminSubmissionsPage.jsx  # Formatted dates, sort, employee/assessment filter
 │           └── ClientPage.jsx
@@ -365,7 +396,8 @@ assessment/
 | `/` | Home |
 | `/login/admin` | Admin sign-in |
 | `/admin` | Generate assessment (auto, per-topic, timed options) |
-| `/admin/assessments` | List / delete assessments |
+| `/admin/review` | Review and edit generated questions before saving |
+| `/admin/assessments` | List / delete assessments (filter by ID, language; sort by date) |
 | `/admin/catalog` | Languages and topics (with modality) |
 | `/admin/submissions` | Submission review — formatted dates, sort by date, filter by employee / assessment ID |
 | `/client` | Take assessment (Pyodide, Jupyter, mixed, timed) |
@@ -375,7 +407,10 @@ assessment/
 | Endpoint | Auth | Description |
 |----------|------|-------------|
 | `POST /auth/login` | — | Admin password or client ID |
-| `POST /generate-assessment` | Admin | Create assessment (`topic_names`, `per_topic_config`, `is_timed`, …) |
+| `POST /generate-assessment` | Admin | Create assessment directly (legacy; still available) |
+| `POST /admin/preview-questions` | Admin | Generate questions for review — **no DB write** |
+| `POST /admin/confirm-assessment` | Admin | Persist admin-reviewed question list |
+| `PATCH /admin/assessment/{id}/question/{qid}` | Admin | Patch one question on a saved assessment |
 | `GET /admin/assessments` | Admin | List assessments (`routing_flag`, `is_timed`, …) |
 | `DELETE /admin/assessments/{id}` | Admin | Delete assessment |
 | `GET /assessment/{id}?employee_id=…` | Public* | Questions, `topic_modality`, `notebook_expected`, `timer` |

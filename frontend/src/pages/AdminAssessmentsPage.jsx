@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch } from "../api";
 import QuestionStem from "../components/QuestionStem.jsx";
@@ -114,6 +114,44 @@ export default function AdminAssessmentsPage() {
   const [actionError, setActionError] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
 
+  // Filters & sort
+  const [idFilter, setIdFilter] = useState("");
+  const [langFilter, setLangFilter] = useState("");
+  const [dateSort, setDateSort] = useState("desc"); // "asc" | "desc"
+
+  /** All unique language labels available in the loaded data. */
+  const languageOptions = useMemo(() => {
+    const seen = new Set();
+    const opts = [];
+    for (const r of rows) {
+      const label = r.language_name || r.language_label || r.language_code || "";
+      if (label && !seen.has(label)) {
+        seen.add(label);
+        opts.push(label);
+      }
+    }
+    return opts.sort((a, b) => a.localeCompare(b));
+  }, [rows]);
+
+  const visibleRows = useMemo(() => {
+    let filtered = rows;
+    if (idFilter.trim()) {
+      const q = idFilter.trim().toLowerCase();
+      filtered = filtered.filter((r) => r.assessment_id.toLowerCase().includes(q));
+    }
+    if (langFilter) {
+      filtered = filtered.filter((r) => {
+        const label = r.language_name || r.language_label || r.language_code || "";
+        return label === langFilter;
+      });
+    }
+    return [...filtered].sort((a, b) => {
+      const ta = a.created_at || "";
+      const tb = b.created_at || "";
+      return dateSort === "desc" ? tb.localeCompare(ta) : ta.localeCompare(tb);
+    });
+  }, [rows, idFilter, langFilter, dateSort]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -180,6 +218,46 @@ export default function AdminAssessmentsPage() {
           </div>
         )}
         {!loading && !error && (
+          <>
+          <div className="submissions-toolbar">
+            <label className="submissions-toolbar-field">
+              <span className="submissions-toolbar-label">Assessment ID</span>
+              <input
+                className="submissions-toolbar-input"
+                type="search"
+                placeholder="Search by ID…"
+                value={idFilter}
+                onChange={(e) => setIdFilter(e.target.value)}
+              />
+            </label>
+            <label className="submissions-toolbar-field">
+              <span className="submissions-toolbar-label">Language</span>
+              <select
+                className="submissions-toolbar-select"
+                value={langFilter}
+                onChange={(e) => setLangFilter(e.target.value)}
+              >
+                <option value="">All languages</option>
+                {languageOptions.map((l) => (
+                  <option key={l} value={l}>{l}</option>
+                ))}
+              </select>
+            </label>
+            <label className="submissions-toolbar-field">
+              <span className="submissions-toolbar-label">Sort by date</span>
+              <select
+                className="submissions-toolbar-select"
+                value={dateSort}
+                onChange={(e) => setDateSort(e.target.value)}
+              >
+                <option value="desc">Newest first</option>
+                <option value="asc">Oldest first</option>
+              </select>
+            </label>
+            <span className="submissions-toolbar-count muted">
+              {visibleRows.length} / {rows.length}
+            </span>
+          </div>
           <div className="table-wrap">
             <table className="data-table">
               <thead>
@@ -195,14 +273,16 @@ export default function AdminAssessmentsPage() {
                 </tr>
               </thead>
               <tbody>
-                {rows.length === 0 ? (
+                {visibleRows.length === 0 ? (
                   <tr>
                     <td colSpan={8}>
-                      <div className="empty-state">No assessments yet.</div>
+                      <div className="empty-state">
+                        {rows.length === 0 ? "No assessments yet." : "No assessments match the filters."}
+                      </div>
                     </td>
                   </tr>
                 ) : (
-                  rows.map((r) => (
+                  visibleRows.map((r) => (
                     <Fragment key={r.assessment_id}>
                       <tr>
                         <td>
@@ -265,6 +345,7 @@ export default function AdminAssessmentsPage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </section>
 

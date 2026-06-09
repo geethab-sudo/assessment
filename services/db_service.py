@@ -219,6 +219,37 @@ def save_assessment_rows(
         session.commit()
 
 
+def update_assessment_question(
+    assessment_id: str,
+    question_id: str,
+    *,
+    question: str | None = None,
+    code_snippet: str | None = None,
+    options: str | None = None,
+    correct_answer: str | None = None,
+) -> bool:
+    """Partially update a single question row. Returns True if the row was found and updated."""
+    with _session() as session:
+        row = session.scalar(
+            select(AssessmentQuestion).where(
+                AssessmentQuestion.assessment_id == assessment_id,
+                AssessmentQuestion.question_id == str(question_id),
+            )
+        )
+        if not row:
+            return False
+        if question is not None:
+            row.question = question.strip()
+        if code_snippet is not None:
+            row.code_snippet = code_snippet.strip() or None
+        if options is not None:
+            row.options = options
+        if correct_answer is not None:
+            row.correct_answer = correct_answer.strip()
+        session.commit()
+        return True
+
+
 def get_topics_by_names(topic_names: list[str]):
     """Return Topic ORM rows matching the given names (used by assessment_service)."""
     names = [n.strip() for n in topic_names if n and str(n).strip()]
