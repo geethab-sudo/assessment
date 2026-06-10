@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { apiFetch } from "../api";
 import SearchableLanguageSelect from "../components/SearchableLanguageSelect.jsx";
+import {
+  applyPreset,
+  findPythonLanguageId,
+  getTier1Presets,
+  getPresetByName,
+  presetNameToLevel,
+} from "../lib/tier1Presets.js";
 
 /** Build the topic string for the LLM from a catalog topic row. */
 function buildTopicStringForApi(topicRow) {
@@ -32,7 +39,44 @@ function buildMultiTopicString(topicRows) {
     .join("\n\n---\n\n");
 }
 
+/** Build the topic string when per-topic counts are specified. */
+function buildPerTopicTopicString(selectedTopicRows, perTopicCounts) {
+  if (!selectedTopicRows.length) return "";
+
+  const header = `Please distribute the generated questions across the specific topic areas below according to the requested counts. Each topic area must get exactly the counts specified.
+`;
+
+  const sections = selectedTopicRows.map((row, i) => {
+    const topicId = String(row.id);
+    const counts = perTopicCounts[topicId] || { mcq: 0, coding: 0, subjective: 0 };
+    const name = (row.name || "Untitled").trim();
+    const docs = Array.isArray(row.related_documents) ? row.related_documents : [];
+
+    const lines = docs.map((d) => {
+      const title = (d.title || "").trim() || "Reference";
+      if (d.url) return `- ${title}: ${d.url}`;
+      if (d.path) return `- ${title}: ${d.path}`;
+      return `- ${title}`;
+    });
+
+    const contextStr = lines.length > 0
+      ? `\nContext (reference materials):\n${lines.join("\n")}`
+      : "";
+
+    const instructionStr = `Required questions for this specific topic:
+- MCQ (Multiple-Choice Questions): ${counts.mcq || 0}
+- Coding: ${counts.coding || 0}
+- Subjective: ${counts.subjective || 0}`;
+
+    return `## Topic area ${i + 1} — ${name}${contextStr}\n\n${instructionStr}`;
+  });
+
+  return `${header}\n${sections.join("\n\n---\n\n")}`;
+}
+
+
 export default function AdminPage() {
+  const navigate = useNavigate();
   const [topicMode, setTopicMode] = useState("catalog"); // "catalog" | "custom"
   const [languages, setLanguages] = useState([]);
   const [languageId, setLanguageId] = useState("");
@@ -55,9 +99,22 @@ export default function AdminPage() {
   const [countCoding, setCountCoding] = useState(2);
   const [countSubjective, setCountSubjective] = useState(1);
 
-  const [generatedId, setGeneratedId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  const [allocationMode, setAllocationMode] = useState("auto"); // "auto" | "per-topic"
+  const [perTopicCounts, setPerTopicCounts] = useState({}); // { [topicId]: { mcq, coding, subjective } }
+
+  const [isTimed, setIsTimed] = useState(false);
+  const [durationMinutes, setDurationMinutes] = useState(45);
+  const [notebookGraceMinutes, setNotebookGraceMinutes] = useState(5);
+
+  const [usePresetTier1, setUsePresetTier1] = useState(false);
+  const [selectedPresetName, setSelectedPresetName] = useState(null);
+  const [showDistributionEditor, setShowDistributionEditor] = useState(false);
+  const [presetMissingTopics, setPresetMissingTopics] = useState([]);
+
+  const tier1Presets = useMemo(() => getTier1Presets(), []);
 
   const topicById = useMemo(
     () => Object.fromEntries(topics.map((t) => [String(t.id), t])),
@@ -69,8 +126,21 @@ export default function AdminPage() {
     [selectedTopicIds, topicById]
   );
 
-  const resolvedTopic =
-    topicMode === "catalog" ? buildMultiTopicString(selectedTopicRows) : customTopic.trim();
+  const resolvedTopic = useMemo(() => {
+    if (topicMode !== "catalog") return customTopic.trim();
+    if (usePresetTier1 || allocationMode === "per-topic") {
+      return buildPerTopicTopicString(selectedTopicRows, perTopicCounts);
+    }
+    return buildMultiTopicString(selectedTopicRows);
+  }, [topicMode, usePresetTier1, allocationMode, selectedTopicRows, perTopicCounts, customTopic]);
+
+  const effectiveLevel = useMemo(() => {
+    if (usePresetTier1 && selectedPresetName) {
+      return presetNameToLevel(selectedPresetName);
+    }
+    return level;
+  }, [usePresetTier1, selectedPresetName, level]);
+
 
   const loadLanguages = useCallback(async () => {
     setLoadingLanguages(true);
@@ -129,18 +199,115 @@ export default function AdminPage() {
   useEffect(() => {
     if (languageId === "") {
       setTopics([]);
-      setSelectedTopicIds([]);
+      if (!usePresetTier1) {
+        setSelectedTopicIds([]);
+      }
       return;
     }
     void loadTopicsForLanguage(languageId);
-  }, [languageId, loadTopicsForLanguage]);
+  }, [languageId, loadTopicsForLanguage, usePresetTier1]);
+
+  useEffect(() => {
+    if (!usePresetTier1 || topicMode !== "catalog" || languages.length === 0) return;
+    const pyId = findPythonLanguageId(languages);
+    if (pyId && languageId !== pyId) {
+      setLanguageId(pyId);
+    }
+  }, [usePresetTier1, topicMode, languages, languageId]);
+
+  const applySelectedPreset = useCallback(
+    (presetName) => {
+      const preset = getPresetByName(presetName);
+      if (!preset) return;
+      const applied = applyPreset(preset, topics);
+      setSelectedPresetName(presetName);
+      setSelectedTopicIds(applied.selectedTopicIds);
+      setPerTopicCounts(applied.perTopicCounts);
+      setLevel(applied.level);
+      setAllocationMode("per-topic");
+      setTypeMcq(true);
+      setTypeCoding(true);
+      setTypeSubjective(false);
+      setIsTimed(true);
+      setDurationMinutes(applied.durationMinutes);
+      setPresetMissingTopics(applied.missingTopicNames);
+      setError(null);
+    },
+    [topics]
+  );
+
+  const handlePresetTier1Toggle = (enabled) => {
+    setUsePresetTier1(enabled);
+    setError(null);
+    if (!enabled) {
+      setSelectedPresetName(null);
+      setShowDistributionEditor(false);
+      setPresetMissingTopics([]);
+      return;
+    }
+    setAllocationMode("per-topic");
+    setShowDistributionEditor(false);
+    setSelectedPresetName(null);
+    setSelectedTopicIds([]);
+    setPerTopicCounts({});
+  };
+
+  const handleSelectPresetCard = (presetName) => {
+    applySelectedPreset(presetName);
+    setShowDistributionEditor(true);
+  };
+
+  const handleResetPresetDistribution = () => {
+    if (selectedPresetName) {
+      applySelectedPreset(selectedPresetName);
+    }
+  };
+
+  const addPresetTopic = (topicId) => {
+    const sid = String(topicId);
+    if (!sid || selectedTopicIds.includes(sid)) return;
+    setSelectedTopicIds((prev) => [...prev, sid]);
+    setPerTopicCounts((prev) => ({
+      ...prev,
+      [sid]: prev[sid] || { mcq: 0, coding: 0, subjective: 0 },
+    }));
+  };
+
+  const removePresetTopic = (topicId) => {
+    const sid = String(topicId);
+    setSelectedTopicIds((prev) => prev.filter((x) => x !== sid));
+    setPerTopicCounts((prev) => {
+      const next = { ...prev };
+      delete next[sid];
+      return next;
+    });
+  };
 
   const toggleTopic = (id) => {
     const sid = String(id);
-    setSelectedTopicIds((prev) =>
-      prev.includes(sid) ? prev.filter((x) => x !== sid) : [...prev, sid]
-    );
+    setSelectedTopicIds((prev) => {
+      const isAdding = !prev.includes(sid);
+      if (isAdding) {
+        setPerTopicCounts((old) => ({
+          ...old,
+          [sid]: old[sid] || { mcq: 1, coding: 0, subjective: 0 },
+        }));
+      }
+      return isAdding ? [...prev, sid] : prev.filter((x) => x !== sid);
+    });
   };
+
+  const handlePerTopicCountChange = (topicId, type, val) => {
+    const count = Math.min(30, Math.max(0, Number.parseInt(val, 10) || 0));
+    setPerTopicCounts((prev) => ({
+      ...prev,
+      [topicId]: {
+        ...(prev[topicId] || { mcq: 0, coding: 0, subjective: 0 }),
+        [type]: count,
+      },
+    }));
+  };
+
 
   const languageCodeForGenerate = useMemo(() => {
     if (topicMode === "catalog" && languageId) {
@@ -185,7 +352,39 @@ export default function AdminPage() {
     return [one];
   }, [topicMode, selectedTopicIds, topicById, customTopic]);
 
+  const totalCounts = useMemo(() => {
+    let mcq = 0;
+    let coding = 0;
+    let subjective = 0;
+    for (const id of selectedTopicIds) {
+      const counts = perTopicCounts[id] || { mcq: 0, coding: 0, subjective: 0 };
+      mcq += counts.mcq || 0;
+      coding += counts.coding || 0;
+      subjective += counts.subjective || 0;
+    }
+    return { mcq, coding, subjective };
+  }, [selectedTopicIds, perTopicCounts]);
+
   const buildTypesAndCounts = useMemo(() => {
+    if (topicMode === "catalog" && (usePresetTier1 || allocationMode === "per-topic")) {
+      const types = [];
+      const questions_per_type = {};
+      const { mcq, coding, subjective } = totalCounts;
+      if (mcq > 0) {
+        types.push("mcq");
+        questions_per_type.mcq = mcq;
+      }
+      if (coding > 0) {
+        types.push("coding");
+        questions_per_type.coding = coding;
+      }
+      if (subjective > 0) {
+        types.push("subjective");
+        questions_per_type.subjective = subjective;
+      }
+      return { types, questions_per_type };
+    }
+
     const types = [];
     const questions_per_type = {};
     if (typeMcq) {
@@ -201,7 +400,8 @@ export default function AdminPage() {
       questions_per_type.subjective = Math.min(30, Math.max(1, countSubjective));
     }
     return { types, questions_per_type };
-  }, [typeMcq, typeCoding, typeSubjective, countMcq, countCoding, countSubjective]);
+  }, [topicMode, usePresetTier1, allocationMode, totalCounts, typeMcq, typeCoding, typeSubjective, countMcq, countCoding, countSubjective]);
+
 
   const handleGenerate = async () => {
     setError(null);
@@ -225,20 +425,66 @@ export default function AdminPage() {
           throw new Error("Could not build topic text for the API.");
         }
       }
-      const data = await apiFetch("/generate-assessment", {
+      if (usePresetTier1 && presetMissingTopics.length > 0) {
+        throw new Error(
+          `Catalog is missing preset topics. Run: python scripts/seed_sample_catalog.py\nMissing: ${presetMissingTopics.join("; ")}`
+        );
+      }
+      if (usePresetTier1 && !selectedPresetName) {
+        throw new Error("Select a Tier 1 preset: Beginner, Intermediate, or Advanced.");
+      }
+
+      // Build per_topic_config when using per-topic allocation mode
+      let per_topic_config = {};
+      if (
+        topicMode === "catalog" &&
+        (usePresetTier1 || allocationMode === "per-topic") &&
+        selectedTopicIds.length > 0
+      ) {
+        for (const id of selectedTopicIds) {
+          const row = topicById[String(id)];
+          if (!row) continue;
+          const counts = perTopicCounts[id] || { mcq: 0, coding: 0, subjective: 0 };
+          per_topic_config[row.name] = {
+            mcq: counts.mcq || 0,
+            coding: counts.coding || 0,
+            subjective: counts.subjective || 0,
+          };
+        }
+      }
+
+      // Build the shared payload used for both preview and (eventually) confirm
+      const previewPayload = {
+        topic: resolvedTopic,
+        level: effectiveLevel,
+        types,
+        questions_per_type,
+        ...(languageCodeForGenerate ? { language_code: languageCodeForGenerate } : {}),
+        ...(languageNameForGenerate ? { language_label: languageNameForGenerate } : {}),
+        topic_names: topicNamesForGenerate,
+        ...(Object.keys(per_topic_config).length > 0 ? { per_topic_config } : {}),
+        is_timed: isTimed,
+        ...(isTimed
+          ? {
+              duration_minutes: durationMinutes,
+              notebook_grace_minutes: notebookGraceMinutes,
+            }
+          : {}),
+      };
+
+      const data = await apiFetch("/admin/preview-questions", {
         method: "POST",
         authRole: "admin",
-        body: JSON.stringify({
-          topic: resolvedTopic,
-          level,
-          types,
-          questions_per_type,
-          ...(languageCodeForGenerate ? { language_code: languageCodeForGenerate } : {}),
-          ...(languageNameForGenerate ? { language_label: languageNameForGenerate } : {}),
-          topic_names: topicNamesForGenerate,
-        }),
+        body: JSON.stringify(previewPayload),
       });
-      setGeneratedId(data.assessment_id);
+
+      // Navigate to the review page, carrying the draft questions and confirm payload
+      navigate("/admin/review", {
+        state: {
+          questions: data.questions,
+          confirmPayload: previewPayload,
+        },
+      });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -248,12 +494,23 @@ export default function AdminPage() {
 
   const catalogReady =
     topicMode === "custom" ||
-    (Boolean(languageId) && selectedTopicRows.length > 0 && !loadingTopics);
+    (Boolean(languageId) &&
+      !loadingTopics &&
+      (usePresetTier1 ? topics.length > 0 : selectedTopicRows.length > 0));
+
+  const hasAnyQuestions = useMemo(() => {
+    if (topicMode === "catalog" && (usePresetTier1 || allocationMode === "per-topic")) {
+      return totalCounts.mcq > 0 || totalCounts.coding > 0 || totalCounts.subjective > 0;
+    }
+    return typeMcq || typeCoding || typeSubjective;
+  }, [topicMode, usePresetTier1, allocationMode, totalCounts, typeMcq, typeCoding, typeSubjective]);
 
   const canGenerate =
     !loading &&
     (topicMode === "catalog" ? catalogReady : customTopic.trim().length > 0) &&
-    (typeMcq || typeCoding || typeSubjective);
+    hasAnyQuestions &&
+    (!usePresetTier1 || (selectedPresetName && presetMissingTopics.length === 0));
+
 
   return (
     <div className="page page--wide">
@@ -276,23 +533,31 @@ export default function AdminPage() {
       <section className="card">
         <h2>Configuration</h2>
         <div className="grid">
-          <label>
-            Level
-            <select value={level} onChange={(e) => setLevel(e.target.value)}>
-              <option value="beginner">Beginner</option>
-              <option value="intermediate">Intermediate</option>
-              <option value="advanced">Advanced</option>
-            </select>
-            <span className="muted">Depth and difficulty of questions follow this level.</span>
-          </label>
+          {!(usePresetTier1 && topicMode === "catalog") && (
+            <label>
+              Level
+              <select value={level} onChange={(e) => setLevel(e.target.value)}>
+                <option value="beginner">Beginner</option>
+                <option value="intermediate">Intermediate</option>
+                <option value="advanced">Advanced</option>
+              </select>
+              <span className="muted">Depth and difficulty of questions follow this level.</span>
+            </label>
+          )}
           <label>
             Content source
             <select
               value={topicMode}
               onChange={(e) => {
-                setTopicMode(e.target.value);
+                const mode = e.target.value;
+                setTopicMode(mode);
                 setError(null);
                 setSelectedTopicIds([]);
+                if (mode === "custom") {
+                  setUsePresetTier1(false);
+                  setSelectedPresetName(null);
+                  setShowDistributionEditor(false);
+                }
               }}
             >
               <option value="catalog">Catalog: language + topics</option>
@@ -303,20 +568,209 @@ export default function AdminPage() {
 
         {topicMode === "catalog" && (
           <div className="stack" style={{ marginTop: "1rem" }}>
+            <label className="preset-tier1-toggle">
+              <input
+                type="checkbox"
+                checked={usePresetTier1}
+                onChange={(e) => handlePresetTier1Toggle(e.target.checked)}
+              />
+              <span>
+                <strong>Preset Tier 1 evaluation (Python)</strong>
+                <span className="muted small-print" style={{ display: "block", marginTop: "0.25rem" }}>
+                  Standard Beginner / Intermediate / Advanced combos — edit counts and duration before generating.
+                </span>
+              </span>
+            </label>
+
             <SearchableLanguageSelect
               label="Language"
               inputId="gen-form-lang"
               languages={languages}
               value={languageId}
               onChange={(v) => {
+                if (usePresetTier1) return;
                 setLanguageId(v);
                 setError(null);
               }}
               required
-              disabled={loadingLanguages}
-              hint="Search by name, code, or id. Add languages under Admin → Catalog if the list is empty."
+              disabled={loadingLanguages || usePresetTier1}
+              hint={
+                usePresetTier1
+                  ? "Locked to Python for Tier 1 presets."
+                  : "Search by name, code, or id. Add languages under Admin → Catalog if the list is empty."
+              }
             />
-            {languageId && !loadingTopics && topics.length > 0 && (
+
+            {usePresetTier1 && (
+              <div className="tier1-preset-panel" role="group" aria-label="Tier 1 preset selection">
+                <h3 className="tier1-preset-panel__title">Choose evaluation combo</h3>
+                <div className="tier1-preset-cards">
+                  {tier1Presets.map((preset) => {
+                    const cardMcq = selectedPresetName === preset.name
+                      ? totalCounts.mcq
+                      : (preset.topics || []).reduce((s, t) => s + (t.mcq || 0), 0);
+                    const cardCoding = selectedPresetName === preset.name
+                      ? totalCounts.coding
+                      : (preset.topics || []).reduce((s, t) => s + (t.coding || 0), 0);
+                    const selected = selectedPresetName === preset.name;
+                    return (
+                      <button
+                        key={preset.name}
+                        type="button"
+                        className={`tier1-preset-card${selected ? " tier1-preset-card--selected" : ""}`}
+                        onClick={() => handleSelectPresetCard(preset.name)}
+                        aria-pressed={selected}
+                      >
+                        <span className="tier1-preset-card__name">{preset.name}</span>
+                        <span className="tier1-preset-card__meta muted small-print">
+                          {cardMcq} MCQ · {cardCoding} coding · {cardMcq + cardCoding} total
+                        </span>
+                        <span className="tier1-preset-card__duration muted small-print">
+                          Suggested ~{preset.target_duration_minutes} min (timed, editable below)
+                        </span>
+                        <p className="tier1-preset-card__desc small-print">{preset.description}</p>
+                        <table className="tier1-preset-card__table">
+                          <thead>
+                            <tr>
+                              <th scope="col">Topic</th>
+                              <th scope="col">MCQ</th>
+                              <th scope="col">Code</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(preset.topics || []).map((t) => (
+                              <tr key={t.topic_name}>
+                                <td>{t.topic_name.replace(/^Tier 1 - /, "")}</td>
+                                <td>{t.mcq}</td>
+                                <td>{t.coding}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {selectedPresetName && (
+                  <div className="tier1-preset-actions">
+                    <button
+                      type="button"
+                      className="tier1-action-btn"
+                      onClick={() => setShowDistributionEditor((v) => !v)}
+                    >
+                      {showDistributionEditor ? "Hide distribution editor" : "Edit question distribution"}
+                    </button>
+                    {showDistributionEditor && (
+                      <button
+                        type="button"
+                        className="tier1-action-btn"
+                        onClick={handleResetPresetDistribution}
+                      >
+                        Reset to {selectedPresetName} preset
+                      </button>
+                    )}
+                    <p className="tier1-preset-totals muted" aria-live="polite">
+                      Current: <strong>{totalCounts.mcq} MCQ</strong> ·{" "}
+                      <strong>{totalCounts.coding} coding</strong> ·{" "}
+                      <strong>{totalCounts.mcq + totalCounts.coding + totalCounts.subjective} total</strong>
+                      {effectiveLevel && (
+                        <> · Level <strong>{effectiveLevel}</strong></>
+                      )}
+                    </p>
+                  </div>
+                )}
+
+                {presetMissingTopics.length > 0 && (
+                  <div className="error" role="alert" style={{ marginTop: "0.75rem" }}>
+                    Missing catalog topics. Run{" "}
+                    <code>python scripts/seed_sample_catalog.py</code>
+                    <ul style={{ margin: "0.5rem 0 0 1rem" }}>
+                      {presetMissingTopics.map((n) => (
+                        <li key={n}>{n}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {showDistributionEditor && selectedPresetName && (
+                  <div className="tier1-distribution-editor">
+                    {selectedTopicRows.length === 0 && (
+                      <p className="muted small-print" role="status">
+                        Preset topics are not in the catalog yet — add topics below or run{" "}
+                        <code>python scripts/seed_sample_catalog.py</code>.
+                      </p>
+                    )}
+                    <label className="tier1-add-topic">
+                      Add topic from catalog
+                      <select
+                        defaultValue=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            addPresetTopic(e.target.value);
+                            e.target.value = "";
+                          }
+                        }}
+                      >
+                        <option value="">— Select —</option>
+                        {topics
+                          .filter((t) => !selectedTopicIds.includes(String(t.id)))
+                          .map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    {selectedTopicRows.map((t) => {
+                      const tid = String(t.id);
+                      return (
+                        <div key={t.id} className="topic-preview-card">
+                          <div className="tier1-distribution-editor__head">
+                            <h4 className="topic-preview-h">{t.name}</h4>
+                            <button
+                              type="button"
+                              className="tier1-action-btn tier1-remove-topic"
+                              onClick={() => removePresetTopic(t.id)}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <div className="per-topic-inputs">
+                            <div className="per-topic-input-group">
+                              <span>MCQ:</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={30}
+                                value={perTopicCounts[tid]?.mcq ?? 0}
+                                onChange={(e) =>
+                                  handlePerTopicCountChange(tid, "mcq", e.target.value)
+                                }
+                              />
+                            </div>
+                            <div className="per-topic-input-group">
+                              <span>Coding:</span>
+                              <input
+                                type="number"
+                                min={0}
+                                max={30}
+                                value={perTopicCounts[tid]?.coding ?? 0}
+                                onChange={(e) =>
+                                  handlePerTopicCountChange(tid, "coding", e.target.value)
+                                }
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!usePresetTier1 && languageId && !loadingTopics && topics.length > 0 && (
               <div
                 className="topic-pick-card"
                 role="group"
@@ -428,7 +882,36 @@ export default function AdminPage() {
           </div>
         )}
 
-        {selectedTopicRows.length > 0 && topicMode === "catalog" && (
+        {!usePresetTier1 && topicMode === "catalog" && selectedTopicIds.length > 0 && (
+          <div className="allocation-mode-selector" style={{ marginTop: "1rem", marginBottom: "1rem" }}>
+            <label style={{ marginBottom: "0.4rem", display: "block" }}>
+              Question Distribution
+            </label>
+            <div className="segmented-control">
+              <button
+                type="button"
+                className={`segmented-control__btn ${allocationMode === "auto" ? "active" : ""}`}
+                onClick={() => setAllocationMode("auto")}
+              >
+                Auto-distribute Questions
+              </button>
+              <button
+                type="button"
+                className={`segmented-control__btn ${allocationMode === "per-topic" ? "active" : ""}`}
+                onClick={() => setAllocationMode("per-topic")}
+              >
+                Specify Per Topic
+              </button>
+            </div>
+            <p className="muted small-print" style={{ marginTop: "0.4rem", marginBottom: 0 }}>
+              {allocationMode === "auto"
+                ? "Generate questions from a pool of selected topics. The AI decides how they are distributed."
+                : "Set precise question counts for each chosen topic area individually."}
+            </p>
+          </div>
+        )}
+
+        {!usePresetTier1 && selectedTopicRows.length > 0 && topicMode === "catalog" && (
           <div className="topic-preview" aria-label="Selected topics summary">
             <h3 className="topic-preview-title">Selected topics</h3>
             {selectedTopicRows.map((t) => {
@@ -436,14 +919,50 @@ export default function AdminPage() {
               return (
                 <div key={t.id} className="topic-preview-card">
                   <h4 className="topic-preview-h">{t.name || `Topic #${t.id}`}</h4>
+                  
+                  {allocationMode === "per-topic" && (
+                    <div className="per-topic-inputs">
+                      <div className="per-topic-input-group">
+                        <span>MCQ:</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={30}
+                          value={perTopicCounts[String(t.id)]?.mcq ?? 0}
+                          onChange={(e) => handlePerTopicCountChange(String(t.id), "mcq", e.target.value)}
+                        />
+                      </div>
+                      <div className="per-topic-input-group">
+                        <span>Coding:</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={30}
+                          value={perTopicCounts[String(t.id)]?.coding ?? 0}
+                          onChange={(e) => handlePerTopicCountChange(String(t.id), "coding", e.target.value)}
+                        />
+                      </div>
+                      <div className="per-topic-input-group">
+                        <span>Subjective:</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={30}
+                          value={perTopicCounts[String(t.id)]?.subjective ?? 0}
+                          onChange={(e) => handlePerTopicCountChange(String(t.id), "subjective", e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   {docs.length === 0 ? (
-                    <p className="muted small-print" style={{ margin: 0 }}>
+                    <p className="muted small-print" style={{ margin: "0.5rem 0 0" }}>
                       No reference materials linked in the catalog. The topic title is still used in
                       the prompt.
                     </p>
                   ) : (
                     <>
-                      <p className="small-print muted" style={{ margin: "0.25rem 0 0.5rem" }}>
+                      <p className="small-print muted" style={{ margin: "0.5rem 0 0.5rem" }}>
                         References ({docs.length})
                       </p>
                       <ul className="topic-preview-reflist">
@@ -474,20 +993,25 @@ export default function AdminPage() {
           </div>
         )}
 
+
+        {!(usePresetTier1 && topicMode === "catalog") && (
+          <>
         <h3 className="generate-subh" style={{ marginTop: "1.25rem" }}>
           Question types and counts
         </h3>
         <p className="muted small-print" style={{ marginTop: 0 }}>
-          Enable each type and set how many questions of that type to generate (1–30 each). Counts
-          are independent.
+          {topicMode === "catalog" && allocationMode === "per-topic"
+            ? "Aggregated counts from individual topics selected above (read-only)."
+            : "Enable each type and set how many questions of that type to generate (1–30 each). Counts are independent."}
         </p>
         <div className="type-count-grid">
           <div className="type-count-row">
             <label className="type-count-tog">
               <input
                 type="checkbox"
-                checked={typeMcq}
+                checked={topicMode === "catalog" && allocationMode === "per-topic" ? totalCounts.mcq > 0 : typeMcq}
                 onChange={(e) => setTypeMcq(e.target.checked)}
+                disabled={topicMode === "catalog" && allocationMode === "per-topic"}
               />{" "}
               MCQ
             </label>
@@ -497,11 +1021,11 @@ export default function AdminPage() {
                 type="number"
                 min={1}
                 max={30}
-                value={countMcq}
+                value={topicMode === "catalog" && allocationMode === "per-topic" ? totalCounts.mcq : countMcq}
                 onChange={(e) =>
                   setCountMcq(Math.min(30, Math.max(1, Number.parseInt(e.target.value, 10) || 1)))
                 }
-                disabled={!typeMcq}
+                disabled={topicMode === "catalog" && allocationMode === "per-topic" ? true : !typeMcq}
               />
             </label>
           </div>
@@ -509,8 +1033,9 @@ export default function AdminPage() {
             <label className="type-count-tog">
               <input
                 type="checkbox"
-                checked={typeCoding}
+                checked={topicMode === "catalog" && allocationMode === "per-topic" ? totalCounts.coding > 0 : typeCoding}
                 onChange={(e) => setTypeCoding(e.target.checked)}
+                disabled={topicMode === "catalog" && allocationMode === "per-topic"}
               />{" "}
               Coding
             </label>
@@ -520,13 +1045,13 @@ export default function AdminPage() {
                 type="number"
                 min={1}
                 max={30}
-                value={countCoding}
+                value={topicMode === "catalog" && allocationMode === "per-topic" ? totalCounts.coding : countCoding}
                 onChange={(e) =>
                   setCountCoding(
                     Math.min(30, Math.max(1, Number.parseInt(e.target.value, 10) || 1))
                   )
                 }
-                disabled={!typeCoding}
+                disabled={topicMode === "catalog" && allocationMode === "per-topic" ? true : !typeCoding}
               />
             </label>
           </div>
@@ -534,8 +1059,9 @@ export default function AdminPage() {
             <label className="type-count-tog">
               <input
                 type="checkbox"
-                checked={typeSubjective}
+                checked={topicMode === "catalog" && allocationMode === "per-topic" ? totalCounts.subjective > 0 : typeSubjective}
                 onChange={(e) => setTypeSubjective(e.target.checked)}
+                disabled={topicMode === "catalog" && allocationMode === "per-topic"}
               />{" "}
               Subjective
             </label>
@@ -545,42 +1071,88 @@ export default function AdminPage() {
                 type="number"
                 min={1}
                 max={30}
-                value={countSubjective}
+                value={topicMode === "catalog" && allocationMode === "per-topic" ? totalCounts.subjective : countSubjective}
                 onChange={(e) =>
                   setCountSubjective(
                     Math.min(30, Math.max(1, Number.parseInt(e.target.value, 10) || 1))
                   )
                 }
-                disabled={!typeSubjective}
+                disabled={topicMode === "catalog" && allocationMode === "per-topic" ? true : !typeSubjective}
               />
             </label>
           </div>
         </div>
+          </>
+        )}
 
-        {catalogHint && (
+        {catalogHint && !usePresetTier1 && (
           <p className="muted" role="status" style={{ marginTop: "0.75rem" }}>
             {catalogHint}
           </p>
         )}
+
+        <div
+          className="timed-assessment-config"
+          style={{
+            marginTop: "1.25rem",
+            padding: "1rem 1.1rem",
+            borderRadius: "10px",
+            border: "1px solid rgba(0,0,0,0.1)",
+            background: "rgba(0,0,0,0.02)",
+          }}
+        >
+          <label className="type-count-tog" style={{ display: "block", marginBottom: "0.75rem" }}>
+            <input
+              type="checkbox"
+              checked={isTimed}
+              onChange={(e) => setIsTimed(e.target.checked)}
+            />{" "}
+            <strong>Timed assessment</strong>
+          </label>
+          {isTimed && (
+            <div className="row" style={{ gap: "12px", flexWrap: "wrap" }}>
+              <label className="type-count-num">
+                Duration (minutes)
+                <input
+                  type="number"
+                  min={1}
+                  value={durationMinutes}
+                  onChange={(e) => {
+                    const n = Number.parseInt(e.target.value, 10);
+                    setDurationMinutes(Number.isFinite(n) && n >= 1 ? n : 1);
+                  }}
+                />
+              </label>
+              <label className="type-count-num">
+                Notebook upload grace (minutes)
+                <input
+                  type="number"
+                  min={0}
+                  value={notebookGraceMinutes}
+                  onChange={(e) => {
+                    const n = Number.parseInt(e.target.value, 10);
+                    setNotebookGraceMinutes(Number.isFinite(n) && n >= 0 ? n : 0);
+                  }}
+                />
+              </label>
+            </div>
+          )}
+          {isTimed && (
+            <p className="muted small-print" style={{ margin: "0.65rem 0 0 0", lineHeight: 1.5 }}>
+              {usePresetTier1 && selectedPresetName
+                ? `Suggested duration for ${selectedPresetName} is pre-filled — change minutes here if needed. `
+                : null}
+              Timer starts when the participant loads the test. At time zero, answers auto-submit.
+              Grace minutes allow uploading the Jupyter notebook after the main timer ends.
+            </p>
+          )}
+        </div>
+
         <div style={{ marginTop: "1.1rem" }}>
           <button type="button" className="primary" onClick={handleGenerate} disabled={!canGenerate}>
             {loading ? "Working…" : "Generate assessment"}
           </button>
         </div>
-        {generatedId && (
-          <p className="success" style={{ marginTop: "1rem" }}>
-            Assessment ID: <code>{generatedId}</code>
-          </p>
-        )}
-        {generatedId && (
-          <p className="muted">
-            Open the{" "}
-            <Link to="/client" state={{ assessmentId: generatedId }}>
-              Client page
-            </Link>{" "}
-            with this ID filled in, or copy the ID above.
-          </p>
-        )}
       </section>
 
       {error && (

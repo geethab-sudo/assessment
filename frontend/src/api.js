@@ -8,39 +8,44 @@ const API_BASE = import.meta.env.VITE_API_URL || "/api";
 export const STORAGE_ADMIN_TOKEN = "ai_assessment_admin_token";
 export const STORAGE_CLIENT_TOKEN = "ai_assessment_client_token";
 
+// sessionStorage is used intentionally:
+// - Tokens are scoped to the browser tab, not persisted across sessions.
+// - XSS cannot reach tokens from other tabs (unlike localStorage which is shared).
+// - Logging out by closing the tab is expected behaviour for this app.
+
 export function getAdminToken() {
-  return localStorage.getItem(STORAGE_ADMIN_TOKEN);
+  return sessionStorage.getItem(STORAGE_ADMIN_TOKEN);
 }
 
 export function getClientToken() {
-  return localStorage.getItem(STORAGE_CLIENT_TOKEN);
+  return sessionStorage.getItem(STORAGE_CLIENT_TOKEN);
 }
 
 export function setAdminToken(token) {
   if (token) {
-    localStorage.setItem(STORAGE_ADMIN_TOKEN, token);
+    sessionStorage.setItem(STORAGE_ADMIN_TOKEN, token);
   } else {
-    localStorage.removeItem(STORAGE_ADMIN_TOKEN);
+    sessionStorage.removeItem(STORAGE_ADMIN_TOKEN);
   }
   notifyAuthChange();
 }
 
 export function setClientToken(token) {
   if (token) {
-    localStorage.setItem(STORAGE_CLIENT_TOKEN, token);
+    sessionStorage.setItem(STORAGE_CLIENT_TOKEN, token);
   } else {
-    localStorage.removeItem(STORAGE_CLIENT_TOKEN);
+    sessionStorage.removeItem(STORAGE_CLIENT_TOKEN);
   }
   notifyAuthChange();
 }
 
 export function logoutAdmin() {
-  localStorage.removeItem(STORAGE_ADMIN_TOKEN);
+  sessionStorage.removeItem(STORAGE_ADMIN_TOKEN);
   notifyAuthChange();
 }
 
 export function logoutClient() {
-  localStorage.removeItem(STORAGE_CLIENT_TOKEN);
+  sessionStorage.removeItem(STORAGE_CLIENT_TOKEN);
   notifyAuthChange();
 }
 
@@ -51,9 +56,11 @@ export function logoutClient() {
 export async function apiFetch(path, options = {}) {
   const { authRole, ...rest } = options;
   const headers = {
-    "Content-Type": "application/json",
     ...rest.headers,
   };
+  if (!(rest.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
   if (authRole === "admin") {
     const t = getAdminToken();
     if (t) headers.Authorization = `Bearer ${t}`;

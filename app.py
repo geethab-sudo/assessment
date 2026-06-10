@@ -15,17 +15,32 @@ _root = Path(__file__).resolve().parent
 load_dotenv(_root / ".env", override=True)
 load_dotenv(override=True)
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Form, File, UploadFile, Header, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from services import assessment_service, auth_service, catalog_service
+import json
+import uuid
+
+from services import assessment_service, auth_service, catalog_service, notebook_service, report_service
 from services import db_service
+from services.attempt_service import TimedAssessmentError
 from services.database import init_db, ping_database
 from services.llm_service import groq_key_configured
 
 ALLOWED_TYPES = frozenset({"mcq", "coding", "subjective"})
+MAX_NOTEBOOK_BYTES = 5 * 1024 * 1024  # 5 MiB
+
+
+def _require_valid_assessment_id(raw: str) -> str:
+    """Strip and validate that the path param is a well-formed UUID. Raises HTTPException."""
+    aid = raw.strip()
+    try:
+        uuid.UUID(aid)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid assessment ID format") from None
+    return aid
 
 
 @asynccontextmanager
@@ -101,6 +116,11 @@ class GenerateAssessmentBody(BaseModel):
     language_label: str | None = Field(default=None, max_length=256)
     #: Selected catalog topic titles (or custom topic preview), in order
     topic_names: list[str] = Field(default_factory=list)
+    #: Per-topic question counts: { "Topic name": { "mcq": 1, "coding": 1, "subjective": 0 } }
+    per_topic_config: dict[str, dict[str, int]] = Field(default_factory=dict)
+    is_timed: bool = False
+    duration_minutes: int | None = Field(default=None, ge=1)
+    notebook_grace_minutes: int | None = Field(default=None, ge=0)
 
     @field_validator("topic", mode="before")
     @classmethod
@@ -199,7 +219,71 @@ class GenerateAssessmentBody(BaseModel):
         for t, n in self.questions_per_type.items():
             if n < 1 or n > 30:
                 raise ValueError(f"Count for {t} must be between 1 and 30 (got {n})")
+        if self.is_timed and self.duration_minutes is None:
+            raise ValueError("duration_minutes is required when is_timed is true")
+        if not self.is_timed:
+            object.__setattr__(self, "duration_minutes", None)
+            object.__setattr__(self, "notebook_grace_minutes", None)
         return self
+
+
+class ReviewQuestionItem(BaseModel):
+    """One question as returned by preview and submitted back via confirm."""
+    question_id: str
+    type: str
+    question: str = Field(..., min_length=1)
+    code_snippet: str = ""
+    options: list[str] = Field(default_factory=list)
+    correct_answer: str = ""
+    topic_name: str = ""
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        t = v.strip().lower()
+        if t not in ALLOWED_TYPES:
+            raise ValueError(f"Invalid question type: {v!r}")
+        return t
+
+    @field_validator("question", "code_snippet", "correct_answer", "topic_name", mode="before")
+    @classmethod
+    def strip_str(cls, v: object) -> str:
+        return v.strip() if isinstance(v, str) else (v or "")
+
+
+class ConfirmAssessmentBody(BaseModel):
+    questions: list[ReviewQuestionItem] = Field(..., min_length=1)
+    topic: str = Field(..., min_length=1)
+    level: str = Field(..., min_length=1)
+    language_code: str | None = Field(default=None, max_length=32)
+    language_label: str | None = Field(default=None, max_length=256)
+    topic_names: list[str] = Field(default_factory=list)
+    per_topic_config: dict[str, dict[str, int]] = Field(default_factory=dict)
+    is_timed: bool = False
+    duration_minutes: int | None = Field(default=None, ge=1)
+    notebook_grace_minutes: int | None = Field(default=None, ge=0)
+
+    @field_validator("level")
+    @classmethod
+    def normalize_level(cls, v: str) -> str:
+        lv = v.strip().lower()
+        if lv not in ("beginner", "intermediate", "advanced"):
+            raise ValueError("level must be one of: beginner, intermediate, advanced")
+        return lv
+
+
+class PatchQuestionBody(BaseModel):
+    question: str | None = None
+    code_snippet: str | None = None
+    options: list[str] | None = None
+    correct_answer: str | None = None
+
+    @field_validator("question", "code_snippet", "correct_answer", mode="before")
+    @classmethod
+    def strip_str(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        return v.strip() if isinstance(v, str) else str(v)
 
 
 class AnswerItem(BaseModel):
@@ -418,15 +502,18 @@ def generate_assessment(
 ) -> dict[str, Any]:
     """Admin: generate questions via LLM and persist to PostgreSQL."""
     try:
-        types_norm = [t.strip().lower() for t in body.types]
         return assessment_service.create_assessment(
             topic=body.topic.strip(),
             level=body.level,
-            types=types_norm,
+            types=body.types,  # already normalized by Pydantic validator
             questions_per_type=body.questions_per_type,
             language_code=body.language_code,
             language_label=body.language_label,
             topic_names=body.topic_names,
+            per_topic_config=body.per_topic_config or {},
+            is_timed=body.is_timed,
+            duration_minutes=body.duration_minutes,
+            notebook_grace_minutes=body.notebook_grace_minutes,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
@@ -436,6 +523,86 @@ def generate_assessment(
         raise HTTPException(status_code=500, detail=f"Generation failed: {e}") from e
 
 
+@app.post("/admin/preview-questions")
+def preview_questions(
+    body: GenerateAssessmentBody,
+    _: None = Depends(require_admin),
+) -> dict[str, Any]:
+    """Admin: generate questions via LLM for review — nothing is written to the DB.
+
+    Returns the full question list including correct_answer so the admin can verify
+    and edit before confirming. Call POST /admin/confirm-assessment to persist.
+    """
+    try:
+        return assessment_service.preview_questions(
+            topic=body.topic.strip(),
+            level=body.level,
+            types=body.types,
+            questions_per_type=body.questions_per_type,
+            topic_names=body.topic_names,
+            per_topic_config=body.per_topic_config or {},
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Preview generation failed: {e}") from e
+
+
+@app.post("/admin/confirm-assessment")
+def confirm_assessment(
+    body: ConfirmAssessmentBody,
+    _: None = Depends(require_admin),
+) -> dict[str, Any]:
+    """Admin: persist the reviewed (and possibly edited) question list to the DB."""
+    try:
+        questions = [q.model_dump() for q in body.questions]
+        return assessment_service.confirm_assessment(
+            questions,
+            topic=body.topic.strip(),
+            level=body.level,
+            language_code=body.language_code,
+            language_label=body.language_label,
+            topic_names=body.topic_names,
+            per_topic_config=body.per_topic_config or {},
+            is_timed=body.is_timed,
+            duration_minutes=body.duration_minutes,
+            notebook_grace_minutes=body.notebook_grace_minutes,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Confirm failed: {e}") from e
+
+
+@app.patch("/admin/assessment/{assessment_id}/question/{question_id}")
+def patch_assessment_question(
+    assessment_id: str,
+    question_id: str,
+    body: PatchQuestionBody,
+    _: None = Depends(require_admin),
+) -> dict[str, Any]:
+    """Admin: update a single question on an already-saved assessment (post-hoc correction)."""
+    aid = _require_valid_assessment_id(assessment_id)
+    options_str: str | None = None
+    if body.options is not None:
+        options_str = json.dumps(body.options, ensure_ascii=False)
+    updated = db_service.update_assessment_question(
+        aid,
+        question_id.strip(),
+        question=body.question,
+        code_snippet=body.code_snippet,
+        options=options_str,
+        correct_answer=body.correct_answer,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return {"ok": True, "assessment_id": aid, "question_id": question_id.strip()}
+
+
 @app.get("/catalog/languages")
 def public_list_languages() -> dict[str, Any]:
     """Public: language codes and names for participant code editor (read-only)."""
@@ -443,16 +610,20 @@ def public_list_languages() -> dict[str, Any]:
 
 
 @app.get("/assessment/{assessment_id}")
-def get_assessment(assessment_id: str) -> dict[str, Any]:
-    """Public: fetch questions (no correct answers). Shared assessments only without client token."""
+def get_assessment(
+    assessment_id: str,
+    employee_id: str | None = Query(default=None, max_length=64),
+) -> dict[str, Any]:
+    """Public: fetch questions (no correct answers). Pass employee_id for per-participant shuffle."""
     try:
-        aid = assessment_id.strip()
+        aid = _require_valid_assessment_id(assessment_id)
         if not db_service.client_may_access_assessment(aid, None):
             raise HTTPException(
                 status_code=403,
                 detail="This assessment is not available for open access.",
             )
-        data = assessment_service.get_assessment_for_user(aid)
+        eid = (employee_id or "").strip() or None
+        data = assessment_service.get_assessment_for_user(aid, employee_id=eid)
         if not data.get("found"):
             raise HTTPException(status_code=404, detail="Assessment not found")
         return data
@@ -462,11 +633,35 @@ def get_assessment(assessment_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@app.get("/assessment/{assessment_id}/report")
+def get_participant_report(
+    assessment_id: str,
+    employee_id: Annotated[str, Query(min_length=1, max_length=64)],
+) -> dict[str, Any]:
+    """Public: feedback report for in-browser questions (MCQ + Pyodide coding). Jupyter excluded."""
+    try:
+        aid = _require_valid_assessment_id(assessment_id)
+        if not db_service.client_may_access_assessment(aid, None):
+            raise HTTPException(
+                status_code=403,
+                detail="This assessment is not available for open access.",
+            )
+        return report_service.build_report(aid, employee_id.strip())
+    except HTTPException:
+        raise
+    except ValueError as e:
+        msg = str(e)
+        status = 404 if "not found" in msg.lower() or "unknown" in msg.lower() else 400
+        raise HTTPException(status_code=status, detail=msg) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 @app.post("/submit-assessment")
 def submit_assessment(body: SubmitAssessmentBody) -> dict[str, Any]:
     """Public: submit answers; LLM evaluates; participant identified by employee_id + name."""
     try:
-        aid = body.assessment_id.strip()
+        aid = _require_valid_assessment_id(body.assessment_id)
         if not db_service.client_may_access_assessment(aid, None):
             raise HTTPException(
                 status_code=403,
@@ -480,12 +675,89 @@ def submit_assessment(body: SubmitAssessmentBody) -> dict[str, Any]:
             assessment_id=aid,
             user_id=user_label,
             answers=answers_payload,
+            employee_id=body.employee_id.strip(),
             submitter_client_id=None,
         )
+    except TimedAssessmentError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/submit-notebook-assessment")
+async def submit_notebook_assessment(
+    assessment_id: str = Form(...),
+    user_id: str = Form(...),
+    file: UploadFile = File(...),
+    client_id: str | None = Header(None),
+):
+    contents = await file.read()
+    if len(contents) > MAX_NOTEBOOK_BYTES:
+        raise HTTPException(status_code=413, detail="File too large (max 5 MiB)")
+    try:
+        aid = _require_valid_assessment_id(assessment_id)
+        if not db_service.client_may_access_assessment(aid, client_id):
+            raise HTTPException(
+                status_code=403,
+                detail="This assessment is not available for open access.",
+            )
+        result = notebook_service.submit_notebook_assessment(
+            aid, user_id, contents, submitter_client_id=client_id
+        )
+        return result
+    except TimedAssessmentError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/assessment/{assessment_id}/template")
+def get_notebook_template(assessment_id: str, client_id: str | None = Header(None)):
+    """Public: download Jupyter notebook template for coding questions."""
+    try:
+        aid = _require_valid_assessment_id(assessment_id)
+        if not db_service.client_may_access_assessment(aid, client_id):
+            raise HTTPException(
+                status_code=403,
+                detail="This assessment is not available for open access.",
+            )
+        rows = db_service.read_questions_by_assessment(aid)
+        if not rows:
+            raise HTTPException(status_code=404, detail="Assessment not found")
+
+        from services.notebook_plan_service import notebook_plan_for_assessment
+
+        plan = notebook_plan_for_assessment(aid)
+        if not plan["notebook_expected"]:
+            raise HTTPException(
+                status_code=404,
+                detail="This assessment does not require a Jupyter notebook.",
+            )
+        if not plan["notebook_ready"]:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This assessment expects notebook coding questions, but none are "
+                    "available in the template. Regenerate the assessment."
+                ),
+            )
+
+        notebook_questions = assessment_service.get_notebook_template_questions(aid)
+        nb_dict = assessment_service.build_notebook_template(notebook_questions, aid)
+        nb_json = json.dumps(nb_dict, indent=1)
+        return Response(
+            content=nb_json,
+            media_type="application/x-ipynb+json",
+            headers={"Content-Disposition": f"attachment; filename=assessment_{aid}.ipynb"},
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

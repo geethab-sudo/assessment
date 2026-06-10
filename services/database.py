@@ -67,6 +67,33 @@ def init_db() -> None:
     _ensure_assessments_language_code_column(eng)
     _ensure_assessments_catalog_meta_columns(eng)
     _ensure_assessments_created_at_column(eng)
+    _ensure_modality_and_routing_columns(eng)
+    _ensure_raw_notebook_column(eng)
+    _ensure_question_topic_name_column(eng)
+    _ensure_assessment_timed_columns(eng)
+    _ensure_assessment_attempts_table(eng)
+    _ensure_topic_coding_editor_language_column(eng)
+    _ensure_question_code_snippet_column(eng)
+
+
+def _ensure_raw_notebook_column(eng) -> None:
+    """Add raw_notebook column to submissions table if it does not exist (PostgreSQL)."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'submissions' AND column_name = 'raw_notebook'
+                    ) THEN
+                        ALTER TABLE submissions ADD COLUMN raw_notebook JSONB NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
 
 
 def _ensure_assessments_language_code_column(eng) -> None:
@@ -131,6 +158,159 @@ def _ensure_assessments_created_at_column(eng) -> None:
                         ALTER TABLE assessments ADD COLUMN created_at VARCHAR(64) NULL;
                     END IF;
                 END $$;
+                """
+            )
+        )
+def _ensure_modality_and_routing_columns(eng) -> None:
+    """Add modality to topics, and routing_flag to assessments and submissions if they do not exist (PostgreSQL)."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'topics' AND column_name = 'modality'
+                    ) THEN
+                        ALTER TABLE topics ADD COLUMN modality VARCHAR(32) NOT NULL DEFAULT 'pyodide';
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessments' AND column_name = 'routing_flag'
+                    ) THEN
+                        ALTER TABLE assessments ADD COLUMN routing_flag VARCHAR(32) NOT NULL DEFAULT 'pyodide';
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'submissions' AND column_name = 'routing_flag'
+                    ) THEN
+                        ALTER TABLE submissions ADD COLUMN routing_flag VARCHAR(32) NOT NULL DEFAULT 'pyodide';
+                    END IF;
+                END $$;
+                """
+            )
+        )
+
+
+def _ensure_question_topic_name_column(eng) -> None:
+    """Add topic_name to assessment_questions for per-topic question attribution."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessment_questions' AND column_name = 'topic_name'
+                    ) THEN
+                        ALTER TABLE assessment_questions
+                        ADD COLUMN topic_name VARCHAR(512) NOT NULL DEFAULT '';
+                    END IF;
+                END $$;
+                """
+            )
+        )
+
+
+def _ensure_assessment_timed_columns(eng) -> None:
+    """Add timed-assessment config columns to assessments."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessments' AND column_name = 'is_timed'
+                    ) THEN
+                        ALTER TABLE assessments
+                        ADD COLUMN is_timed BOOLEAN NOT NULL DEFAULT false;
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessments' AND column_name = 'duration_minutes'
+                    ) THEN
+                        ALTER TABLE assessments ADD COLUMN duration_minutes INTEGER NULL;
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessments' AND column_name = 'notebook_grace_minutes'
+                    ) THEN
+                        ALTER TABLE assessments ADD COLUMN notebook_grace_minutes INTEGER NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
+
+
+def _ensure_topic_coding_editor_language_column(eng) -> None:
+    """Add coding_editor_language to topics (shell / powershell for terminal-style coding)."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'topics' AND column_name = 'coding_editor_language'
+                    ) THEN
+                        ALTER TABLE topics ADD COLUMN coding_editor_language VARCHAR(32) NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
+
+
+def _ensure_question_code_snippet_column(eng) -> None:
+    """Add code_snippet to assessment_questions for MCQ code blocks."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessment_questions'
+                          AND column_name = 'code_snippet'
+                    ) THEN
+                        ALTER TABLE assessment_questions
+                        ADD COLUMN code_snippet TEXT NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
+
+
+def _ensure_assessment_attempts_table(eng) -> None:
+    """Create assessment_attempts if missing (also created by create_all on fresh DB)."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS assessment_attempts (
+                    id SERIAL PRIMARY KEY,
+                    assessment_id VARCHAR(36) NOT NULL
+                        REFERENCES assessments(assessment_id) ON DELETE CASCADE,
+                    employee_id VARCHAR(64) NOT NULL,
+                    started_at VARCHAR(64) NOT NULL,
+                    expires_at VARCHAR(64) NOT NULL,
+                    notebook_expires_at VARCHAR(64) NOT NULL,
+                    submitted_at VARCHAR(64) NULL,
+                    CONSTRAINT uq_assessment_attempt_employee
+                        UNIQUE (assessment_id, employee_id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_assessment_attempts_assessment_id
+                    ON assessment_attempts (assessment_id);
+                CREATE INDEX IF NOT EXISTS ix_assessment_attempts_employee_id
+                    ON assessment_attempts (employee_id);
                 """
             )
         )

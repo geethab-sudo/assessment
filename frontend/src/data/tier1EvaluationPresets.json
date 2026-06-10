@@ -1,0 +1,126 @@
+{
+  "language_code": "py",
+  "presets": [
+    {
+      "name": "Beginner",
+      "target_duration_minutes": 60,
+      "description": "Rapid verification of fundamental Python syntax.",
+      "topics": [
+        {
+          "topic_name": "Tier 1 - Data Structures & Manipulation (Lists, Sets, Strings)",
+          "mcq": 3,
+          "coding": 2
+        },
+        {
+          "topic_name": "Tier 1 - Logic & Flow Control (Conditionals, Loops, Comprehensions)",
+          "mcq": 3,
+          "coding": 2
+        },
+        {
+          "topic_name": "Tier 1 - Functions & Dictionaries (Nested lookups, signatures, defaults)",
+          "mcq": 3,
+          "coding": 2
+        },
+        {
+          "topic_name": "Tier 1 - Error Handling (Basic try-except, raising exceptions)",
+          "mcq": 2,
+          "coding": 1
+        },
+        {
+          "topic_name": "Tier 1 - Modules, Namespaces & Imports (Absolute/Relative, Circular imports)",
+          "mcq": 2,
+          "coding": 1
+        },
+        {
+          "topic_name": "Tier 1 - Basic File I/O & Context Managers (with open statements)",
+          "mcq": 2,
+          "coding": 2
+        }
+      ]
+    },
+    {
+      "name": "Intermediate",
+      "target_duration_minutes": 90,
+      "description": "Everyday software engineering: OOP, iterators, and testing fundamentals.",
+      "topics": [
+        {
+          "topic_name": "Tier 1 - OOP Basics (Classes, Methods, Encapsulation)",
+          "mcq": 3,
+          "coding": 2
+        },
+        {
+          "topic_name": "Tier 1 - Functions & Dictionaries (Nested lookups, signatures, defaults)",
+          "mcq": 2,
+          "coding": 2
+        },
+        {
+          "topic_name": "Tier 1 - Data Structures & Manipulation (Lists, Sets, Strings)",
+          "mcq": 2,
+          "coding": 2
+        },
+        {
+          "topic_name": "Tier 1 - Built-in Iterators & Utilities (enumerate, zip, any, all)",
+          "mcq": 2,
+          "coding": 1
+        },
+        {
+          "topic_name": "Tier 1 - Basic File I/O & Context Managers (with open statements)",
+          "mcq": 2,
+          "coding": 1
+        },
+        {
+          "topic_name": "Tier 1 - Error Handling (Basic try-except, raising exceptions)",
+          "mcq": 2,
+          "coding": 1
+        },
+        {
+          "topic_name": "Tier 1 - Testing (unittest, pytest)",
+          "mcq": 2,
+          "coding": 1
+        }
+      ]
+    },
+    {
+      "name": "Advanced",
+      "target_duration_minutes": 120,
+      "description": "Memory efficiency, strict typing, and deep language mechanics.",
+      "topics": [
+        {
+          "topic_name": "Tier 1 - OOP Basics (Classes, Methods, Encapsulation)",
+          "mcq": 2,
+          "coding": 2
+        },
+        {
+          "topic_name": "Tier 1 - Generators & Iterables (yield, generator expressions)",
+          "mcq": 3,
+          "coding": 2
+        },
+        {
+          "topic_name": "Tier 1 - Testing (unittest, pytest)",
+          "mcq": 2,
+          "coding": 2
+        },
+        {
+          "topic_name": "Tier 1 - Built-in Iterators & Utilities (enumerate, zip, any, all)",
+          "mcq": 2,
+          "coding": 2
+        },
+        {
+          "topic_name": "Tier 1 - Type Hinting & Annotations (Typing module, static analysis support)",
+          "mcq": 3,
+          "coding": 1
+        },
+        {
+          "topic_name": "Tier 1 - Logic & Flow Control (Conditionals, Loops, Comprehensions)",
+          "mcq": 1,
+          "coding": 1
+        },
+        {
+          "topic_name": "Tier 1 - Packaging and virtual environments (venv)",
+          "mcq": 2,
+          "coding": 0
+        }
+      ]
+    }
+  ]
+}
