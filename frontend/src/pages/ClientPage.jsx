@@ -537,6 +537,7 @@ export default function ClientPage() {
                       question={q.question}
                       code={q.code}
                       languageCode={assessment?.language_code}
+                      protectCodeFromCopy
                     />
                     {q.type === "mcq" && Array.isArray(q.options) ? (
                       <div className="options" role="group" aria-label={`${displayLabel} choices`}>
@@ -657,6 +658,7 @@ export default function ClientPage() {
                               value={answers[qk] ?? ""}
                               onChange={(v) => setAnswer(q.question_id, v)}
                               readOnly={formLocked}
+                              blockPaste={!formLocked}
                               minHeight={320}
                               language={codingMonaco}
                             />
@@ -672,6 +674,7 @@ export default function ClientPage() {
                                   value={answers[qk] ?? ""}
                                   onChange={(v) => setAnswer(q.question_id, v)}
                                   readOnly={formLocked}
+                                  blockPaste={!formLocked}
                                   minHeight={320}
                                   language={codingMonaco}
                                 />

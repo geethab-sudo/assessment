@@ -17,6 +17,7 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 - **Mixed assessments**: Pyodide and Jupyter coding in one test; single **Submit answers** for in-browser work plus optional notebook upload in the same flow.
 - **Timed assessments**: Optional countdown per participant; auto-submit in-browser answers at expiry; configurable grace period for notebook upload with auto-grade on attach.
 - **Per-participant shuffle**: Deterministic question and MCQ option order from `assessment_id + employee_id`; display **Question N of M**; per-question feedback under each card after submit.
+- **Clipboard restrictions (participant)**: MCQ code snippets cannot be copied during a test; paste is disabled in coding editors (Pyodide / shell) so answers must be typed. Admin preview pages are unaffected.
 - **LLM grading**: Coding, subjective, and notebook answers are scored via Groq with per-question written feedback. **MCQ answers are graded locally** (string match against the stored correct answer) — no LLM call on submit.
 - **MCQ code formatting**: Embedded snippets in MCQ stems (inline, fenced, or `code_snippet`) are split into prose + a dark syntax-highlighted block. One-liners are expanded (`if`/`with`/`class`/`def` bodies, semicolon chains). Mixed stems like “class … What is the output of the following code: print(…)” become a question line plus formatted code. Write/implement prompts stay prose-only.
 - **Code editor**: Tab indentation, `Ctrl+/` comment toggling, syntax highlighting, and per-question language override.
@@ -221,6 +222,17 @@ Participants see **Question 3 of 7** (position in their shuffled list), not inte
 
 Admin preview and `GET /assessment/{id}/template` omit `employee_id` and return canonical order.
 
+### Clipboard restrictions (participant page)
+
+On `/client`, while a test is in progress:
+
+| Area | Behaviour |
+|------|-----------|
+| MCQ / stem **code snippets** | Copy, cut, and context menu blocked; `user-select: none` on snippet blocks |
+| **Coding editor** (feeds Pyodide Execute) | Paste blocked (`Ctrl+V`, `Shift+Insert`, drag-drop) — participants must type code |
+
+Implemented in `frontend/src/lib/assessmentClipboard.js`, `McqCodeBlock.jsx`, `SimpleCodeEditor.jsx`, and `ClientPage.jsx`. This is a **browser-side deterrent** only (not a cryptographic guarantee).
+
 ## Python catalog: Tier 1 and Tier 2 topics
 
 ### Tier 1 — Core Python (evaluated in-browser via Pyodide)
@@ -403,6 +415,7 @@ assessment/
 │       │   └── TimerExpiredBanner.jsx     # Grace-period notification bar
 │       ├── hooks/useAssessmentTimer.js  # paused option stops ticker + callbacks after submit
 │       ├── lib/
+│       │   ├── assessmentClipboard.js # Block copy (snippets) / paste (editors) on client
 │       │   ├── codeHighlight.js       # escapeHtml + token highlighters
 │       │   ├── resolveQuestionStem.js # Pass-through (server pre-splits prose/code)
 │       │   ├── reportRenderer.js      # Report HTML + iframe print (Save as PDF)

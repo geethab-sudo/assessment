@@ -1285,6 +1285,14 @@ button:disabled {
   background: #0d1117;
 }
 
+/* Participant assessments: discourage copying snippet text into the editor */
+.mcq-code-block--protected,
+.mcq-code-block--protected .mcq-code-block-pre,
+.mcq-code-block--protected .mcq-code-block-code {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 .mcq-code-block-lang {
   margin: 0;
   padding: 0.35rem 0.75rem;
