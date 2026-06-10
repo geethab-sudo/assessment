@@ -2539,6 +2539,12 @@ button.primary {
   border-color: #d8e1ee;
 }
 
+.result-card--end {
+  margin-top: 1.75rem;
+  padding-top: 1.35rem;
+  border-top: 1px solid var(--border);
+}
+
 .footer-hint {
   margin-top: 1.65rem;
 }

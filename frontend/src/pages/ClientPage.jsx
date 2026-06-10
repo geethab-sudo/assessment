@@ -12,6 +12,7 @@ import { useAssessmentTimer } from "../hooks/useAssessmentTimer.js";
 import TimerExpiredBanner from "../components/TimerExpiredBanner.jsx";
 import JupyterWorkspacePanel from "../components/JupyterWorkspacePanel.jsx";
 import MixedNotebookPanel, { JupyterRequiredBanner } from "../components/MixedNotebookPanel.jsx";
+import InBrowserResultsPanel from "../components/InBrowserResultsPanel.jsx";
 import { openReportPrintWindow } from "../lib/reportRenderer.js";
 
 export default function ClientPage() {
@@ -41,6 +42,7 @@ export default function ClientPage() {
   const autoSubmitLock = useRef(false);
   const graceNotebookSubmitLock = useRef(false);
   const lastGraceSubmittedFile = useRef(null);
+  const resultsEndRef = useRef(null);
 
   /** @type {Array<{ id: number, code: string, name: string }>} */
   const [catalogLanguages, setCatalogLanguages] = useState([]);
@@ -203,7 +205,7 @@ export default function ClientPage() {
             name,
             notebookFile
           );
-          setResult(data);
+          setNotebookResult(data);
         } catch (e) {
           setError(e.message);
         } finally {
@@ -290,7 +292,7 @@ export default function ClientPage() {
     });
   }, [needsNotebook, notebookResult, notebookFile, handleSubmit]);
 
-  const assessmentSubmitted = Boolean(result);
+  const assessmentSubmitted = Boolean(result) || Boolean(notebookResult);
 
   const handleDownloadReport = useCallback(async () => {
     if (!assessment?.assessment_id || !employeeId.trim()) return;
@@ -307,6 +309,14 @@ export default function ClientPage() {
       setReportLoading(false);
     }
   }, [assessment, employeeId]);
+
+  useEffect(() => {
+    if (!result?.question_results?.length) return;
+    const t = window.setTimeout(() => {
+      resultsEndRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 150);
+    return () => window.clearTimeout(t);
+  }, [result]);
 
   const timerState = useAssessmentTimer(assessment, {
     onMainExpire,
@@ -434,7 +444,7 @@ export default function ClientPage() {
               notebookResult={notebookResult}
               loading={loading}
               autoSubmitting={autoSubmitting}
-              result={result}
+              result={notebookResult}
               timerState={timerState}
               onFileChange={setNotebookFile}
               onSubmit={() => handleSubmit()}
@@ -713,6 +723,15 @@ export default function ClientPage() {
                   onFileChange={setNotebookFile}
                 />
               )}
+
+              <InBrowserResultsPanel
+                sectionRef={resultsEndRef}
+                result={result}
+                routingFlag={assessment.routing_flag}
+                reportLoading={reportLoading}
+                reportError={reportError}
+                onDownload={() => void handleDownloadReport()}
+              />
             </>
           )}
           {result && assessment?.routing_flag !== "mixed" && (
@@ -730,48 +749,6 @@ export default function ClientPage() {
               In-browser questions submitted. Jupyter notebook was not included — load a new assessment ID to retry.
             </p>
           )}
-        </section>
-      )}
-
-      {result && (
-        <section className="card result-card">
-          <h2 className="result-card-title">
-            Results{assessment?.routing_flag === "mixed" ? " — In-browser questions" : ""}
-          </h2>
-          <div className="result-summary">
-            <div className="result-score-block">
-              <span className="result-score-label">Average score</span>
-              <div className="result-score-row">
-                <span className="result-score-value">{result.score}</span>
-                <span className="result-score-suffix">/ 100</span>
-              </div>
-            </div>
-            <div className="result-meta">
-              <span className="result-meta-label">Questions graded</span>
-              <span className="result-meta-value">{result.questions_graded}</span>
-            </div>
-          </div>
-          <p className="muted small-print result-feedback-hint">
-            See feedback under each question above.
-          </p>
-          <div className="result-report-actions">
-            <button
-              type="button"
-              className="button primary"
-              onClick={() => void handleDownloadReport()}
-              disabled={reportLoading}
-            >
-              {reportLoading ? "Preparing report…" : "Download report (PDF)"}
-            </button>
-            <p className="muted small-print result-report-hint">
-              Opens a printable summary (MCQ and in-browser coding). Jupyter items are not included yet.
-            </p>
-            {reportError && (
-              <div className="error" role="alert">
-                {reportError}
-              </div>
-            )}
-          </div>
         </section>
       )}
 
