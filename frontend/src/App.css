@@ -1721,6 +1721,16 @@ code {
   margin: 1rem 0 0;
 }
 
+.result-report-actions {
+  margin-top: 1.1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.result-report-hint {
+  margin: 0.45rem 0 0;
+}
+
 .question-feedback {
   margin-top: 1rem;
   padding: 0.85rem 1rem;

@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 import json
 import uuid
 
-from services import assessment_service, auth_service, catalog_service, notebook_service
+from services import assessment_service, auth_service, catalog_service, notebook_service, report_service
 from services import db_service
 from services.attempt_service import TimedAssessmentError
 from services.database import init_db, ping_database
@@ -629,6 +629,30 @@ def get_assessment(
         return data
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/assessment/{assessment_id}/report")
+def get_participant_report(
+    assessment_id: str,
+    employee_id: Annotated[str, Query(min_length=1, max_length=64)],
+) -> dict[str, Any]:
+    """Public: feedback report for in-browser questions (MCQ + Pyodide coding). Jupyter excluded."""
+    try:
+        aid = _require_valid_assessment_id(assessment_id)
+        if not db_service.client_may_access_assessment(aid, None):
+            raise HTTPException(
+                status_code=403,
+                detail="This assessment is not available for open access.",
+            )
+        return report_service.build_report(aid, employee_id.strip())
+    except HTTPException:
+        raise
+    except ValueError as e:
+        msg = str(e)
+        status = 404 if "not found" in msg.lower() or "unknown" in msg.lower() else 400
+        raise HTTPException(status_code=status, detail=msg) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

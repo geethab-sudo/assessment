@@ -37,6 +37,7 @@ __all__ = [
     "list_assessments_summary",
     "delete_assessment",
     "list_all_submissions",
+    "get_participant_in_browser_submissions",
     "save_submission_row",
 ]
 
@@ -511,6 +512,53 @@ def delete_assessment(assessment_id: str) -> None:
         )
         session.delete(row)
         session.commit()
+
+
+_NOTEBOOK_QUESTION_ID = "notebook"
+
+
+def get_participant_in_browser_submissions(
+    assessment_id: str,
+    employee_id: str,
+) -> list[dict[str, Any]]:
+    """In-browser submission rows for one participant (excludes Jupyter notebook rows)."""
+    from services.attempt_service import normalize_employee_id
+
+    eid_norm = normalize_employee_id(employee_id)
+    if not eid_norm:
+        return []
+
+    aid = assessment_id.strip()
+    with _session() as session:
+        rows = session.scalars(
+            select(Submission)
+            .where(
+                Submission.assessment_id == aid,
+                Submission.question_id != _NOTEBOOK_QUESTION_ID,
+                Submission.routing_flag != "jupyter",
+            )
+            .order_by(Submission.id)
+        ).all()
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        uid = r.user_id or ""
+        part = uid.split("|", 1)[0].strip().casefold()
+        if part != eid_norm:
+            continue
+        out.append(
+            {
+                "assessment_id": r.assessment_id,
+                "user_id": r.user_id,
+                "question_id": r.question_id,
+                "user_answer": r.user_answer,
+                "score": r.score,
+                "feedback": r.feedback,
+                "timestamp": r.timestamp,
+                "routing_flag": r.routing_flag,
+            }
+        )
+    return out
 
 
 def list_all_submissions() -> list[dict[str, Any]]:

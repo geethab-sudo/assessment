@@ -12,6 +12,7 @@ import { useAssessmentTimer } from "../hooks/useAssessmentTimer.js";
 import TimerExpiredBanner from "../components/TimerExpiredBanner.jsx";
 import JupyterWorkspacePanel from "../components/JupyterWorkspacePanel.jsx";
 import MixedNotebookPanel, { JupyterRequiredBanner } from "../components/MixedNotebookPanel.jsx";
+import { openReportPrintWindow } from "../lib/reportRenderer.js";
 
 export default function ClientPage() {
   const location = useLocation();
@@ -35,6 +36,8 @@ export default function ClientPage() {
   const [autoSubmitting, setAutoSubmitting] = useState(false);
   const [timeExpiredBanner, setTimeExpiredBanner] = useState(false);
   const [error, setError] = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState(null);
   const autoSubmitLock = useRef(false);
   const graceNotebookSubmitLock = useRef(false);
   const lastGraceSubmittedFile = useRef(null);
@@ -288,6 +291,22 @@ export default function ClientPage() {
   }, [needsNotebook, notebookResult, notebookFile, handleSubmit]);
 
   const assessmentSubmitted = Boolean(result);
+
+  const handleDownloadReport = useCallback(async () => {
+    if (!assessment?.assessment_id || !employeeId.trim()) return;
+    setReportError(null);
+    setReportLoading(true);
+    try {
+      const data = await apiFetch(
+        `/assessment/${encodeURIComponent(assessment.assessment_id)}/report?employee_id=${encodeURIComponent(employeeId.trim())}`
+      );
+      openReportPrintWindow(data);
+    } catch (e) {
+      setReportError(e.message);
+    } finally {
+      setReportLoading(false);
+    }
+  }, [assessment, employeeId]);
 
   const timerState = useAssessmentTimer(assessment, {
     onMainExpire,
@@ -735,6 +754,24 @@ export default function ClientPage() {
           <p className="muted small-print result-feedback-hint">
             See feedback under each question above.
           </p>
+          <div className="result-report-actions">
+            <button
+              type="button"
+              className="button primary"
+              onClick={() => void handleDownloadReport()}
+              disabled={reportLoading}
+            >
+              {reportLoading ? "Preparing report…" : "Download report (PDF)"}
+            </button>
+            <p className="muted small-print result-report-hint">
+              Opens a printable summary (MCQ and in-browser coding). Jupyter items are not included yet.
+            </p>
+            {reportError && (
+              <div className="error" role="alert">
+                {reportError}
+              </div>
+            )}
+          </div>
         </section>
       )}
 

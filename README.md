@@ -25,6 +25,7 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 - **Session-scoped auth tokens**: Admin and client JWTs are stored in `sessionStorage` (tab-scoped), not `localStorage`, reducing XSS exposure across tabs.
 - **Timer stops on submit**: The countdown bar is hidden and the interval cleared as soon as the participant's submission succeeds; auto-expire callbacks no longer fire after that point.
 - **Admin question review**: After generation, admins land on a review page to edit question text, MCQ options, correct answer, and code snippets (Tab inserts 4-space indent). Coding questions do not show a code-snippet field. Nothing is written to the DB until **Confirm & save**.
+- **Participant feedback report (PDF)**: After submitting in-browser answers, participants can open a printable report (browser **Save as PDF**) with per-question results, feedback, and a topic-level score table. Covers **MCQ and Pyodide coding only** — Jupyter notebook grading is excluded for now.
 
 ## How do we use LLM calls? Is it expensive?
 
@@ -160,6 +161,7 @@ npm run dev
 1. Open the participant page and enter employee ID, name, and assessment ID.
 2. Answer MCQ questions and write/run Python code in the in-browser Pyodide terminal.
 3. Click **Submit answers** — all questions are graded immediately and per-question feedback appears under each card.
+4. Click **Download report (PDF)** to open a printable summary (MCQ + in-browser coding; Jupyter not included yet).
 
 ### Jupyter-only assessment (with notebook coding)
 
@@ -350,6 +352,7 @@ assessment/
 │   ├── models.py               # ORM (modality, routing_flag, timed columns)
 │   ├── notebook_plan_service.py # notebook_expected, derive_per_topic_config
 │   ├── notebook_service.py     # Jupyter parsing and cell grading
+│   ├── report_service.py       # Participant feedback report (in-browser questions)
 │   ├── question_stem.py        # Stem parsing/prettification (split_stem_for_display)
 │   └── shuffle_service.py      # Per-participant shuffle
 ├── tests/
@@ -374,6 +377,7 @@ assessment/
 │       ├── lib/
 │       │   ├── codeHighlight.js       # escapeHtml + token highlighters
 │       │   ├── resolveQuestionStem.js # Pass-through (server pre-splits prose/code)
+│       │   ├── reportRenderer.js      # Print-friendly HTML → Save as PDF
 │       │   ├── shellEditor.js
 │       │   └── tier1Presets.js
 │       └── pages/
@@ -414,6 +418,7 @@ assessment/
 | `GET /admin/assessments` | Admin | List assessments (`routing_flag`, `is_timed`, …) |
 | `DELETE /admin/assessments/{id}` | Admin | Delete assessment |
 | `GET /assessment/{id}?employee_id=…` | Public* | Questions, `topic_modality`, `notebook_expected`, `timer` |
+| `GET /assessment/{id}/report?employee_id=…` | Public* | Feedback report JSON (MCQ + Pyodide coding; no Jupyter) |
 | `POST /submit-assessment` | Public* | Grade in-browser answers (`employee_id` for timed) |
 | `GET /assessment/{id}/template` | Public* | Download `.ipynb` (404/409 per notebook plan) |
 | `POST /submit-notebook-assessment` | Public* | Upload and grade `.ipynb` |
@@ -448,6 +453,7 @@ Do not run `python tests/test_question_stem.py` unless you use `python -m unitte
 | `test_shuffle_service.py` | Per-participant shuffle determinism, MCQ option ordering |
 | `test_attempt_service.py` | Timed config validation, deadline enforcement, `TimedAssessmentError` |
 | `test_notebook_plan_service.py` | Per-topic config derivation, notebook plan logic |
+| `test_report_service.py` | Topic rollup and in-browser report building (Jupyter excluded) |
 
 ## Security notes
 
