@@ -15,15 +15,20 @@ _root = Path(__file__).resolve().parent
 load_dotenv(_root / ".env", override=True)
 load_dotenv(override=True)
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Form, File, UploadFile, Header, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Form, File, UploadFile, Header, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 import json
 import uuid
 
-from services import assessment_service, auth_service, catalog_service, notebook_service, report_service
+from middleware.rate_limit import RateLimitMiddleware
+from middleware.security_headers import SecurityHeadersMiddleware
+from openapi_config import API_DESCRIPTION, OPENAPI_TAGS
+from schemas.common import ErrorDetail, ValidationErrorItem, ValidationErrorResponse
+from services import assessment_service, audit_log, auth_service, catalog_service, notebook_service, report_service
 from services import db_service
 from services.attempt_service import TimedAssessmentError
 from services.database import init_db, ping_database
@@ -45,11 +50,19 @@ def _require_valid_assessment_id(raw: str) -> str:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    audit_log.configure_audit_logging()
     init_db()
     yield
 
 
-app = FastAPI(title="AI Assessment API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(
+    title="AI Assessment API",
+    version="1.0.0",
+    description=API_DESCRIPTION,
+    lifespan=lifespan,
+    openapi_tags=OPENAPI_TAGS,
+    swagger_ui_parameters={"docExpansion": "list", "defaultModelsExpandDepth": 2},
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -65,6 +78,40 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimitMiddleware)
+
+
+def custom_openapi() -> dict[str, Any]:
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+        tags=OPENAPI_TAGS,
+    )
+    components = schema.setdefault("components", {})
+    components.setdefault("securitySchemes", {})["BearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": (
+            "JWT from `POST /auth/login`. Use an **admin** token for "
+            "`/admin/*` routes and `POST /generate-assessment`."
+        ),
+    }
+    extra_schemas = components.setdefault("schemas", {})
+    ref = "#/components/schemas/{model}"
+    extra_schemas["ErrorDetail"] = ErrorDetail.model_json_schema(ref_template=ref)
+    extra_schemas["ValidationErrorItem"] = ValidationErrorItem.model_json_schema(ref_template=ref)
+    extra_schemas["ValidationErrorResponse"] = ValidationErrorResponse.model_json_schema(ref_template=ref)
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = custom_openapi  # type: ignore[method-assign]
 
 security = HTTPBearer(auto_error=False)
 
@@ -340,19 +387,29 @@ class TopicCreateBody(BaseModel):
 
 
 @app.post("/auth/login")
-def login(body: LoginBody) -> dict[str, str]:
+def login(request: Request, body: LoginBody) -> dict[str, str]:
     if body.role == "admin":
         if not auth_service.admin_password_configured():
+            audit_log.auth_login_failure(request, role="admin", reason="admin_not_configured")
             raise HTTPException(
                 status_code=503,
                 detail="Admin login is not configured. Set ADMIN_PASSWORD in the server .env file.",
             )
+        if not auth_service.jwt_configured():
+            audit_log.auth_login_failure(request, role="admin", reason="jwt_not_configured")
+            raise HTTPException(
+                status_code=503,
+                detail="JWT_SECRET is not set in the server .env file.",
+            )
         if not auth_service.verify_admin_password(body.password or ""):
+            audit_log.auth_login_failure(request, role="admin", reason="invalid_credentials")
             raise HTTPException(status_code=401, detail="Invalid credentials")
         token = auth_service.create_access_token("admin")
+        audit_log.auth_login_success(request, role="admin")
         return {"access_token": token, "token_type": "bearer", "role": "admin"}
 
     if not auth_service.jwt_configured():
+        audit_log.auth_login_failure(request, role="client", reason="jwt_not_configured")
         raise HTTPException(
             status_code=503,
             detail="JWT_SECRET is not set in the server .env file.",
@@ -360,8 +417,15 @@ def login(body: LoginBody) -> dict[str, str]:
     try:
         safe_cid = db_service.sanitize_client_id(body.client_id or "")
     except ValueError as e:
+        audit_log.auth_login_failure(
+            request,
+            role="client",
+            reason="invalid_client_id",
+            actor=body.client_id,
+        )
         raise HTTPException(status_code=400, detail=str(e)) from e
     token = auth_service.create_access_token("client", client_id=safe_cid)
+    audit_log.auth_login_success(request, role="client", actor=safe_cid)
     return {
         "access_token": token,
         "token_type": "bearer",

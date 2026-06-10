@@ -1,0 +1,145 @@
+"""API tests for JWT admin route protection."""
+
+from __future__ import annotations
+
+import os
+import sys
+import unittest
+from unittest.mock import patch
+
+from fastapi.testclient import TestClient
+
+TEST_JWT_SECRET = "test-jwt-secret-for-auth-api-tests"
+TEST_ADMIN_PASSWORD = "test-admin-password"
+
+
+class TestAdminRouteAuth(unittest.TestCase):
+    _env_patch: patch
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._env_patch = patch.dict(
+            os.environ,
+            {
+                "JWT_SECRET": TEST_JWT_SECRET,
+                "ADMIN_PASSWORD": TEST_ADMIN_PASSWORD,
+                "RATE_LIMIT_ENABLED": "false",
+            },
+            clear=False,
+        )
+        cls._env_patch.start()
+        with (
+            patch("dotenv.load_dotenv"),
+            patch("services.database.init_db"),
+            patch("services.database.ping_database", return_value=True),
+            patch("services.audit_log.configure_audit_logging"),
+        ):
+            sys.modules.pop("app", None)
+            from app import app
+
+            cls.client = TestClient(app)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls._env_patch.stop()
+        sys.modules.pop("app", None)
+
+    def _admin_token(self) -> str:
+        from services import auth_service
+
+        return auth_service.create_access_token("admin")
+
+    def _admin_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._admin_token()}"}
+
+    def test_admin_post_without_token_returns_401(self) -> None:
+        res = self.client.post(
+            "/admin/languages",
+            json={"code": "xx", "name": "Test"},
+        )
+        self.assertEqual(res.status_code, 401)
+        self.assertEqual(res.json()["detail"], "Not authenticated")
+
+    def test_admin_get_without_token_returns_401(self) -> None:
+        res = self.client.get("/admin/assessments")
+        self.assertEqual(res.status_code, 401)
+        self.assertEqual(res.json()["detail"], "Not authenticated")
+
+    def test_admin_get_submissions_without_token_returns_401(self) -> None:
+        res = self.client.get("/admin/submissions")
+        self.assertEqual(res.status_code, 401)
+        self.assertEqual(res.json()["detail"], "Not authenticated")
+
+    def test_admin_delete_without_token_returns_401(self) -> None:
+        res = self.client.delete("/admin/topics/1")
+        self.assertEqual(res.status_code, 401)
+
+    def test_admin_put_without_token_returns_401(self) -> None:
+        res = self.client.put(
+            "/admin/languages/1",
+            json={"code": "xx", "name": "Test"},
+        )
+        self.assertEqual(res.status_code, 401)
+
+    def test_generate_assessment_without_token_returns_401(self) -> None:
+        res = self.client.post(
+            "/generate-assessment",
+            json={
+                "topic": "Python",
+                "level": "beginner",
+                "types": ["mcq"],
+                "questions_per_type": {"mcq": 1},
+            },
+        )
+        self.assertEqual(res.status_code, 401)
+
+    def test_admin_mutating_route_with_invalid_token_returns_401(self) -> None:
+        res = self.client.post(
+            "/admin/languages",
+            json={"code": "xx", "name": "Test"},
+            headers={"Authorization": "Bearer not-a-valid-token"},
+        )
+        self.assertEqual(res.status_code, 401)
+        self.assertEqual(res.json()["detail"], "Invalid or expired token")
+
+    def test_admin_mutating_route_with_client_token_returns_403(self) -> None:
+        from services import auth_service
+
+        client_token = auth_service.create_access_token("client", client_id="participant-1")
+        res = self.client.post(
+            "/admin/languages",
+            json={"code": "xx", "name": "Test"},
+            headers={"Authorization": f"Bearer {client_token}"},
+        )
+        self.assertEqual(res.status_code, 403)
+        self.assertEqual(res.json()["detail"], "Admin access required")
+
+    def test_admin_login_requires_jwt_secret(self) -> None:
+        with patch("services.auth_service.jwt_configured", return_value=False):
+            res = self.client.post(
+                "/auth/login",
+                json={"role": "admin", "password": TEST_ADMIN_PASSWORD},
+            )
+        self.assertEqual(res.status_code, 503)
+        self.assertIn("JWT_SECRET", res.json()["detail"])
+
+    def test_admin_login_returns_token(self) -> None:
+        res = self.client.post(
+            "/auth/login",
+            json={"role": "admin", "password": TEST_ADMIN_PASSWORD},
+        )
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["role"], "admin")
+        self.assertEqual(body["token_type"], "bearer")
+        self.assertTrue(body["access_token"])
+
+    def test_admin_get_with_valid_token_succeeds(self) -> None:
+        with patch("services.db_service.list_assessments_summary", return_value=[]):
+            res = self.client.get("/admin/assessments", headers=self._admin_headers())
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json(), {"assessments": []})
+
+
+if __name__ == "__main__":
+    unittest.main()

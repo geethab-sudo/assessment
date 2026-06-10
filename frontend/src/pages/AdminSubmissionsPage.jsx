@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch } from "../api";
+import Pagination from "../components/Pagination.jsx";
+import { usePagination } from "../hooks/usePagination.js";
 
 function parseScore(s) {
   const n = parseFloat(String(s ?? ""), 10);
@@ -122,6 +124,16 @@ export default function AdminSubmissionsPage() {
     return gs;
   }, [filteredRows, dateSort]);
 
+  const filterResetKey = `${employeeFilter}|${assessmentFilter}|${dateSort}`;
+  const {
+    page,
+    setPage,
+    pageSize,
+    totalItems,
+    totalPages,
+    paginatedItems: paginatedGroups,
+  } = usePagination(groups, { resetKey: filterResetKey });
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -206,8 +218,17 @@ export default function AdminSubmissionsPage() {
             {groups.length === 0 ? (
               <div className="empty-state">No submissions match the current filters.</div>
             ) : (
+          <>
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              itemLabel="groups"
+            />
           <div className="submission-groups">
-            {groups.map((g) => (
+            {paginatedGroups.map((g) => (
               <article
                 className="submission-group"
                 key={`${g.client_id}-${g.assessment_id}`}
@@ -281,6 +302,15 @@ export default function AdminSubmissionsPage() {
             </article>
             ))}
           </div>
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              itemLabel="groups"
+            />
+          </>
             )}
           </>
         )}

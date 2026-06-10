@@ -1,7 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiFetch } from "../api";
+import Pagination from "../components/Pagination.jsx";
 import QuestionStem from "../components/QuestionStem.jsx";
+import { usePagination } from "../hooks/usePagination.js";
 
 function formatAddedAt(isoText) {
   if (!isoText) return "—";
@@ -152,6 +154,16 @@ export default function AdminAssessmentsPage() {
     });
   }, [rows, idFilter, langFilter, dateSort]);
 
+  const filterResetKey = `${idFilter}|${langFilter}|${dateSort}`;
+  const {
+    page,
+    setPage,
+    pageSize,
+    totalItems,
+    totalPages,
+    paginatedItems,
+  } = usePagination(visibleRows, { resetKey: filterResetKey });
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -258,6 +270,14 @@ export default function AdminAssessmentsPage() {
               {visibleRows.length} / {rows.length}
             </span>
           </div>
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            totalItems={totalItems}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            itemLabel="assessments"
+          />
           <div className="table-wrap">
             <table className="data-table">
               <thead>
@@ -282,7 +302,7 @@ export default function AdminAssessmentsPage() {
                     </td>
                   </tr>
                 ) : (
-                  visibleRows.map((r) => (
+                  paginatedItems.map((r) => (
                     <Fragment key={r.assessment_id}>
                       <tr>
                         <td>
@@ -345,6 +365,14 @@ export default function AdminAssessmentsPage() {
               </tbody>
             </table>
           </div>
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            totalItems={totalItems}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            itemLabel="assessments"
+          />
           </>
         )}
       </section>
