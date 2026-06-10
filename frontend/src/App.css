@@ -1745,6 +1745,19 @@ code {
   margin: 0.45rem 0 0;
 }
 
+.report-topic-summary {
+  margin: 1.25rem 0 0;
+}
+
+.report-topic-table {
+  font-size: 0.88rem;
+}
+
+.report-topic-table th,
+.report-topic-table td {
+  padding: 0.45rem 0.6rem;
+}
+
 .question-feedback {
   margin-top: 1rem;
   padding: 0.85rem 1rem;

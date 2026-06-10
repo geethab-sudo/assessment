@@ -39,6 +39,8 @@ export default function ClientPage() {
   const [timeExpiredBanner, setTimeExpiredBanner] = useState(false);
   const [error, setError] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const [reportSummaryLoading, setReportSummaryLoading] = useState(false);
+  const [reportData, setReportData] = useState(null);
   const [reportError, setReportError] = useState(null);
   const autoSubmitLock = useRef(false);
   const graceNotebookSubmitLock = useRef(false);
@@ -95,6 +97,8 @@ export default function ClientPage() {
     setError(null);
     setResult(null);
     setNotebookResult(null);
+    setReportData(null);
+    setReportError(null);
     setLoading(true);
     try {
       const id = assessmentIdInput.trim();
@@ -294,21 +298,48 @@ export default function ClientPage() {
 
   const assessmentSubmitted = Boolean(result);
 
+  const reportUrl = useMemo(() => {
+    if (!assessment?.assessment_id || !employeeId.trim()) return null;
+    return `/assessment/${encodeURIComponent(assessment.assessment_id)}/report?employee_id=${encodeURIComponent(employeeId.trim())}`;
+  }, [assessment?.assessment_id, employeeId]);
+
+  useEffect(() => {
+    if (!result?.question_results?.length || !reportUrl) {
+      setReportData(null);
+      return undefined;
+    }
+    let cancelled = false;
+    setReportSummaryLoading(true);
+    setReportError(null);
+    (async () => {
+      try {
+        const data = await apiFetch(reportUrl);
+        if (!cancelled) setReportData(data);
+      } catch (e) {
+        if (!cancelled) setReportError(e.message);
+      } finally {
+        if (!cancelled) setReportSummaryLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [result, reportUrl]);
+
   const handleDownloadReport = useCallback(async () => {
-    if (!assessment?.assessment_id || !employeeId.trim()) return;
+    if (!reportUrl) return;
     setReportError(null);
     setReportLoading(true);
     try {
-      const data = await apiFetch(
-        `/assessment/${encodeURIComponent(assessment.assessment_id)}/report?employee_id=${encodeURIComponent(employeeId.trim())}`
-      );
+      const data = reportData ?? (await apiFetch(reportUrl));
+      if (!reportData) setReportData(data);
       openReportPrintWindow(data);
     } catch (e) {
       setReportError(e.message);
     } finally {
       setReportLoading(false);
     }
-  }, [assessment, employeeId]);
+  }, [reportUrl, reportData]);
 
   const timerState = useAssessmentTimer(assessment, {
     onMainExpire,
@@ -782,12 +813,46 @@ export default function ClientPage() {
           <p className="muted small-print result-feedback-hint">
             See feedback under each question above.
           </p>
+
+          {reportSummaryLoading && (
+            <p className="muted small-print">Loading topic summary…</p>
+          )}
+          {reportData?.topic_summary?.length > 0 && (
+            <div className="report-topic-summary">
+              <h3 className="result-feedback-title">Topic summary</h3>
+              <div className="table-wrap">
+                <table className="data-table report-topic-table">
+                  <thead>
+                    <tr>
+                      <th>Topic</th>
+                      <th>Questions</th>
+                      <th>Score</th>
+                      <th>Average %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportData.topic_summary.map((row) => (
+                      <tr key={row.topic_name}>
+                        <td>{row.topic_name}</td>
+                        <td>{row.questions_count}</td>
+                        <td>
+                          {row.total_score} / {row.max_score}
+                        </td>
+                        <td>{row.percent}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           <div className="result-report-actions">
             <button
               type="button"
-              className="button primary"
+              className="primary"
               onClick={() => void handleDownloadReport()}
-              disabled={reportLoading}
+              disabled={reportLoading || reportSummaryLoading}
             >
               {reportLoading ? "Preparing report…" : "Download report (PDF)"}
             </button>
