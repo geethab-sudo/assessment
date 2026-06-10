@@ -160,7 +160,7 @@ body {
 }
 
 .page--wide {
-  max-width: 56rem;
+  max-width: 90%;
 }
 
 .page--narrow {
@@ -783,16 +783,30 @@ body {
 .preset-tier1-toggle {
   display: flex;
   align-items: flex-start;
+  justify-content: flex-start;
+  text-align: left;
   gap: 0.65rem;
   padding: 0.85rem 1rem;
   border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--bg-base);
   cursor: pointer;
+  margin: 0;
 }
 
 .preset-tier1-toggle input {
-  margin-top: 0.2rem;
+  margin: 0.2rem 0 0;
+  width: auto;
+  height: auto;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.preset-tier1-toggle > span {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
 }
 
 .tier1-preset-panel__title {
@@ -2464,7 +2478,7 @@ body {
 }
 
 .page--wide {
-  max-width: 60rem;
+  max-width: 90%;
 }
 
 .header h1 {

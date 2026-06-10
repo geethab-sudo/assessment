@@ -27,8 +27,8 @@ class SubmitAssessmentBody(BaseModel):
 
     assessment_id: str = Field(
         ...,
-        description="UUID of the assessment being submitted.",
-        examples=["550e8400-e29b-41d4-a716-446655440000"],
+        description="Assessment id (ASM-XXXXXXXX for new assessments; legacy UUIDs still accepted).",
+        examples=["ASM-A8DK2PQX"],
     )
     employee_id: str = Field(
         ...,

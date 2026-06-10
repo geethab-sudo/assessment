@@ -511,11 +511,11 @@ def patch_assessment_question(
 ) -> dict:
     """Post-hoc correction of one question on an already-saved assessment."""
     import json
-    import uuid
 
-    aid = assessment_id.strip()
+    from services.ids import normalize_assessment_id
+
     try:
-        uuid.UUID(aid)
+        aid = normalize_assessment_id(assessment_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid assessment ID format") from None
 

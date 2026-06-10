@@ -73,7 +73,7 @@ class Topic(Base):
 class Assessment(Base):
     __tablename__ = "assessments"
 
-    #: UUID string from generation
+    #: ASM-XXXXXXXX for new assessments; legacy rows may use UUID strings
     assessment_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     #: If set, only this client may open/submit; NULL = shared (any client)
     owner_client_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)

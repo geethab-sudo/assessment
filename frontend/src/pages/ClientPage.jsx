@@ -364,7 +364,7 @@ export default function ClientPage() {
   } = usePagination(questions, { resetKey: assessment?.assessment_id });
 
   return (
-    <div className={`page${showFixedTimer ? " page--timed-assessment" : ""}`}>
+    <div className={`page page--wide${showFixedTimer ? " page--timed-assessment" : ""}`}>
       {showFixedTimer && (
         <div className="assessment-timer-fixed" role="region" aria-label="Assessment timer">
           <AssessmentTimerBar

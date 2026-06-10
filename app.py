@@ -16,7 +16,6 @@ load_dotenv(_root / ".env", override=True)
 load_dotenv(override=True)
 
 import json
-import uuid
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, Path, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,13 +55,13 @@ MAX_NOTEBOOK_BYTES = 5 * 1024 * 1024  # 5 MiB
 
 
 def _require_valid_assessment_id(raw: str) -> str:
-    """Strip and validate that the path param is a well-formed UUID. Raises HTTPException."""
-    aid = raw.strip()
+    """Strip and validate assessment id (legacy UUID or ASM-XXXXXXXX). Raises HTTPException."""
+    from services.ids import normalize_assessment_id
+
     try:
-        uuid.UUID(aid)
+        return normalize_assessment_id(raw)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid assessment ID format") from None
-    return aid
 
 
 @asynccontextmanager
