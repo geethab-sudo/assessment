@@ -30,6 +30,8 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/admin/confirm-assessment": {"post"},
     "/admin/assessment/{assessment_id}/question/{question_id}": {"patch"},
     "/generate-assessment": {"post"},
+    "/admin/question-bank": {"get"},
+    "/admin/question-bank/availability": {"get"},
 }
 
 
@@ -131,6 +133,8 @@ class TestOpenAPISchema(unittest.TestCase):
             ("/admin/submissions", "get"),
             ("/admin/languages", "get"),
             ("/admin/topics", "get"),
+            ("/admin/question-bank", "get"),
+            ("/admin/question-bank/availability", "get"),
         }
         for path, method in public_gets:
             op = paths[path][method]

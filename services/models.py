@@ -70,6 +70,58 @@ class Topic(Base):
     )
 
 
+class QuestionBank(Base):
+    """
+    Canonical, reusable question store.
+
+    Every confirmed assessment question is automatically upserted here.
+    Deduplication key: SHA-256 of (type | topic_name | question_text[:1000]).
+    Statistics counters are updated atomically when submissions are graded.
+    """
+
+    __tablename__ = "question_bank"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    #: SHA-256 hex digest — deduplication key so identical questions are not duplicated
+    content_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True, index=True
+    )
+    question_text: Mapped[str] = mapped_column(Text, nullable=False)
+    type: Mapped[str] = mapped_column(String(32), nullable=False)  # mcq / coding / subjective
+    options: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("''") 
+    )
+    correct_answer: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("''")
+    )
+    code_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
+    topic_name: Mapped[str] = mapped_column(
+        String(512), nullable=False, server_default=text("''")
+    )
+    language_code: Mapped[str | None] = mapped_column(
+        String(32), nullable=True, index=True
+    )
+    #: Level label stored here: beginner / intermediate / advanced
+    difficulty: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    created_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: How many assessments have included this question
+    times_used: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    #: How many times a participant answered it correctly
+    times_correct: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    #: How many times a participant answered it incorrectly
+    times_wrong: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+
+    __table_args__ = (
+        Index("ix_question_bank_topic_difficulty", "topic_name", "difficulty"),
+    )
+
+
 class Assessment(Base):
     __tablename__ = "assessments"
 
@@ -157,6 +209,15 @@ class AssessmentQuestion(Base):
     topic_name: Mapped[str] = mapped_column(String(512), nullable=False, server_default=text("''"))
     #: Optional code block for MCQ stems (and other types); shown highlighted in the UI
     code_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: FK to question_bank if this question came from or was added to the bank (NULL for legacy)
+    bank_question_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("question_bank.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    #: Difficulty level stored at generation time: beginner / intermediate / advanced
+    difficulty: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     assessment: Mapped["Assessment"] = relationship("Assessment", back_populates="questions")
 

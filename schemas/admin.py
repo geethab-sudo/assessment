@@ -450,3 +450,35 @@ class TopicCreateBody(BaseModel):
     @classmethod
     def strip_name(cls, v: str) -> str:
         return v.strip() if isinstance(v, str) else v
+
+
+class QuestionBankItem(BaseModel):
+    id: int
+    question_text: str
+    type: str
+    topic_name: str
+    language_code: str
+    difficulty: str
+    created_at: str
+    times_used: int
+    times_correct: int
+    times_wrong: int
+    percent_correct: float
+    percent_wrong: float
+
+
+class QuestionBankListResponse(BaseModel):
+    questions: list[QuestionBankItem]
+
+
+class TopicAvailability(BaseModel):
+    topic_name: str
+    available: int
+
+
+class BankAvailabilityResponse(BaseModel):
+    available: int
+    requested: int
+    shortage: int
+    per_topic: list[TopicAvailability]
+

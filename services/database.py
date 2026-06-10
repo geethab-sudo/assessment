@@ -75,6 +75,8 @@ def init_db() -> None:
     _ensure_topic_coding_editor_language_column(eng)
     _ensure_question_code_snippet_column(eng)
     _ensure_required_indexes(eng)
+    _ensure_question_bank_table(eng)           # must run before FK column below
+    _ensure_assessment_question_bank_columns(eng)
 
 
 def _ensure_raw_notebook_column(eng) -> None:
@@ -285,6 +287,74 @@ def _ensure_question_code_snippet_column(eng) -> None:
                         ADD COLUMN code_snippet TEXT NULL;
                     END IF;
                 END $$;
+                """
+            )
+        )
+
+
+def _ensure_question_bank_table(eng) -> None:
+    """Create question_bank table and its indexes if they do not exist."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS question_bank (
+                    id             SERIAL PRIMARY KEY,
+                    content_hash   VARCHAR(64) NOT NULL UNIQUE,
+                    question_text  TEXT        NOT NULL,
+                    type           VARCHAR(32) NOT NULL,
+                    options        TEXT        NOT NULL DEFAULT '',
+                    correct_answer TEXT        NOT NULL DEFAULT '',
+                    code_snippet   TEXT        NULL,
+                    topic_name     VARCHAR(512) NOT NULL DEFAULT '',
+                    language_code  VARCHAR(32)  NULL,
+                    difficulty     VARCHAR(32)  NOT NULL,
+                    created_at     VARCHAR(64)  NOT NULL,
+                    times_used     INTEGER NOT NULL DEFAULT 0,
+                    times_correct  INTEGER NOT NULL DEFAULT 0,
+                    times_wrong    INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX IF NOT EXISTS ix_question_bank_content_hash
+                    ON question_bank (content_hash);
+                CREATE INDEX IF NOT EXISTS ix_question_bank_language_code
+                    ON question_bank (language_code);
+                CREATE INDEX IF NOT EXISTS ix_question_bank_difficulty
+                    ON question_bank (difficulty);
+                CREATE INDEX IF NOT EXISTS ix_question_bank_topic_difficulty
+                    ON question_bank (topic_name, difficulty);
+                """
+            )
+        )
+
+
+def _ensure_assessment_question_bank_columns(eng) -> None:
+    """Add bank_question_id (FK) and difficulty columns to assessment_questions if missing."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessment_questions'
+                          AND column_name = 'bank_question_id'
+                    ) THEN
+                        ALTER TABLE assessment_questions
+                        ADD COLUMN bank_question_id INTEGER NULL
+                            REFERENCES question_bank(id) ON DELETE SET NULL;
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessment_questions'
+                          AND column_name = 'difficulty'
+                    ) THEN
+                        ALTER TABLE assessment_questions
+                        ADD COLUMN difficulty VARCHAR(32) NULL;
+                    END IF;
+                END $$;
+                CREATE INDEX IF NOT EXISTS ix_aq_bank_question_id
+                    ON assessment_questions (bank_question_id);
                 """
             )
         )

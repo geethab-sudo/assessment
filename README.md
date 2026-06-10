@@ -9,6 +9,7 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 - **Admin portal**: Sign in with a configured password; generate assessments (MCQ, coding, subjective); **review and edit generated questions before saving**; manage catalog languages/topics; browse all assessments with filter by Assessment ID and language, sort by date; delete assessments; review participant submissions with date display, sort by date, and filter by employee ID or assessment ID.
 - **Participant portal**: Open a test with employee ID, name, and assessment ID — no account required for shared assessments.
 - **Tier 1 evaluation presets**: One-click **Beginner** / **Intermediate** / **Advanced** Python Tier 1 combos (25 questions: 15 MCQ + 10 coding) with editable per-topic counts and suggested timed duration (60 / 90 / 120 min).
+- **Question Bank**: Every generated and confirmed assessment question is automatically stored in a global bank, recording analytical stats (`times_used`, `times_correct`, `times_wrong`).
 - **Auto topic allocation**: Select multiple catalog topics with global MCQ/coding counts — the backend splits counts evenly across topics, generates per topic, and tags each question with `topic_name` for correct routing (no manual per-topic grid required).
 - **Per-topic question allocation**: Optional admin mode with independent MCQ/coding/subjective counts per topic; one LLM call per topic either way when catalog topics are selected.
 - **Notebook-aware routing**: Jupyter download/upload appears only when the assessment **expects notebook coding** (`notebook_expected`), not merely because a jupyter-modality topic is selected (e.g. MCQ-only on a tier-2 topic skips the notebook UI).
@@ -454,10 +455,12 @@ assessment/
 | `POST /auth/login` | — | Admin password or client ID |
 | `POST /generate-assessment` | Admin | Create assessment directly (legacy; still available) |
 | `POST /admin/preview-questions` | Admin | Generate questions for review — **no DB write** |
-| `POST /admin/confirm-assessment` | Admin | Persist admin-reviewed question list |
+| `POST /admin/confirm-assessment` | Admin | Persist admin-reviewed question list & upsert to Question Bank |
 | `PATCH /admin/assessment/{id}/question/{qid}` | Admin | Patch one question on a saved assessment |
 | `GET /admin/assessments` | Admin | List assessments (`routing_flag`, `is_timed`, …) |
 | `DELETE /admin/assessments/{id}` | Admin | Delete assessment |
+| `GET /admin/question-bank` | Admin | Browse the reusable question bank and view correctness stats |
+| `GET /admin/question-bank/availability` | Admin | Check bank availability by topics and difficulty before generation |
 | `GET /assessment/{id}?employee_id=…` | Public* | Questions, `topic_modality`, `notebook_expected`, `timer` |
 | `GET /assessment/{id}/report?employee_id=…` | Public* | Feedback report JSON (MCQ + Pyodide coding; no Jupyter) |
 | `POST /submit-assessment` | Public* | Grade in-browser answers (`employee_id` for timed) |

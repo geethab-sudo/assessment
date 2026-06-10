@@ -356,6 +356,8 @@ def read_questions_by_assessment(assessment_id: str) -> list[dict[str, Any]]:
                 "correct_answer": r.correct_answer or "",
                 "topic_name": r.topic_name or "",
                 "code_snippet": r.code_snippet or "",
+                "bank_question_id": r.bank_question_id,
+                "difficulty": r.difficulty or "",
             }
             for r in rows
         ]

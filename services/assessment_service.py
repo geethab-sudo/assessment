@@ -12,6 +12,7 @@ from services.ids import generate_assessment_id
 from typing import Any
 
 from services import db_service
+from services import question_bank_service
 from services import attempt_service
 from services.database import get_session_factory
 from services.llm_service import evaluate_answers, generate_questions
@@ -57,6 +58,17 @@ _SHELL_CODING_HINT = (
 # ---------------------------------------------------------------------------
 # Small helpers
 # ---------------------------------------------------------------------------
+
+def _upsert_to_bank(
+    assessment_id: str,
+    rows: list[dict[str, Any]],
+    difficulty: str,
+    language_code: str | None = None,
+) -> None:
+    """Upsert newly generated/confirmed questions into the reusable bank."""
+    hash_to_id = question_bank_service.add_questions_to_bank(rows, difficulty, language_code)
+    question_bank_service.link_assessment_questions_to_bank(assessment_id, hash_to_id, difficulty)
+
 
 def _options_for_csv(options: Any) -> str:
     """Serialize options list/dict to a JSON string for storage."""
@@ -377,6 +389,8 @@ def confirm_assessment(
         notebook_grace_minutes=grace,
     )
 
+    _upsert_to_bank(assessment_id, rows, difficulty, language_code)
+
     types, questions_per_type = _types_and_counts_from_rows(rows)
 
     return {
@@ -468,6 +482,8 @@ def create_assessment(
         duration_minutes=dur,
         notebook_grace_minutes=grace,
     )
+
+    _upsert_to_bank(assessment_id, rows, difficulty, language_code)
 
     return {
         "assessment_id": assessment_id,
@@ -754,6 +770,10 @@ def submit_assessment(
         db_service.save_submission_row(
             assessment_id, user_id, qid, user_text, str(sc), fb, ts,
             submitter_client_id=submitter_client_id,
+        )
+
+        question_bank_service.record_question_outcome(
+            row.get("bank_question_id"), correct
         )
 
     if not scores:

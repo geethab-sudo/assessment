@@ -17,11 +17,13 @@ from schemas.admin import (
     PatchQuestionBody,
     SubmissionsListResponse,
     TopicCreateBody,
+    QuestionBankListResponse,
+    BankAvailabilityResponse,
 )
 from schemas.assessment import AssessmentResponse
 from schemas.catalog import LanguageResponse, LanguagesResponse, TopicResponse, TopicsResponse
 from schemas.common import OkDeletedResponse
-from services import assessment_service, audit_log, catalog_service, db_service
+from services import assessment_service, audit_log, catalog_service, db_service, question_bank_service
 
 admin_router = APIRouter(
     prefix="/admin",
@@ -32,6 +34,56 @@ admin_router = APIRouter(
 admin_ops_router = APIRouter(
     tags=["admin"],
 )
+
+
+@admin_router.get(
+    "/question-bank",
+    summary="Browse question bank",
+    response_model=QuestionBankListResponse,
+    responses={
+        200: {"description": "List of all questions in the bank with stats."},
+        **admin_crud_errors(include_404=False, include_auth=False),
+    },
+)
+def admin_get_question_bank(
+    topic_name: str | None = None,
+    difficulty: str | None = None,
+    language_code: str | None = None,
+    question_type: str | None = None,
+) -> QuestionBankListResponse:
+    """Browse the reusable question bank."""
+    rows = question_bank_service.get_bank_stats(
+        topic_name=topic_name,
+        difficulty=difficulty,
+        language_code=language_code,
+        question_type=question_type,
+    )
+    return QuestionBankListResponse(questions=rows)
+
+
+@admin_router.get(
+    "/question-bank/availability",
+    summary="Check reusable question availability",
+    response_model=BankAvailabilityResponse,
+    responses={
+        200: {"description": "Availability metrics per topic and total shortage."},
+        **admin_crud_errors(include_404=False, include_auth=False),
+    },
+)
+def admin_get_bank_availability(
+    topic_names: list[str] = Query(...),
+    difficulty: str = Query(...),
+    n_requested: int = Query(...),
+    exclude_employee_id: str | None = None,
+) -> BankAvailabilityResponse:
+    """Check how many questions are available in the bank before generating."""
+    data = question_bank_service.get_bank_availability(
+        topic_names=topic_names,
+        difficulty=difficulty,
+        n_requested=n_requested,
+        exclude_employee_id=exclude_employee_id,
+    )
+    return BankAvailabilityResponse(**data)
 
 
 @admin_router.get(
