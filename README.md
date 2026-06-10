@@ -17,6 +17,7 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 - **Mixed assessments**: Pyodide and Jupyter coding in one test; single **Submit answers** for in-browser work plus optional notebook upload in the same flow.
 - **Timed assessments**: Optional countdown per participant; auto-submit in-browser answers at expiry; configurable grace period for notebook upload with auto-grade on attach.
 - **Per-participant shuffle**: Deterministic question and MCQ option order from `assessment_id + employee_id`; display **Question N of M**; per-question feedback under each card after submit.
+- **Clipboard restrictions (participant)**: MCQ code snippets cannot be copied during a test; paste is disabled in coding editors (Pyodide / shell) so answers must be typed. Admin preview pages are unaffected.
 - **LLM grading**: Coding, subjective, and notebook answers are scored via Groq with per-question written feedback. **MCQ answers are graded locally** (string match against the stored correct answer) — no LLM call on submit.
 - **MCQ code formatting**: Embedded snippets in MCQ stems (inline, fenced, or `code_snippet`) are split into prose + a dark syntax-highlighted block. One-liners are expanded (`if`/`with`/`class`/`def` bodies, semicolon chains). Mixed stems like “class … What is the output of the following code: print(…)” become a question line plus formatted code. Write/implement prompts stay prose-only.
 - **Code editor**: Tab indentation, `Ctrl+/` comment toggling, syntax highlighting, and per-question language override.
@@ -25,7 +26,7 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 - **Session-scoped auth tokens**: Admin and client JWTs are stored in `sessionStorage` (tab-scoped), not `localStorage`, reducing XSS exposure across tabs.
 - **Timer stops on submit**: The countdown bar is hidden and the interval cleared as soon as the participant's submission succeeds; auto-expire callbacks no longer fire after that point.
 - **Admin question review**: After generation, admins land on a review page to edit question text, MCQ options, correct answer, and code snippets (Tab inserts 4-space indent). Coding questions do not show a code-snippet field. Nothing is written to the DB until **Confirm & save**.
-- **Participant feedback report (PDF)**: After submitting in-browser answers, participants can open a printable report (browser **Save as PDF**) with per-question results, feedback, and a topic-level score table. Covers **MCQ and Pyodide coding only** — Jupyter notebook grading is excluded for now.
+- **Participant feedback report (PDF)**: After submitting in-browser answers, the results section shows a **topic summary table** (topic, questions, score, average %) and a **Download report (PDF)** button. The printable report includes per-question results, feedback, and the same topic rollup. Printing uses a hidden iframe (no pop-up blocker). Covers **MCQ and Pyodide coding only** — Jupyter notebook grading is excluded for now.
 
 ## How do we use LLM calls? Is it expensive?
 
@@ -41,6 +42,7 @@ This section is for engineers who care about **token usage and API cost**, not U
 | **Submit — MCQ** | Answer compared to stored `correct_answer` (case-insensitive string match). Wrong-answer “feedback” is the stored correct text, not a new model response. | **No** |
 | **Submit — coding / subjective** | Each answer is sent to Groq once for score + written feedback. | **Yes** — **one call per coding/subjective question** |
 | **Submit — Jupyter notebook** | Each paired markdown/code cell is graded via Groq. | **Yes** — **one call per graded notebook cell** |
+| **Download feedback report** | `GET /assessment/{id}/report` joins stored submissions with question metadata; client renders HTML and prints. | **No** |
 
 ### Cost intuition (examples)
 
@@ -161,7 +163,8 @@ npm run dev
 1. Open the participant page and enter employee ID, name, and assessment ID.
 2. Answer MCQ questions and write/run Python code in the in-browser Pyodide terminal.
 3. Click **Submit answers** — all questions are graded immediately and per-question feedback appears under each card.
-4. Click **Download report (PDF)** to open a printable summary (MCQ + in-browser coding; Jupyter not included yet).
+4. Review the **Topic summary** table in the results section (loaded automatically from the report API).
+5. Click **Download report (PDF)** — the browser print dialog opens; choose **Save as PDF**. Same content as the on-screen summary plus full per-question detail (MCQ + in-browser coding only; Jupyter not included yet).
 
 ### Jupyter-only assessment (with notebook coding)
 
@@ -183,6 +186,27 @@ If the assessment has jupyter topics but **no coding** on those tiers, the UI st
 
 See [docs/participant-experience.md](docs/participant-experience.md) for shuffle, labels, and timed behavior.
 
+## Participant feedback report
+
+After an in-browser submit (`POST /submit-assessment`), the participant page:
+
+1. Fetches `GET /assessment/{id}/report?employee_id=…` (no LLM — reads submission rows from PostgreSQL).
+2. Displays a **topic summary** table: topic name, question count, total score, average %.
+3. Offers **Download report (PDF)** — `reportRenderer.js` builds print-friendly HTML and triggers `window.print()` via a hidden iframe (avoids pop-up blockers).
+
+The report includes:
+
+| Section | Content |
+|---------|---------|
+| Header | Participant name, employee ID, assessment ID, submission time |
+| Overall | Average score and questions graded |
+| Topic summary | Aggregated scores per catalog `topic_name` (or **General** when untagged) |
+| Question details | Stem, code snippet, your answer, score, feedback per question |
+
+**Scope (v1):** MCQ, coding, and subjective questions submitted through the web UI. Jupyter notebook rows (`question_id=notebook`, `routing_flag=jupyter`) and jupyter-modality coding placeholders are excluded.
+
+**Backend:** `services/report_service.py` (`build_report`, `aggregate_topic_summary`). **Frontend:** `frontend/src/lib/reportRenderer.js`, results UI in `ClientPage.jsx`.
+
 ## Per-participant randomization (anti-cheating)
 
 When a participant loads an assessment, they must enter their **employee ID** first. The API shuffles:
@@ -197,6 +221,17 @@ Participants see **Question 3 of 7** (position in their shuffled list), not inte
 **Not randomized:** Jupyter `.ipynb` template download order (canonical order for notebook coding tasks).
 
 Admin preview and `GET /assessment/{id}/template` omit `employee_id` and return canonical order.
+
+### Clipboard restrictions (participant page)
+
+On `/client`, while a test is in progress:
+
+| Area | Behaviour |
+|------|-----------|
+| MCQ / stem **code snippets** | Copy, cut, and context menu blocked; `user-select: none` on snippet blocks |
+| **Coding editor** (feeds Pyodide Execute) | Paste blocked (`Ctrl+V`, `Shift+Insert`, drag-drop) — participants must type code |
+
+Implemented in `frontend/src/lib/assessmentClipboard.js`, `McqCodeBlock.jsx`, `SimpleCodeEditor.jsx`, and `ClientPage.jsx`. This is a **browser-side deterrent** only (not a cryptographic guarantee).
 
 ## Python catalog: Tier 1 and Tier 2 topics
 
@@ -361,7 +396,11 @@ assessment/
 │   ├── test_notebook_plan_service.py
 │   ├── test_question_stem.py
 │   ├── test_shuffle_service.py
-│   └── test_tier1_presets.py
+│   ├── test_tier1_presets.py
+│   ├── test_report_service.py
+│   ├── test_auth_api.py
+│   ├── test_openapi.py
+│   └── test_security.py
 ├── frontend/
 │   └── src/
 │       ├── api.js              # apiFetch; JWT stored in sessionStorage (tab-scoped)
@@ -370,14 +409,16 @@ assessment/
 │       │   ├── JupyterWorkspacePanel.jsx  # Pure-jupyter 2-step download/upload panel
 │       │   ├── McqCodeBlock.jsx           # Syntax-highlighted code block (HTML-escaped)
 │       │   ├── MixedNotebookPanel.jsx     # Mixed-routing compact upload + JupyterRequiredBanner
+│       │   ├── Pagination.jsx             # Reusable admin table pagination
 │       │   ├── PythonRunPanel.jsx
 │       │   ├── SimpleCodeEditor.jsx
 │       │   └── TimerExpiredBanner.jsx     # Grace-period notification bar
 │       ├── hooks/useAssessmentTimer.js  # paused option stops ticker + callbacks after submit
 │       ├── lib/
+│       │   ├── assessmentClipboard.js # Block copy (snippets) / paste (editors) on client
 │       │   ├── codeHighlight.js       # escapeHtml + token highlighters
 │       │   ├── resolveQuestionStem.js # Pass-through (server pre-splits prose/code)
-│       │   ├── reportRenderer.js      # Print-friendly HTML → Save as PDF
+│       │   ├── reportRenderer.js      # Report HTML + iframe print (Save as PDF)
 │       │   ├── shellEditor.js
 │       │   └── tier1Presets.js
 │       └── pages/
@@ -433,7 +474,7 @@ Run from the **project root** (`assessment/`), not from inside `tests/`:
 source .venv/bin/activate
 pip install -r requirements.txt pytest
 
-# All tests (60 total)
+# All tests (93 total)
 python -m pytest tests/ -q
 
 # One file (pytest)

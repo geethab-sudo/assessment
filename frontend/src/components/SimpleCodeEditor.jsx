@@ -1,4 +1,5 @@
 import { useRef, useEffect } from "react";
+import { blockPasteEvent } from "../lib/assessmentClipboard.js";
 import { defaultEditorPlaceholder, highlightForLanguage } from "../lib/codeHighlight.js";
 
 export default function SimpleCodeEditor({
@@ -8,6 +9,7 @@ export default function SimpleCodeEditor({
   placeholder,
   minHeight = 280,
   language = "python",
+  blockPaste = false,
 }) {
   const textareaRef = useRef(null);
   const preRef = useRef(null);
@@ -37,6 +39,17 @@ export default function SimpleCodeEditor({
         if (ta) ta.selectionStart = ta.selectionEnd = start + spaces.length;
       }, 0);
       return;
+    }
+
+    if (blockPaste) {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) {
+        e.preventDefault();
+        return;
+      }
+      if (e.shiftKey && e.key === "Insert") {
+        e.preventDefault();
+        return;
+      }
     }
 
     if ((e.ctrlKey || e.metaKey) && e.key === "/") {
@@ -94,6 +107,8 @@ export default function SimpleCodeEditor({
         onChange={(e) => onChange(e.target.value)}
         onScroll={syncScroll}
         onKeyDown={handleKeyDown}
+        onPaste={blockPaste ? blockPasteEvent : undefined}
+        onDrop={blockPaste ? blockPasteEvent : undefined}
         readOnly={readOnly}
         placeholder={resolvedPlaceholder}
         spellCheck={false}

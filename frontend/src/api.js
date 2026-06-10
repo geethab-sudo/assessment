@@ -51,7 +51,7 @@ export function logoutClient() {
 
 /**
  * @param {string} path
- * @param {RequestInit & { authRole?: "admin" | "client" }} options Omitted or undefined authRole: no Authorization header (public GET /assessment, POST /submit-assessment).
+ * @param {RequestInit & { authRole?: "admin" | "client" }} options Omitted authRole: no Authorization header (public GET routes and participant POST /submit-assessment).
  */
 export async function apiFetch(path, options = {}) {
   const { authRole, ...rest } = options;
@@ -63,10 +63,16 @@ export async function apiFetch(path, options = {}) {
   }
   if (authRole === "admin") {
     const t = getAdminToken();
-    if (t) headers.Authorization = `Bearer ${t}`;
+    if (!t) {
+      throw new Error("Not signed in. Please sign in again.");
+    }
+    headers.Authorization = `Bearer ${t}`;
   } else if (authRole === "client") {
     const t = getClientToken();
-    if (t) headers.Authorization = `Bearer ${t}`;
+    if (!t) {
+      throw new Error("Not signed in. Please sign in again.");
+    }
+    headers.Authorization = `Bearer ${t}`;
   }
 
   const url = `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
@@ -82,6 +88,12 @@ export async function apiFetch(path, options = {}) {
     data = { detail: text || "Invalid JSON from server" };
   }
   if (!res.ok) {
+    if (res.status === 401 && authRole === "admin") {
+      logoutAdmin();
+      if (!window.location.pathname.startsWith("/login/admin")) {
+        window.location.assign("/login/admin");
+      }
+    }
     const msg = data?.detail ?? res.statusText;
     throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg));
   }

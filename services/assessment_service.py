@@ -7,6 +7,8 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime, timezone
+
+from services.ids import generate_assessment_id
 from typing import Any
 
 from services import db_service
@@ -41,6 +43,8 @@ LEVEL_TO_DIFFICULTY = {
 }
 
 SCORE_CORRECT_THRESHOLD = 70.0
+
+_TYPE_ORDER = ("mcq", "coding", "subjective")
 
 _SHELL_CODING_HINT = (
     "\n\nCoding questions for this topic: expect terminal/shell answers "
@@ -78,6 +82,19 @@ def _is_answer_correct(
             user_text.strip().casefold() == (correct_answer or "").strip().casefold()
         )
     return score >= SCORE_CORRECT_THRESHOLD
+
+
+def _types_and_counts_from_rows(
+    rows: list[dict[str, Any]],
+) -> tuple[list[str], dict[str, int]]:
+    counts: dict[str, int] = {}
+    for r in rows:
+        qtype = (r.get("type") or "").strip().lower()
+        if qtype:
+            counts[qtype] = counts.get(qtype, 0) + 1
+    types = [t for t in _TYPE_ORDER if t in counts]
+    types.extend(sorted(t for t in counts if t not in _TYPE_ORDER))
+    return types, counts
 
 
 def _row_from_question(q: dict[str, Any], question_id: Any, topic_name: str) -> dict[str, Any]:
@@ -304,7 +321,7 @@ def confirm_assessment(
     if not difficulty:
         raise ValueError("level must be one of: beginner, intermediate, advanced")
 
-    assessment_id = str(uuid.uuid4())
+    assessment_id = generate_assessment_id()
     dur, grace = attempt_service.validate_timed_config(
         is_timed, duration_minutes, notebook_grace_minutes
     )
@@ -360,18 +377,27 @@ def confirm_assessment(
         notebook_grace_minutes=grace,
     )
 
+    types, questions_per_type = _types_and_counts_from_rows(rows)
+
     return {
         "assessment_id": assessment_id,
         "topic": topic,
         "level": level.strip().lower(),
         "difficulty": difficulty,
+        "types": types,
+        "questions_per_type": questions_per_type,
         "question_count": len(rows),
+        "language_code": (language_code or "").strip()[:32] or None,
+        "language_label": (language_label or "").strip()[:256] or None,
+        "topic_names": catalog_topic_names,
         "notebook_expected": plan["notebook_expected"],
         "notebook_ready": plan["notebook_ready"],
+        "expected_notebook_coding_count": plan["expected_notebook_coding_count"],
+        "actual_notebook_coding_count": plan["actual_notebook_coding_count"],
         "is_timed": is_timed,
         "duration_minutes": dur,
         "notebook_grace_minutes": grace,
-}
+    }
 
 
 def create_assessment(
@@ -393,7 +419,7 @@ def create_assessment(
     if not difficulty:
         raise ValueError("level must be one of: beginner, intermediate, advanced")
 
-    assessment_id = str(uuid.uuid4())
+    assessment_id = generate_assessment_id()
     dur, grace = attempt_service.validate_timed_config(
         is_timed, duration_minutes, notebook_grace_minutes
     )

@@ -98,8 +98,8 @@ export default function AdminCatalogPage() {
     setLoading(true);
     try {
       const [langRes, topicRes] = await Promise.all([
-        apiFetch("/admin/languages", { authRole: "admin" }),
-        apiFetch("/admin/topics", { authRole: "admin" }),
+        apiFetch("/admin/languages"),
+        apiFetch("/admin/topics"),
       ]);
       setLanguages(langRes.languages ?? []);
       setTopics(topicRes.topics ?? []);

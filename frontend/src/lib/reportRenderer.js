@@ -205,21 +205,39 @@ export function renderReportHtml(report) {
 }
 
 /**
- * Open the report in a new tab and trigger the browser print dialog (Save as PDF).
+ * Print the report via a hidden iframe (avoids pop-up blockers after async fetch).
  * @param {object} report
  */
 export function openReportPrintWindow(report) {
   const html = renderReportHtml(report);
-  const win = window.open("", "_blank", "noopener,noreferrer");
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("title", "Assessment report");
+  iframe.setAttribute(
+    "style",
+    "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden"
+  );
+  document.body.appendChild(iframe);
+
+  const win = iframe.contentWindow;
   if (!win) {
-    throw new Error("Pop-up blocked. Allow pop-ups for this site to download the report.");
+    iframe.remove();
+    throw new Error("Could not prepare the report for printing.");
   }
+
+  const cleanup = () => {
+    if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+  };
+
   win.document.open();
   win.document.write(html);
   win.document.close();
   win.focus();
-  // Brief delay so print styles/layout settle before the dialog opens
+
+  // onafterprint is not reliable in all browsers; always remove the iframe eventually
+  win.onafterprint = cleanup;
+  setTimeout(cleanup, 60_000);
+
   setTimeout(() => {
     win.print();
-  }, 350);
+  }, 300);
 }
