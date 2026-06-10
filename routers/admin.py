@@ -10,9 +10,11 @@ from openapi_config import ERROR_503, admin_crud_errors, auth_error_responses
 from routers.deps import require_admin
 from schemas.admin import (
     AssessmentsListResponse,
+    ConfirmAssessmentBody,
     GenerateAssessmentBody,
     GenerateAssessmentResponse,
     LanguageCreateBody,
+    PatchQuestionBody,
     SubmissionsListResponse,
     TopicCreateBody,
 )
@@ -415,3 +417,119 @@ def generate_assessment(
         resource_id=response.assessment_id,
     )
     return response
+
+
+@admin_router.post(
+    "/preview-questions",
+    summary="Generate questions for admin review",
+    dependencies=[Depends(require_admin)],
+    responses={
+        200: {"description": "LLM-generated questions with correct answers for review."},
+        **admin_crud_errors(include_404=False),
+        503: ERROR_503,
+    },
+)
+def preview_questions(request: Request, body: GenerateAssessmentBody) -> dict:
+    """
+    Generate questions via LLM without persisting. Returns correct answers for review.
+
+    Call ``POST /admin/confirm-assessment`` to save after editing.
+    """
+    try:
+        return assessment_service.preview_questions(
+            topic=body.topic.strip(),
+            level=body.level,
+            types=body.types,
+            questions_per_type=body.questions_per_type,
+            topic_names=body.topic_names,
+            per_topic_config=body.per_topic_config or {},
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Preview generation failed: {e}") from e
+
+
+@admin_router.post(
+    "/confirm-assessment",
+    summary="Persist reviewed assessment questions",
+    response_model=GenerateAssessmentResponse,
+    dependencies=[Depends(require_admin)],
+    responses={
+        200: {"description": "Reviewed questions saved as a new assessment."},
+        **admin_crud_errors(include_404=False),
+        503: ERROR_503,
+    },
+)
+def confirm_assessment(request: Request, body: ConfirmAssessmentBody) -> GenerateAssessmentResponse:
+    """Persist the reviewed (and possibly edited) question list to the database."""
+    try:
+        questions = [q.model_dump() for q in body.questions]
+        result = assessment_service.confirm_assessment(
+            questions,
+            topic=body.topic.strip(),
+            level=body.level,
+            language_code=body.language_code,
+            language_label=body.language_label,
+            topic_names=body.topic_names,
+            per_topic_config=body.per_topic_config or {},
+            is_timed=body.is_timed,
+            duration_minutes=body.duration_minutes,
+            notebook_grace_minutes=body.notebook_grace_minutes,
+        )
+        response = GenerateAssessmentResponse.model_validate(result)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Confirm failed: {e}") from e
+    audit_log.admin_action(
+        request,
+        action="assessment.confirm",
+        resource="assessment",
+        resource_id=response.assessment_id,
+    )
+    return response
+
+
+@admin_router.patch(
+    "/assessment/{assessment_id}/question/{question_id}",
+    summary="Update a single saved question",
+    dependencies=[Depends(require_admin)],
+    responses={
+        200: {"description": "Question updated."},
+        **admin_crud_errors(),
+    },
+)
+def patch_assessment_question(
+    assessment_id: Annotated[str, Path(description="UUID of the assessment.")],
+    question_id: Annotated[str, Path(description="Question id within the assessment.")],
+    body: PatchQuestionBody,
+) -> dict:
+    """Post-hoc correction of one question on an already-saved assessment."""
+    import json
+    import uuid
+
+    aid = assessment_id.strip()
+    try:
+        uuid.UUID(aid)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid assessment ID format") from None
+
+    options_str: str | None = None
+    if body.options is not None:
+        options_str = json.dumps(body.options, ensure_ascii=False)
+    updated = db_service.update_assessment_question(
+        aid,
+        question_id.strip(),
+        question=body.question,
+        code_snippet=body.code_snippet,
+        options=options_str,
+        correct_answer=body.correct_answer,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return {"ok": True, "assessment_id": aid, "question_id": question_id.strip()}

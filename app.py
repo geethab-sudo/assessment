@@ -46,7 +46,7 @@ from schemas.assessment import (
 from schemas.auth import ClientLoginResponse, LoginBody, LoginResponse
 from schemas.catalog import LanguagesResponse
 from schemas.common import ErrorDetail, HealthResponse, ValidationErrorItem, ValidationErrorResponse
-from services import assessment_service, audit_log, auth_service, catalog_service, notebook_service
+from services import assessment_service, audit_log, auth_service, catalog_service, notebook_service, report_service
 from services import db_service
 from services.attempt_service import TimedAssessmentError
 from services.database import init_db, ping_database
@@ -356,6 +356,56 @@ def get_assessment(
         return AssessmentResponse.model_validate(data)
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get(
+    "/assessment/{assessment_id}/report",
+    tags=["assessments"],
+    summary="Participant feedback report",
+    responses={
+        200: {"description": "Structured feedback for in-browser questions (MCQ + Pyodide)."},
+        **public_assessment_errors(),
+    },
+)
+def get_participant_report(
+    assessment_id: Annotated[
+        str,
+        Path(
+            description="UUID of the assessment.",
+            examples=["550e8400-e29b-41d4-a716-446655440000"],
+        ),
+    ],
+    employee_id: Annotated[
+        str,
+        Query(
+            min_length=1,
+            max_length=64,
+            description="Participant employee id used when submitting.",
+            examples=["EMP-10042"],
+        ),
+    ],
+) -> dict[str, Any]:
+    """
+    Return a structured feedback report for in-browser questions.
+
+    Jupyter notebook submissions are excluded from v1 reports.
+    """
+    try:
+        aid = _require_valid_assessment_id(assessment_id)
+        if not db_service.client_may_access_assessment(aid, None):
+            raise HTTPException(
+                status_code=403,
+                detail="This assessment is not available for open access.",
+            )
+        return report_service.build_report(aid, employee_id.strip())
+    except HTTPException:
+        raise
+    except ValueError as e:
+        msg = str(e)
+        status = 404 if "not found" in msg.lower() or "unknown" in msg.lower() else 400
+        raise HTTPException(status_code=status, detail=msg) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

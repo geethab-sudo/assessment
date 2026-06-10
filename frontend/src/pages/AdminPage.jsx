@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { apiFetch } from "../api";
 import SearchableLanguageSelect from "../components/SearchableLanguageSelect.jsx";
 import {
@@ -76,6 +76,7 @@ function buildPerTopicTopicString(selectedTopicRows, perTopicCounts) {
 
 
 export default function AdminPage() {
+  const navigate = useNavigate();
   const [topicMode, setTopicMode] = useState("catalog"); // "catalog" | "custom"
   const [languages, setLanguages] = useState([]);
   const [languageId, setLanguageId] = useState("");
@@ -98,7 +99,6 @@ export default function AdminPage() {
   const [countCoding, setCountCoding] = useState(2);
   const [countSubjective, setCountSubjective] = useState(1);
 
-  const [generatedId, setGeneratedId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -458,28 +458,38 @@ export default function AdminPage() {
         }
       }
 
-      const data = await apiFetch("/generate-assessment", {
+      // Build the shared payload used for both preview and (eventually) confirm
+      const previewPayload = {
+        topic: resolvedTopic,
+        level: effectiveLevel,
+        types,
+        questions_per_type,
+        ...(languageCodeForGenerate ? { language_code: languageCodeForGenerate } : {}),
+        ...(languageNameForGenerate ? { language_label: languageNameForGenerate } : {}),
+        topic_names: topicNamesForGenerate,
+        ...(Object.keys(per_topic_config).length > 0 ? { per_topic_config } : {}),
+        is_timed: isTimed,
+        ...(isTimed
+          ? {
+              duration_minutes: durationMinutes,
+              notebook_grace_minutes: notebookGraceMinutes,
+            }
+          : {}),
+      };
+
+      const data = await apiFetch("/admin/preview-questions", {
         method: "POST",
         authRole: "admin",
-        body: JSON.stringify({
-          topic: resolvedTopic,
-          level: effectiveLevel,
-          types,
-          questions_per_type,
-          ...(languageCodeForGenerate ? { language_code: languageCodeForGenerate } : {}),
-          ...(languageNameForGenerate ? { language_label: languageNameForGenerate } : {}),
-          topic_names: topicNamesForGenerate,
-          ...(Object.keys(per_topic_config).length > 0 ? { per_topic_config } : {}),
-          is_timed: isTimed,
-          ...(isTimed
-            ? {
-                duration_minutes: durationMinutes,
-                notebook_grace_minutes: notebookGraceMinutes,
-              }
-            : {}),
-        }),
+        body: JSON.stringify(previewPayload),
       });
-      setGeneratedId(data.assessment_id);
+
+      // Navigate to the review page, carrying the draft questions and confirm payload
+      navigate("/admin/review", {
+        state: {
+          questions: data.questions,
+          confirmPayload: previewPayload,
+        },
+      });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -1148,20 +1158,6 @@ export default function AdminPage() {
             {loading ? "Working…" : "Generate assessment"}
           </button>
         </div>
-        {generatedId && (
-          <p className="success" style={{ marginTop: "1rem" }}>
-            Assessment ID: <code>{generatedId}</code>
-          </p>
-        )}
-        {generatedId && (
-          <p className="muted">
-            Open the{" "}
-            <Link to="/client" state={{ assessmentId: generatedId }}>
-              Client page
-            </Link>{" "}
-            with this ID filled in, or copy the ID above.
-          </p>
-        )}
       </section>
 
       {error && (

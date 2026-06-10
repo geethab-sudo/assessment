@@ -213,6 +213,167 @@ def _compute_routing_flag(catalog_topic_names: list[str]) -> str:
 # Public API
 # ---------------------------------------------------------------------------
 
+def preview_questions(
+    topic: str,
+    level: str,
+    types: list[str],
+    questions_per_type: dict[str, int],
+    *,
+    topic_names: list[str] | None = None,
+    per_topic_config: dict[str, dict[str, int]] | None = None,
+) -> dict[str, Any]:
+    """Generate questions via LLM and return them for admin review — nothing is written to the DB.
+
+    The returned dict contains the full question list (with correct_answer exposed for the
+    admin) plus the metadata needed to call confirm_assessment() after editing.
+    """
+    difficulty = LEVEL_TO_DIFFICULTY.get(level.strip().lower())
+    if not difficulty:
+        raise ValueError("level must be one of: beginner, intermediate, advanced")
+
+    # Use a throw-away assessment_id for LLM variation seeding only (never persisted)
+    preview_id = str(uuid.uuid4())
+
+    catalog_topic_names = [
+        n.strip() for n in (topic_names or []) if n and str(n).strip()
+    ]
+    effective_per_topic: dict[str, dict[str, int]] | None = None
+    if catalog_topic_names:
+        effective_per_topic = (
+            per_topic_config
+            if per_topic_config
+            else derive_per_topic_config(catalog_topic_names, types, questions_per_type)
+        )
+
+    if effective_per_topic and catalog_topic_names:
+        topic_strings = _build_per_topic_strings(catalog_topic_names)
+        rows = _generate_rows_per_topic(
+            preview_id, catalog_topic_names, topic_strings, difficulty, types, effective_per_topic
+        )
+    else:
+        rows = _generate_rows_legacy(preview_id, topic, difficulty, types, questions_per_type)
+
+    routing_flag = _compute_routing_flag(catalog_topic_names)
+
+    # Expose correct_answer and code_snippet so the admin can review and edit them
+    questions_for_review: list[dict[str, Any]] = []
+    for r in rows:
+        raw_opts = r.get("options") or ""
+        options = _parse_options(raw_opts) if raw_opts else []
+        questions_for_review.append({
+            "question_id": r["question_id"],
+            "type": r["type"],
+            "question": r["question"],
+            "code_snippet": r.get("code_snippet") or "",
+            "options": options,
+            "correct_answer": r.get("correct_answer") or "",
+            "topic_name": r.get("topic_name") or "",
+        })
+
+    return {
+        "questions": questions_for_review,
+        "meta": {
+            "topic": topic,
+            "level": level.strip().lower(),
+            "difficulty": difficulty,
+            "catalog_topic_names": catalog_topic_names,
+            "routing_flag": routing_flag,
+        },
+    }
+
+
+def confirm_assessment(
+    questions: list[dict[str, Any]],
+    *,
+    topic: str,
+    level: str,
+    language_code: str | None = None,
+    language_label: str | None = None,
+    topic_names: list[str] | None = None,
+    per_topic_config: dict[str, dict[str, int]] | None = None,
+    is_timed: bool = False,
+    duration_minutes: int | None = None,
+    notebook_grace_minutes: int | None = None,
+) -> dict[str, Any]:
+    """Persist an admin-reviewed (and possibly edited) question list to the DB.
+
+    Accepts the same question shape returned by preview_questions(), normalises
+    it, then delegates to the same DB write path used by create_assessment().
+    """
+    difficulty = LEVEL_TO_DIFFICULTY.get(level.strip().lower())
+    if not difficulty:
+        raise ValueError("level must be one of: beginner, intermediate, advanced")
+
+    assessment_id = str(uuid.uuid4())
+    dur, grace = attempt_service.validate_timed_config(
+        is_timed, duration_minutes, notebook_grace_minutes
+    )
+
+    catalog_topic_names = [
+        n.strip() for n in (topic_names or []) if n and str(n).strip()
+    ]
+
+    # Re-derive per_topic_config from the edited question list so counts are accurate
+    effective_per_topic: dict[str, dict[str, int]] = {}
+    if catalog_topic_names and per_topic_config:
+        effective_per_topic = per_topic_config
+    elif catalog_topic_names:
+        for q in questions:
+            tname = (q.get("topic_name") or "").strip()
+            qtype = (q.get("type") or "").strip().lower()
+            if tname and qtype:
+                effective_per_topic.setdefault(tname, {})
+                effective_per_topic[tname][qtype] = effective_per_topic[tname].get(qtype, 0) + 1
+
+    rows: list[dict[str, Any]] = [
+        {
+            "question_id": str(i + 1),
+            "question": (q.get("question") or "").strip(),
+            "type": (q.get("type") or "").strip().lower(),
+            "options": _options_for_csv(q.get("options") or []),
+            "correct_answer": (q.get("correct_answer") or "").strip(),
+            "topic_name": (q.get("topic_name") or "").strip(),
+            "code_snippet": (q.get("code_snippet") or "").strip(),
+        }
+        for i, q in enumerate(questions)
+    ]
+
+    routing_flag = _compute_routing_flag(catalog_topic_names)
+
+    plan = notebook_plan_from_rows(
+        rows,
+        topic_names=catalog_topic_names,
+        per_topic_config=effective_per_topic,
+        routing_flag=routing_flag,
+    )
+    validate_notebook_plan_after_generation(plan)
+
+    db_service.save_shared_assessment_rows(
+        assessment_id,
+        rows,
+        routing_flag=routing_flag,
+        language_code=language_code,
+        language_label=language_label,
+        topic_names=topic_names if topic_names is not None else [],
+        is_timed=is_timed,
+        duration_minutes=dur,
+        notebook_grace_minutes=grace,
+    )
+
+    return {
+        "assessment_id": assessment_id,
+        "topic": topic,
+        "level": level.strip().lower(),
+        "difficulty": difficulty,
+        "question_count": len(rows),
+        "notebook_expected": plan["notebook_expected"],
+        "notebook_ready": plan["notebook_ready"],
+        "is_timed": is_timed,
+        "duration_minutes": dur,
+        "notebook_grace_minutes": grace,
+}
+
+
 def create_assessment(
     topic: str,
     level: str,
@@ -438,12 +599,18 @@ def _build_questions_for_user(
         tname = (r.get("topic_name") or "").strip()
         mod = resolve_question_modality(tname, jupyter_topics, modality_by_name)
 
-        prose, code_snippet = split_stem_for_display(
-            r.get("question", ""),
-            r.get("code_snippet") or "",
-        )
-        if code_snippet:
-            code_snippet = prettify_inline_code(code_snippet)
+        stored_code = (r.get("code_snippet") or "").strip()
+        if stored_code:
+            # The code_snippet was either set by the admin during review or was already
+            # filtered by normalize_generated_question at save time.  Either way, trust it
+            # directly so that admin edits (indentation corrections, prose moves) are not
+            # silently discarded by the heuristic should_keep_stored_code check.
+            prose = (r.get("question") or "").strip()
+            code_snippet = prettify_inline_code(stored_code)
+        else:
+            prose, code_snippet = split_stem_for_display(r.get("question", ""), "")
+            if code_snippet:
+                code_snippet = prettify_inline_code(code_snippet)
 
         item: dict[str, Any] = {
             "question_id": r.get("question_id"),
@@ -552,10 +719,10 @@ def submit_assessment(
         scores.append(sc)
         feedback_parts.append(f"Q{qid}: {fb}")
         question_results.append({
-            "question_id": qid,
-            "score": round(sc, 2),
-            "feedback": fb,
-            "correct": correct,
+                "question_id": qid,
+                "score": round(sc, 2),
+                "feedback": fb,
+                "correct": correct,
         })
 
         db_service.save_submission_row(

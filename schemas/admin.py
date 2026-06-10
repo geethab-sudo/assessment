@@ -356,6 +356,66 @@ class LanguageCreateBody(BaseModel):
         return v
 
 
+class ReviewQuestionItem(BaseModel):
+    """One question as returned by preview and submitted back via confirm."""
+
+    question_id: str
+    type: str
+    question: str = Field(..., min_length=1)
+    code_snippet: str = ""
+    options: list[str] = Field(default_factory=list)
+    correct_answer: str = ""
+    topic_name: str = ""
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        t = v.strip().lower()
+        if t not in ALLOWED_TYPES:
+            raise ValueError(f"Invalid question type: {v!r}")
+        return t
+
+    @field_validator("question", "code_snippet", "correct_answer", "topic_name", mode="before")
+    @classmethod
+    def strip_str(cls, v: object) -> str:
+        return v.strip() if isinstance(v, str) else (v or "")
+
+
+class ConfirmAssessmentBody(BaseModel):
+    questions: list[ReviewQuestionItem] = Field(..., min_length=1)
+    topic: str = Field(..., min_length=1)
+    level: str = Field(..., min_length=1)
+    language_code: str | None = Field(default=None, max_length=32)
+    language_label: str | None = Field(default=None, max_length=256)
+    topic_names: list[str] = Field(default_factory=list)
+    per_topic_config: dict[str, dict[str, int]] = Field(default_factory=dict)
+    is_timed: bool = False
+    duration_minutes: int | None = Field(default=None, ge=1)
+    notebook_grace_minutes: int | None = Field(default=None, ge=0)
+
+    @field_validator("level")
+    @classmethod
+    def normalize_level(cls, v: str) -> str:
+        lv = v.strip().lower()
+        if lv not in ("beginner", "intermediate", "advanced"):
+            raise ValueError("level must be one of: beginner, intermediate, advanced")
+        return lv
+
+
+class PatchQuestionBody(BaseModel):
+    question: str | None = None
+    code_snippet: str | None = None
+    options: list[str] | None = None
+    correct_answer: str | None = None
+
+    @field_validator("question", "code_snippet", "correct_answer", mode="before")
+    @classmethod
+    def strip_str(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        return v.strip() if isinstance(v, str) else str(v)
+
+
 class TopicCreateBody(BaseModel):
     """Create or update a catalog topic."""
 

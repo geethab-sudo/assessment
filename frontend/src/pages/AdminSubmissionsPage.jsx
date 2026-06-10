@@ -139,7 +139,7 @@ export default function AdminSubmissionsPage() {
     (async () => {
       setError(null);
       try {
-        const data = await apiFetch("/admin/submissions");
+        const data = await apiFetch("/admin/submissions", { authRole: "admin" });
         if (!cancelled) setRows(data.submissions ?? []);
       } catch (e) {
         if (!cancelled) setError(e.message);

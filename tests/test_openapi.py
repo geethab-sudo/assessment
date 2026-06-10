@@ -14,6 +14,7 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/auth/login": {"post"},
     "/catalog/languages": {"get"},
     "/assessment/{assessment_id}": {"get"},
+    "/assessment/{assessment_id}/report": {"get"},
     "/assessment/{assessment_id}/template": {"get"},
     "/submit-assessment": {"post"},
     "/submit-notebook-assessment": {"post"},
@@ -25,6 +26,9 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/admin/languages/{language_id}": {"put"},
     "/admin/topics": {"get", "post"},
     "/admin/topics/{topic_id}": {"put", "delete"},
+    "/admin/preview-questions": {"post"},
+    "/admin/confirm-assessment": {"post"},
+    "/admin/assessment/{assessment_id}/question/{question_id}": {"patch"},
     "/generate-assessment": {"post"},
 }
 
@@ -106,6 +110,9 @@ class TestOpenAPISchema(unittest.TestCase):
             ("/admin/topics", "post"),
             ("/admin/topics/{topic_id}", "put"),
             ("/admin/topics/{topic_id}", "delete"),
+            ("/admin/preview-questions", "post"),
+            ("/admin/confirm-assessment", "post"),
+            ("/admin/assessment/{assessment_id}/question/{question_id}", "patch"),
             ("/generate-assessment", "post"),
         }
         for path, method in protected:
@@ -140,6 +147,7 @@ class TestOpenAPISchema(unittest.TestCase):
             "/auth/login": {"post"},
             "/catalog/languages": {"get"},
             "/assessment/{assessment_id}": {"get"},
+            "/assessment/{assessment_id}/report": {"get"},
             "/assessment/{assessment_id}/template": {"get"},
             "/submit-assessment": {"post"},
             "/submit-notebook-assessment": {"post"},
