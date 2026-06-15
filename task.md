@@ -80,41 +80,39 @@
 
 ---
 
-## Stage 2 — Admin question source + hybrid generation
+## Stage 2 — Admin question source + hybrid generation ✅
 
-> **Goal:** Admin picks **Generate new** or **Recycle then generate** (bank first, LLM for shortage — always). No “recycle only” mode.  
+> **Goal:** Admin picks **Generate new** or **Recycle then generate** (bank first, LLM for shortage — always).  
 > **Depends on:** Stage 1  
 > **Blocks:** Nothing for client flows (admin-only stage)
 
 ### Schema
 
-- [ ] Add to `GenerateAssessmentBody` (and `ConfirmAssessmentBody` if needed):
-  - [ ] `question_source: Literal["generate_new", "recycle_then_generate"]` default `generate_new`
-  - [ ] `target_employee_id: str | None` — exclude bank questions this employee has **mastered** (not merely seen)
-- [ ] Extend `GenerateAssessmentResponse` with `bank_sourced_count`, `llm_generated_count`, `shortage_messages: list[str]`
+- [x] Add to `GenerateAssessmentBody`:
+  - [x] `question_source: Literal["generate_new", "recycle_then_generate"]` default `generate_new`
+  - [x] `target_employee_id: str | None` — exclude bank questions this employee has **mastered**
+- [x] Extend `GenerateAssessmentResponse` with `bank_sourced_count`, `llm_generated_count`, `shortage_messages`
+- [x] `ReviewQuestionItem.bank_question_id` optional for confirm after recycle preview
 
 ### Service (`assessment_service.py`)
 
-- [ ] New helper `_build_rows_from_bank_and_llm(...)` using `find_bank_questions` per topic/type
-- [ ] When `question_source == "recycle_then_generate"`: bank pull then LLM for any shortage (never fail on shortfall)
-- [ ] Wire into `preview_questions` and `create_assessment` (and `confirm_assessment` when applicable)
-- [ ] Recycled rows: set `bank_question_id` on saved `assessment_questions` without re-upserting as new hash (still increment usage appropriately)
-- [ ] No duplicate `bank_question_id` within one assessment
-- [ ] Support manual topic/count selection (not only Tier 1 presets) — full demand met via bank + LLM
+- [x] `_build_assessment_rows` / per-topic-type bank + LLM hybrid
+- [x] `find_bank_questions` filters by `question_type`
+- [x] Wire into `preview_questions` and `create_assessment`; confirm preserves `bank_question_id`
+- [x] Recycled rows: `bank_question_id` on save; `increment_question_usage` not duplicate upsert
+- [x] No duplicate `bank_question_id` within one assessment
 
 ### Admin UI (`AdminPage.jsx`)
 
-- [ ] Question source: **Generate new** | **Recycle then generate** (two options only)
-- [ ] Optional `target_employee_id` field (advanced) for personalized admin builds
-- [ ] Before generate/preview: call availability API; show banner with available/shortage counts
-- [ ] Pass `question_source` (+ employee) in preview and confirm payloads
-- [ ] Show `bank_sourced_count` / `llm_generated_count` in success message or review meta
+- [x] Question source: **Generate new** | **Recycle then generate**
+- [x] Optional `target_employee_id`
+- [x] Availability banner before generate
+- [x] Pass `question_source` in preview/confirm payloads
+- [x] Review page shows bank vs LLM counts
 
 ### Tests
 
-- [ ] `tests/test_assessment_recycle.py` — mock bank with known rows; assert hybrid counts and shortage messages
-
-**Acceptance:** Generate Tier 1 Beginner with recycle-then-generate after prior assessments exist → bank questions used where available, LLM fills gap; UI shows recycled vs generated counts. Same for custom topic/count selection without a preset.
+- [x] `tests/test_assessment_recycle.py`
 
 ---
 

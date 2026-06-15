@@ -185,11 +185,13 @@ export default function AdminReviewPage() {
 
   const initialQuestions = location.state?.questions ?? [];
   const confirmPayload = location.state?.confirmPayload ?? null;
+  const previewMeta = location.state?.previewMeta ?? null;
 
   const [questions, setQuestions] = useState(initialQuestions);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [savedId, setSavedId] = useState(null);
+  const [savedStats, setSavedStats] = useState(null);
 
   // Guard: if navigated here directly without state, redirect back
   if (!confirmPayload) {
@@ -228,6 +230,7 @@ export default function AdminReviewPage() {
           options: q.options ?? [],
           correct_answer: q.correct_answer ?? "",
           topic_name: q.topic_name ?? "",
+          ...(q.bank_question_id != null ? { bank_question_id: q.bank_question_id } : {}),
         })),
       };
       const data = await apiFetch("/admin/confirm-assessment", {
@@ -236,6 +239,11 @@ export default function AdminReviewPage() {
         body: JSON.stringify(body),
       });
       setSavedId(data.assessment_id);
+      setSavedStats({
+        bank: data.bank_sourced_count ?? 0,
+        llm: data.llm_generated_count ?? 0,
+        messages: data.shortage_messages ?? [],
+      });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -256,6 +264,12 @@ export default function AdminReviewPage() {
             <strong>Assessment ID:</strong>{" "}
             <code className="cell-id">{savedId}</code>
           </p>
+          {savedStats && (savedStats.bank > 0 || savedStats.llm > 0) && (
+            <p className="muted">
+              Questions: <strong>{savedStats.bank}</strong> from bank ·{" "}
+              <strong>{savedStats.llm}</strong> newly generated
+            </p>
+          )}
           <div className="review-saved-actions">
             <Link
               to="/client"
@@ -285,6 +299,24 @@ export default function AdminReviewPage() {
           correct option. Edit any text, code snippet, or option as needed, then click{" "}
           <strong>Confirm &amp; save</strong> to publish the assessment.
         </p>
+        {previewMeta &&
+          (previewMeta.bank_sourced_count > 0 || previewMeta.llm_generated_count > 0) && (
+            <p className="muted" style={{ marginTop: "0.5rem" }}>
+              Draft mix: <strong>{previewMeta.bank_sourced_count}</strong> from question bank ·{" "}
+              <strong>{previewMeta.llm_generated_count}</strong> new via LLM
+              {previewMeta.shortage_messages?.length > 0 && (
+                <>
+                  <br />
+                  {previewMeta.shortage_messages.map((msg) => (
+                    <span key={msg}>
+                      {msg}
+                      <br />
+                    </span>
+                  ))}
+                </>
+              )}
+            </p>
+          )}
       </header>
 
       <div className="review-questions">

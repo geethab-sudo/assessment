@@ -353,6 +353,7 @@ def find_bank_questions(
     difficulty: str,
     n_needed: int,
     *,
+    question_type: str | None = None,
     exclude_bank_ids: set[int] | None = None,
     exclude_employee_id: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
@@ -366,6 +367,7 @@ def find_bank_questions(
         return [], max(0, n_needed)
 
     diff = normalize_bank_level(difficulty)
+    qtype_filter = (question_type or "").strip().lower() or None
     names = [n.strip() for n in topic_names if n and n.strip()]
     if not names:
         return [], n_needed
@@ -383,11 +385,12 @@ def find_bank_questions(
                 QuestionBank.difficulty == diff,
             )
             .order_by(
-                # Prefer less-used questions for variety
                 QuestionBank.times_used.asc(),
                 QuestionBank.id.asc(),
             )
         )
+        if qtype_filter:
+            query = query.where(QuestionBank.type == qtype_filter)
 
         candidates = session.scalars(query).all()
 

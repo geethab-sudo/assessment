@@ -52,6 +52,34 @@ class GenerateAssessmentBody(BaseModel):
         ge=0,
         description="Extra minutes after main timer for notebook upload (timed assessments only).",
     )
+    question_source: Literal["generate_new", "recycle_then_generate"] = Field(
+        default="generate_new",
+        description="`recycle_then_generate` pulls from the bank first, then LLM for any shortfall.",
+    )
+    target_employee_id: str | None = Field(
+        default=None,
+        max_length=64,
+        description="When recycling, exclude bank questions this employee has already mastered.",
+    )
+
+    @field_validator("target_employee_id", mode="before")
+    @classmethod
+    def strip_target_employee_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, str) and (s := v.strip()):
+            return s[:64]
+        return None
+
+    @field_validator("question_source")
+    @classmethod
+    def normalize_question_source(cls, v: str) -> str:
+        qs = v.strip().lower()
+        if qs not in ("generate_new", "recycle_then_generate"):
+            raise ValueError(
+                "question_source must be generate_new or recycle_then_generate"
+            )
+        return qs
 
     @field_validator("topic", mode="before")
     @classmethod
@@ -200,6 +228,9 @@ class GenerateAssessmentResponse(BaseModel):
     is_timed: bool = False
     duration_minutes: int | None = None
     notebook_grace_minutes: int | None = None
+    bank_sourced_count: int = 0
+    llm_generated_count: int = 0
+    shortage_messages: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -366,6 +397,7 @@ class ReviewQuestionItem(BaseModel):
     options: list[str] = Field(default_factory=list)
     correct_answer: str = ""
     topic_name: str = ""
+    bank_question_id: int | None = None
 
     @field_validator("type")
     @classmethod

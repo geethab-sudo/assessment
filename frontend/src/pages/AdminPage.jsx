@@ -114,6 +114,10 @@ export default function AdminPage() {
   const [showDistributionEditor, setShowDistributionEditor] = useState(false);
   const [presetMissingTopics, setPresetMissingTopics] = useState([]);
 
+  const [questionSource, setQuestionSource] = useState("generate_new");
+  const [targetEmployeeId, setTargetEmployeeId] = useState("");
+  const [bankAvailability, setBankAvailability] = useState(null);
+
   const tier1Presets = useMemo(() => getTier1Presets(), []);
 
   const topicById = useMemo(
@@ -370,6 +374,53 @@ export default function AdminPage() {
     return { mcq, coding, subjective };
   }, [selectedTopicIds, perTopicCounts]);
 
+  const totalQuestionCount = useMemo(
+    () => totalCounts.mcq + totalCounts.coding + totalCounts.subjective,
+    [totalCounts]
+  );
+
+  useEffect(() => {
+    if (questionSource !== "recycle_then_generate") {
+      setBankAvailability(null);
+      return;
+    }
+    if (
+      topicMode !== "catalog" ||
+      topicNamesForGenerate.length === 0 ||
+      totalQuestionCount === 0
+    ) {
+      setBankAvailability(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const params = new URLSearchParams();
+        for (const name of topicNamesForGenerate) {
+          params.append("topic_names", name);
+        }
+        params.set("difficulty", effectiveLevel);
+        params.set("n_requested", String(totalQuestionCount));
+        const eid = targetEmployeeId.trim();
+        if (eid) params.set("exclude_employee_id", eid);
+        const data = await apiFetch(`/admin/question-bank/availability?${params}`);
+        if (!cancelled) setBankAvailability(data);
+      } catch {
+        if (!cancelled) setBankAvailability(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    questionSource,
+    topicNamesForGenerate,
+    effectiveLevel,
+    totalQuestionCount,
+    targetEmployeeId,
+    topicMode,
+  ]);
+
   const buildTypesAndCounts = useMemo(() => {
     if (topicMode === "catalog" && (usePresetTier1 || allocationMode === "per-topic")) {
       const types = [];
@@ -475,6 +526,10 @@ export default function AdminPage() {
               notebook_grace_minutes: notebookGraceMinutes,
             }
           : {}),
+        question_source: questionSource,
+        ...(targetEmployeeId.trim()
+          ? { target_employee_id: targetEmployeeId.trim() }
+          : {}),
       };
 
       const data = await apiFetch("/admin/preview-questions", {
@@ -488,6 +543,7 @@ export default function AdminPage() {
         state: {
           questions: data.questions,
           confirmPayload: previewPayload,
+          previewMeta: data.meta ?? null,
         },
       });
     } catch (e) {
@@ -537,6 +593,58 @@ export default function AdminPage() {
 
       <section className="card">
         <h2>Configuration</h2>
+        {topicMode === "catalog" && (
+          <div className="bank-source-block" style={{ marginBottom: "1.25rem" }}>
+            <h3 className="topic-preview-title">Question source</h3>
+            <label className="radio-row">
+              <input
+                type="radio"
+                name="questionSource"
+                value="generate_new"
+                checked={questionSource === "generate_new"}
+                onChange={() => setQuestionSource("generate_new")}
+              />
+              Generate new (LLM only)
+            </label>
+            <label className="radio-row">
+              <input
+                type="radio"
+                name="questionSource"
+                value="recycle_then_generate"
+                checked={questionSource === "recycle_then_generate"}
+                onChange={() => setQuestionSource("recycle_then_generate")}
+              />
+              Recycle then generate (bank first, LLM for any shortfall)
+            </label>
+            {questionSource === "recycle_then_generate" && (
+              <>
+                <label style={{ display: "block", marginTop: "0.75rem" }}>
+                  Exclude mastered questions for employee (optional)
+                  <input
+                    type="text"
+                    value={targetEmployeeId}
+                    onChange={(e) => setTargetEmployeeId(e.target.value)}
+                    placeholder="e.g. E1001"
+                    style={{ display: "block", width: "100%", marginTop: "0.25rem" }}
+                  />
+                </label>
+                {bankAvailability && (
+                  <p className="muted" style={{ marginTop: "0.75rem" }} role="status">
+                    Bank: <strong>{bankAvailability.available}</strong> of{" "}
+                    <strong>{bankAvailability.requested}</strong> questions available
+                    {bankAvailability.shortage > 0 ? (
+                      <>
+                        {" "}
+                        — we will generate <strong>{bankAvailability.shortage}</strong> new
+                      </>
+                    ) : null}
+                    .
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
         <div className="grid">
           {!(usePresetTier1 && topicMode === "catalog") && (
             <label>

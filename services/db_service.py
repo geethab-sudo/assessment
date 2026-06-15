@@ -334,6 +334,8 @@ def save_shared_assessment_rows(
                     correct_answer=row.get("correct_answer", "") or "",
                     topic_name=str(row.get("topic_name") or ""),
                     code_snippet=row.get("code_snippet") or None,
+                    bank_question_id=row.get("bank_question_id"),
+                    difficulty=row.get("difficulty"),
                 )
             )
         session.commit()
