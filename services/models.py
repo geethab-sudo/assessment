@@ -122,6 +122,36 @@ class QuestionBank(Base):
     )
 
 
+class EmployeeQuestionMastery(Base):
+    """
+    Per-employee record of bank questions answered correctly (mastered).
+
+    Populated on submit when a graded answer is correct; used for bank exclusion
+    without rescanning all submissions.
+    """
+
+    __tablename__ = "employee_question_mastery"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    #: Normalized employee id (casefold), same convention as assessment_attempts
+    employee_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    bank_question_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("question_bank.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    mastered_at: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "employee_id",
+            "bank_question_id",
+            name="uq_employee_bank_mastery",
+        ),
+    )
+
+
 class Assessment(Base):
     __tablename__ = "assessments"
 

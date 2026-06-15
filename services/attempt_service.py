@@ -198,5 +198,13 @@ def assert_notebook_submit_allowed(assessment_id: str, employee_id: str, *, is_t
 
 
 def parse_employee_id_from_user_label(user_id: str) -> str:
-    """Extract employee id from ``empid | name`` label."""
+    """Extract employee id from ``empid | name`` label (name is never used for matching)."""
     return (user_id or "").split("|", 1)[0].strip()
+
+
+def submission_belongs_to_employee(user_id: str, employee_id: str) -> bool:
+    """True when ``user_id`` label belongs to ``employee_id`` (case-insensitive; name ignored)."""
+    return (
+        normalize_employee_id(parse_employee_id_from_user_label(user_id))
+        == normalize_employee_id(employee_id)
+    )

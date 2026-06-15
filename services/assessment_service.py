@@ -62,12 +62,15 @@ _SHELL_CODING_HINT = (
 def _upsert_to_bank(
     assessment_id: str,
     rows: list[dict[str, Any]],
-    difficulty: str,
+    level: str,
     language_code: str | None = None,
 ) -> None:
     """Upsert newly generated/confirmed questions into the reusable bank."""
-    hash_to_id = question_bank_service.add_questions_to_bank(rows, difficulty, language_code)
-    question_bank_service.link_assessment_questions_to_bank(assessment_id, hash_to_id, difficulty)
+    bank_level = level.strip().lower()
+    hash_to_id = question_bank_service.add_questions_to_bank(rows, bank_level, language_code)
+    question_bank_service.link_assessment_questions_to_bank(
+        assessment_id, hash_to_id, bank_level
+    )
 
 
 def _options_for_csv(options: Any) -> str:
@@ -389,7 +392,7 @@ def confirm_assessment(
         notebook_grace_minutes=grace,
     )
 
-    _upsert_to_bank(assessment_id, rows, difficulty, language_code)
+    _upsert_to_bank(assessment_id, rows, level.strip().lower(), language_code)
 
     types, questions_per_type = _types_and_counts_from_rows(rows)
 
@@ -483,7 +486,7 @@ def create_assessment(
         notebook_grace_minutes=grace,
     )
 
-    _upsert_to_bank(assessment_id, rows, difficulty, language_code)
+    _upsert_to_bank(assessment_id, rows, level.strip().lower(), language_code)
 
     return {
         "assessment_id": assessment_id,
@@ -775,6 +778,10 @@ def submit_assessment(
         question_bank_service.record_question_outcome(
             row.get("bank_question_id"), correct
         )
+        if correct and eid:
+            question_bank_service.record_employee_question_mastery(
+                eid, row.get("bank_question_id")
+            )
 
     if not scores:
         raise ValueError("No matching answers for this assessment")

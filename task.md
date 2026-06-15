@@ -27,7 +27,7 @@
 - [x] `record_question_outcome` on submit (`assessment_service.submit_assessment`)
 - [x] `get_bank_stats` with `percent_correct` / `percent_wrong`
 - [x] `get_bank_availability` per topic + total shortage
-- [x] `find_bank_questions` + `get_employee_seen_bank_ids` (service layer — **seen semantics wrong; refactor in Stage 1**)
+- [x] `find_bank_questions` + `get_employee_mastered_bank_ids` (service layer)
 
 ### API
 
@@ -39,39 +39,42 @@
 
 - [ ] `find_bank_questions` used in generation pipeline
 - [ ] Admin or client UI for bank
-- [ ] Dedicated `tests/test_question_bank_service.py`
-- [ ] Fix difficulty label mismatch (`easy/medium/hard` stored vs `beginner/intermediate/advanced` queried)
+- [ ] Dedicated `tests/test_question_bank_service.py` → done in Stage 1
+- [ ] Fix difficulty label mismatch → done in Stage 1
 
 ---
 
-## Stage 1 — Data correctness & stats hardening
+## Stage 1 — Data correctness & stats hardening ✅
 
-> **Goal:** Bank difficulty values match admin `level`; tests lock behavior.  
+> **Goal:** Bank difficulty values match admin `level`; mastered-only exclusion; tests lock behavior.  
 > **Depends on:** Stage 0  
 > **Blocks:** Stage 2 (recycling)
 
 ### Backend
 
-- [ ] Store bank `difficulty` as `beginner` | `intermediate` | `advanced` in `add_questions_to_bank` (pass `level`, not LLM `easy/medium/hard`)
-- [ ] Update `_upsert_to_bank` call sites in `assessment_service.py` to pass `level`
-- [ ] One-time backfill in `database.py` or migration script: map existing `easy→beginner`, `medium→intermediate`, `hard→advanced`
-- [ ] Ensure `link_assessment_questions_to_bank` sets `AssessmentQuestion.difficulty` to same labels
-- [ ] Refactor `get_employee_seen_bank_ids` → `get_employee_mastered_bank_ids` (exclude only **correct** answers: MCQ match; coding/subjective score ≥ 70)
-- [ ] Update `find_bank_questions` and `get_bank_availability` to use mastered exclusion
+- [x] Store bank `difficulty` as `beginner` | `intermediate` | `advanced` in `add_questions_to_bank` (pass `level`, not LLM `easy/medium/hard`)
+- [x] Update `_upsert_to_bank` call sites in `assessment_service.py` to pass `level`
+- [x] One-time backfill in `database.py`: map existing `easy→beginner`, `medium→intermediate`, `hard→advanced`
+- [x] Ensure `link_assessment_questions_to_bank` sets `AssessmentQuestion.difficulty` to same labels
+- [x] Refactor `get_employee_seen_bank_ids` → `get_employee_mastered_bank_ids` (exclude only **correct** answers)
+- [x] `employee_question_mastery` table — persistent per-employee mastered `bank_question_id`s
+- [x] `record_employee_question_mastery` on correct submit (`assessment_service.submit_assessment`)
+- [x] One-time backfill from historical submissions when table is empty
+- [x] Update `find_bank_questions` and `get_bank_availability` to use mastered exclusion
 
 ### Tests
 
-- [ ] `tests/test_question_bank_service.py`
-  - [ ] Upsert same content twice → one row, `times_used` incremented
-  - [ ] `record_question_outcome` → correct `times_correct` / `times_wrong` and percentages in `get_bank_stats`
-  - [ ] `find_bank_questions` filters by topic + difficulty
-  - [ ] `get_employee_mastered_bank_ids` — wrong answers still eligible; correct answers excluded
-  - [ ] `get_employee_mastered_bank_ids` respects `E1001 | Name` user_id format
-  - [ ] `get_bank_availability` shortage math (with mastered exclusion)
+- [x] `tests/test_question_bank_service.py`
+  - [x] Upsert same content twice → one row, `times_used` incremented
+  - [x] `record_question_outcome` → correct `times_correct` / `times_wrong` and percentages in `get_bank_stats`
+  - [x] `find_bank_questions` filters by topic + difficulty
+  - [x] `get_employee_mastered_bank_ids` — wrong answers still eligible; correct answers excluded
+  - [x] `get_employee_mastered_bank_ids` respects `E1001 | Name` user_id format
+  - [x] `get_bank_availability` shortage math (with mastered exclusion)
 
 ### Docs
 
-- [ ] Note difficulty convention in `plan.md` §3.6 once fixed (mark issue resolved)
+- [x] Note difficulty convention in `plan.md` §3.6 once fixed (mark issue resolved)
 
 **Acceptance:** `GET /admin/question-bank/availability?topic_names=...&difficulty=beginner&n_requested=5` returns non-zero `available` after generating a beginner assessment on that topic.
 

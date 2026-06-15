@@ -3,7 +3,7 @@ Question Bank — canonical reusable question store with analytics counters.
 
 Every confirmed assessment question is automatically upserted here.
 Questions can be recycled across assessments while excluding questions
-a specific employee has already seen.
+a specific employee has already mastered (answered correctly).
 """
 
 from __future__ import annotations
@@ -12,15 +12,38 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, select, update
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from services.database import get_session_factory
 from services.models import (
     AssessmentQuestion,
+    EmployeeQuestionMastery,
     QuestionBank,
     Submission,
 )
+
+
+ALLOWED_BANK_LEVELS = frozenset({"beginner", "intermediate", "advanced"})
+_LLM_DIFFICULTY_TO_LEVEL = {
+    "easy": "beginner",
+    "medium": "intermediate",
+    "hard": "advanced",
+}
+
+
+def normalize_bank_level(value: str) -> str:
+    """Return canonical bank level: beginner | intermediate | advanced."""
+    v = (value or "").strip().lower()
+    if v in ALLOWED_BANK_LEVELS:
+        return v
+    mapped = _LLM_DIFFICULTY_TO_LEVEL.get(v)
+    if mapped:
+        return mapped
+    raise ValueError(
+        f"Invalid bank level/difficulty: {value!r}. "
+        "Expected beginner, intermediate, advanced (or easy, medium, hard)."
+    )
 
 
 def _session() -> Session:
@@ -47,19 +70,18 @@ def _utc_now_iso() -> str:
 
 def add_questions_to_bank(
     rows: list[dict[str, Any]],
-    difficulty: str,
+    level: str,
     language_code: str | None = None,
 ) -> dict[str, int]:
     """
     Upsert question rows into the bank. Returns mapping of content_hash → bank id.
 
-    Idempotent: existing questions (by content hash) are not duplicated.
-    New questions are inserted; existing ones have their times_used incremented.
+    ``level`` is stored as beginner | intermediate | advanced (admin API level).
     """
     if not rows:
         return {}
 
-    diff = difficulty.strip().lower()
+    diff = normalize_bank_level(level)
     lang = (language_code or "").strip()[:32] or None
 
     hash_to_id: dict[str, int] = {}
@@ -112,13 +134,13 @@ def add_questions_to_bank(
 def link_assessment_questions_to_bank(
     assessment_id: str,
     hash_to_bank_id: dict[str, int],
-    difficulty: str,
+    level: str,
 ) -> None:
     """Set bank_question_id and difficulty on matching assessment_question rows."""
     if not hash_to_bank_id:
         return
 
-    diff = difficulty.strip().lower()
+    diff = normalize_bank_level(level)
 
     with _session() as session:
         aq_rows = session.scalars(
@@ -176,55 +198,150 @@ def record_question_outcome(bank_question_id: int | None, correct: bool) -> None
         session.commit()
 
 
-# ---------------------------------------------------------------------------
-# Employee deduplication — questions already seen
-# ---------------------------------------------------------------------------
-
-def get_employee_seen_bank_ids(employee_id: str) -> set[int]:
+def record_employee_question_mastery(
+    employee_id: str,
+    bank_question_id: int | None,
+) -> None:
     """
-    Return all bank question IDs this employee has already answered.
+    Persist that this employee mastered a bank question (answered correctly).
 
-    Looks up submissions by employee_id prefix (matches the 'E1001 | Name' format),
-    then resolves question_id → assessment_questions.bank_question_id.
+    Idempotent: duplicate (employee_id, bank_question_id) pairs are ignored.
     """
     from services.attempt_service import normalize_employee_id
 
-    eid_norm = normalize_employee_id(employee_id)
-    if not eid_norm:
+    if bank_question_id is None:
+        return
+    eid = normalize_employee_id(employee_id)
+    if not eid:
+        return
+
+    with _session() as session:
+        existing = session.scalar(
+            select(EmployeeQuestionMastery.id).where(
+                EmployeeQuestionMastery.employee_id == eid,
+                EmployeeQuestionMastery.bank_question_id == bank_question_id,
+            )
+        )
+        if existing is not None:
+            return
+        session.add(
+            EmployeeQuestionMastery(
+                employee_id=eid,
+                bank_question_id=bank_question_id,
+                mastered_at=_utc_now_iso(),
+            )
+        )
+        session.commit()
+
+
+def backfill_employee_mastery_from_submissions() -> int:
+    """
+    Populate ``employee_question_mastery`` from historical correct submissions.
+
+    Returns the number of new mastery rows inserted.
+    """
+    from services.attempt_service import (
+        normalize_employee_id,
+        parse_employee_id_from_user_label,
+    )
+
+    inserted = 0
+    with _session() as session:
+        subs = session.scalars(
+            select(Submission).where(Submission.question_id != "notebook")
+        ).all()
+
+        for sub in subs:
+            eid = normalize_employee_id(
+                parse_employee_id_from_user_label(sub.user_id or "")
+            )
+            if not eid:
+                continue
+
+            aq = session.scalar(
+                select(AssessmentQuestion).where(
+                    AssessmentQuestion.assessment_id == sub.assessment_id,
+                    AssessmentQuestion.question_id == sub.question_id,
+                )
+            )
+            if not aq or aq.bank_question_id is None:
+                continue
+
+            if not _submission_indicates_mastered(
+                aq.type,
+                sub.user_answer,
+                aq.correct_answer,
+                sub.score,
+            ):
+                continue
+
+            exists = session.scalar(
+                select(EmployeeQuestionMastery.id).where(
+                    EmployeeQuestionMastery.employee_id == eid,
+                    EmployeeQuestionMastery.bank_question_id == aq.bank_question_id,
+                )
+            )
+            if exists is not None:
+                continue
+
+            session.add(
+                EmployeeQuestionMastery(
+                    employee_id=eid,
+                    bank_question_id=aq.bank_question_id,
+                    mastered_at=sub.timestamp or _utc_now_iso(),
+                )
+            )
+            inserted += 1
+
+        session.commit()
+    return inserted
+
+
+# ---------------------------------------------------------------------------
+# Employee exclusion — mastered questions only
+# ---------------------------------------------------------------------------
+
+def _submission_indicates_mastered(
+    qtype: str,
+    user_answer: str,
+    correct_answer: str,
+    score_text: str,
+) -> bool:
+    """True when the participant answered correctly (MCQ match or score ≥ 70)."""
+    from services.assessment_service import _is_answer_correct
+
+    try:
+        score = float(score_text or 0)
+    except (TypeError, ValueError):
+        score = 0.0
+    return _is_answer_correct(
+        (qtype or "").strip().lower(),
+        user_answer or "",
+        correct_answer or "",
+        score,
+    )
+
+
+def get_employee_mastered_bank_ids(employee_id: str) -> set[int]:
+    """
+    Return bank question IDs this employee has mastered (answered correctly).
+
+    Reads the persistent ``employee_question_mastery`` table (not recomputed from
+    submissions). Rows are added by ``record_employee_question_mastery`` on submit.
+    """
+    from services.attempt_service import normalize_employee_id
+
+    eid = normalize_employee_id(employee_id)
+    if not eid:
         return set()
 
     with _session() as session:
-        # Find all submissions for this employee
-        subs = session.scalars(
-            select(Submission).where(
-                Submission.question_id != "notebook"
+        rows = session.scalars(
+            select(EmployeeQuestionMastery.bank_question_id).where(
+                EmployeeQuestionMastery.employee_id == eid
             )
         ).all()
-
-        # Filter by employee id prefix match
-        relevant_assessment_qids: list[tuple[str, str]] = []
-        for s in subs:
-            uid = s.user_id or ""
-            part = uid.split("|", 1)[0].strip().casefold()
-            if part == eid_norm:
-                relevant_assessment_qids.append((s.assessment_id, s.question_id))
-
-        if not relevant_assessment_qids:
-            return set()
-
-        # Resolve to bank_question_ids
-        seen: set[int] = set()
-        for aid, qid in relevant_assessment_qids:
-            aq = session.scalar(
-                select(AssessmentQuestion).where(
-                    AssessmentQuestion.assessment_id == aid,
-                    AssessmentQuestion.question_id == qid,
-                )
-            )
-            if aq and aq.bank_question_id is not None:
-                seen.add(aq.bank_question_id)
-
-        return seen
+        return set(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -243,12 +360,12 @@ def find_bank_questions(
     Find up to n_needed reusable questions from the bank.
 
     Returns (found_list, shortage_count) where shortage_count = max(0, n_needed - len(found)).
-    Questions already answered by exclude_employee_id are excluded.
+    Questions **mastered** by exclude_employee_id are excluded; wrong answers may repeat.
     """
     if n_needed <= 0 or not topic_names:
         return [], max(0, n_needed)
 
-    diff = difficulty.strip().lower()
+    diff = normalize_bank_level(difficulty)
     names = [n.strip() for n in topic_names if n and n.strip()]
     if not names:
         return [], n_needed
@@ -256,7 +373,7 @@ def find_bank_questions(
     # Build exclusion set
     all_excluded: set[int] = set(exclude_bank_ids or set())
     if exclude_employee_id:
-        all_excluded |= get_employee_seen_bank_ids(exclude_employee_id)
+        all_excluded |= get_employee_mastered_bank_ids(exclude_employee_id)
 
     with _session() as session:
         query = (
@@ -316,7 +433,9 @@ def get_bank_stats(
         if topic_name:
             query = query.where(QuestionBank.topic_name == topic_name.strip())
         if difficulty:
-            query = query.where(QuestionBank.difficulty == difficulty.strip().lower())
+            query = query.where(
+                QuestionBank.difficulty == normalize_bank_level(difficulty)
+            )
         if language_code:
             query = query.where(QuestionBank.language_code == language_code.strip())
         if question_type:
@@ -360,7 +479,7 @@ def get_bank_availability(
 
     Returns availability info including per-topic breakdown and shortfall.
     """
-    diff = difficulty.strip().lower()
+    diff = normalize_bank_level(difficulty)
     names = [n.strip() for n in topic_names if n and n.strip()]
 
     if not names:
@@ -371,10 +490,9 @@ def get_bank_availability(
             "per_topic": [],
         }
 
-    # Exclusions
     excluded: set[int] = set()
     if exclude_employee_id:
-        excluded = get_employee_seen_bank_ids(exclude_employee_id)
+        excluded = get_employee_mastered_bank_ids(exclude_employee_id)
 
     with _session() as session:
         per_topic: list[dict[str, Any]] = []

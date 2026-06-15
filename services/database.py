@@ -77,6 +77,9 @@ def init_db() -> None:
     _ensure_required_indexes(eng)
     _ensure_question_bank_table(eng)           # must run before FK column below
     _ensure_assessment_question_bank_columns(eng)
+    _backfill_question_bank_difficulty_labels(eng)
+    _ensure_employee_question_mastery_table(eng)
+    _backfill_employee_question_mastery_if_empty(eng)
 
 
 def _ensure_raw_notebook_column(eng) -> None:
@@ -358,6 +361,67 @@ def _ensure_assessment_question_bank_columns(eng) -> None:
                 """
             )
         )
+
+
+def _backfill_question_bank_difficulty_labels(eng) -> None:
+    """Map legacy easy/medium/hard labels to beginner/intermediate/advanced."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                UPDATE question_bank SET difficulty = 'beginner'
+                    WHERE difficulty = 'easy';
+                UPDATE question_bank SET difficulty = 'intermediate'
+                    WHERE difficulty = 'medium';
+                UPDATE question_bank SET difficulty = 'advanced'
+                    WHERE difficulty = 'hard';
+
+                UPDATE assessment_questions SET difficulty = 'beginner'
+                    WHERE difficulty = 'easy';
+                UPDATE assessment_questions SET difficulty = 'intermediate'
+                    WHERE difficulty = 'medium';
+                UPDATE assessment_questions SET difficulty = 'advanced'
+                    WHERE difficulty = 'hard';
+                """
+            )
+        )
+
+
+def _ensure_employee_question_mastery_table(eng) -> None:
+    """Per-employee mastered bank questions (employee_id + bank_question_id)."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS employee_question_mastery (
+                    id               SERIAL PRIMARY KEY,
+                    employee_id      VARCHAR(64) NOT NULL,
+                    bank_question_id INTEGER NOT NULL
+                        REFERENCES question_bank(id) ON DELETE CASCADE,
+                    mastered_at      VARCHAR(64) NOT NULL,
+                    CONSTRAINT uq_employee_bank_mastery
+                        UNIQUE (employee_id, bank_question_id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_eqm_employee_id
+                    ON employee_question_mastery (employee_id);
+                CREATE INDEX IF NOT EXISTS ix_eqm_bank_question_id
+                    ON employee_question_mastery (bank_question_id);
+                """
+            )
+        )
+
+
+def _backfill_employee_question_mastery_if_empty(eng) -> None:
+    """One-time populate mastery from historical correct submissions."""
+    with eng.connect() as conn:
+        count = conn.execute(
+            text("SELECT COUNT(*) FROM employee_question_mastery")
+        ).scalar()
+    if count and int(count) > 0:
+        return
+    from services import question_bank_service
+
+    question_bank_service.backfill_employee_mastery_from_submissions()
 
 
 def _ensure_required_indexes(eng) -> None:

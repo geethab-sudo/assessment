@@ -42,7 +42,7 @@ A participant who got the same coding question wrong three times **may receive i
 
 **“No more questions”** for a topic + difficulty means: the employee has answered **correctly** every bank question available for that topic and difficulty (nothing left to assign). The UI should say so clearly instead of creating an empty or LLM-filled assessment.
 
-**Implementation note:** replace today’s `get_employee_seen_bank_ids` (all submissions) with `get_employee_mastered_bank_ids` (correct submissions only). Stage 1.
+**Implementation:** mastered questions are stored per employee in ``employee_question_mastery`` (``employee_id`` + ``bank_question_id``). Updated on each correct submit; one-time backfill from historical submissions on first deploy.
 
 On **`/client`**, a **“Help me improve”** entry point will offer three guided paths:
 
@@ -89,7 +89,7 @@ The first milestone — **persist questions in the database** — is implemented
 | Browse bank + % stats           | `question_bank_service.get_bank_stats`                                                 | ✅ API only                        |
 | Availability check              | `question_bank_service.get_bank_availability`                                          | ✅ API only                        |
 | Find reusable questions         | `question_bank_service.find_bank_questions`                                            | ⚠️ **Implemented but not called** |
-| Employee mastered-question exclusion | `get_employee_seen_bank_ids` (all seen — **needs change**) | ⚠️ **Wrong semantics — refactor in Stage 1** |
+| Employee mastered-question exclusion | `employee_question_mastery` table + `get_employee_mastered_bank_ids` | ✅ Stage 1 |
 
 
 ### 3.3 API (admin)
@@ -121,9 +121,9 @@ The first milestone — **persist questions in the database** — is implemented
 - Dedicated tests for question bank service
 - Admin UI for bank stats
 
-### 3.6 Known issue to fix early (Stage 1)
+### 3.6 Difficulty labels (fixed in Stage 1)
 
-`_upsert_to_bank` passes LLM difficulty labels **`easy` / `medium` / `hard`** (`LEVEL_TO_DIFFICULTY`), but `find_bank_questions` and the availability API expect **`beginner` / `intermediate` / `advanced`**. Until normalized, bank queries will return zero matches for recycled generation. **Fix in Stage 1** before recycling goes live.
+Bank and `assessment_questions.difficulty` store admin **`level`** values: `beginner` | `intermediate` | `advanced`. Legacy `easy`/`medium`/`hard` rows are backfilled on startup via `_backfill_question_bank_difficulty_labels` in `database.py`.
 
 ---
 
