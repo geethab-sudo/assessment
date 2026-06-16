@@ -264,9 +264,9 @@ target_employee_id: str | null   # optional; exclude bank questions this employe
 
 ---
 
-### Stage 3 — Admin: question bank browser
+### Stage 3 — Admin: question bank browser ✅
 
-**Goal:** Admins inspect bank health — which questions are hard/tricky (high `percent_wrong`).
+**Goal:** Admins inspect bank health — which questions are hard/tricky (high `percent_wrong`) or strong (high `percent_correct`).
 
 **UI:** New page `AdminQuestionBankPage.jsx` (nav link from admin menu).
 
@@ -281,19 +281,25 @@ target_employee_id: str | null   # optional; exclude bank questions this employe
 | Question preview    | truncated `question_text` |
 
 
-**Filters:** language, topic, difficulty, type; sort by `percent_wrong` desc (find tricky questions).
+**Filters:** language, topic, difficulty, type.
+
+**Sort:** `percent_wrong` desc (default), `percent_correct` desc, `times_used` desc.
 
 **API:** Reuse `GET /admin/question-bank` (no new endpoint required).
 
-**Exit criteria:** Admin can filter Python beginner MCQ and sort by failure rate.
+**Same release — per-assessment Pyodide paste:** Admin checkbox **Allow copy-paste in Pyodide terminal** (default off) → `assessments.allow_pyodide_paste` → participant coding editors respect flag (MCQ copy block unchanged).
+
+**Exit criteria:** Admin can filter Python beginner MCQ and sort by failure rate or success rate.
 
 **Agent handoff:** “Frontend-only stage; wire existing admin question-bank API.”
 
 ---
 
-### Stage 4 — Employee performance profile (cross-assessment)
+### Stage 4 — Employee performance profile + stats report
 
-**Goal:** Backend service that powers all three “Help me improve” modes, with **different history windows per mode**.
+**Goal:** (A) Backend service that powers all three “Help me improve” modes with **different history windows per mode**; (B) a **shippable employee stats report** (screen + print/PDF) for one `employee_id`.
+
+#### 4A — Profile API (improvement foundation)
 
 **New service:** `services/employee_profile_service.py`
 
@@ -341,9 +347,121 @@ target_employee_id: str | null   # optional; exclude bank questions this employe
 - `GET /client/employee-profile?employee_id=&language_code=&scope=last_3|full_history` (client JWT), or
 - Each improvement endpoint calls the service with the correct scope internally (preferred — UI does not need to choose).
 
-**Exit criteria:** Weak-areas profile uses 3 assessments only; new-areas and difficulty profiles reflect entire history (e.g. topic explored in assessment #1 still counts as explored even if not in last 3).
+**Exit criteria (4A):** Weak-areas profile uses 3 assessments only; new-areas and difficulty profiles reflect entire history (e.g. topic explored in assessment #1 still counts as explored even if not in last 3).
 
 **Agent handoff:** “New employee_profile_service + one read endpoint; no UI yet.”
+
+#### 4B — Employee stats report (shippable to user)
+
+Rich, print-ready report for managers or employees: languages evaluated (Python, Java, …), topics covered per language, questions answered correctly, **time on platform**, progress history, proficiency level, and charts — suitable to **ship to a user** (in-app view, print, or PDF).
+
+**Report identity**
+
+| Field | Example |
+|-------|---------|
+| Title | **Skills Progress Report** |
+| Subject | `employee_id` + display name |
+| Period | “All time” or “Last 90 days” (toggle) |
+| Generated | timestamp + report version |
+
+**Page layout (print-ready)**
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ HERO: employee + overall score ring │ languages │ time stats │
+├──────────────────────────┬──────────────────────────────────┤
+│ Proficiency by language  │ Topic heatmap (language × topic) │
+├──────────────────────────┼──────────────────────────────────┤
+│ Score trend (line)       │ Question-type breakdown (donut)  │
+├──────────────────────────┴──────────────────────────────────┤
+│ Topic detail table │ Strengths / focus areas callouts       │
+├─────────────────────────────────────────────────────────────┤
+│ Recommended next steps → Help me improve CTAs               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Sections**
+
+| Section | Content |
+|---------|---------|
+| **A. Executive summary** | Proficiency index (0–100); assessments completed; questions answered; % correct overall; **time on platform** (sum `submitted_at − started_at`; avg per assessment); language badges with mini scores |
+| **B. Languages evaluated** | Per `language_code`: topics covered / catalog size, question count, % correct, proficiency (Beginner / Intermediate / Advanced) |
+| **C. Topics covered** | Per `(language, topic)`: attempted / mastered, % correct, last difficulty, trend vs previous attempt, sparkline (last 5 scores); optional heatmap topic × difficulty |
+| **D. Progress over time** | Line: score % over time; stacked area: cumulative correct vs wrong; radar: latest vs 3-assessment average |
+| **E. Question-type analytics** | Donut/bars: MCQ / coding / subjective — count, % correct |
+| **F. Mastery & repetition** | Mastered count; needs-practice (seen 2+ times, not mastered) |
+| **G. Strengths & focus** | Auto bullets: strengths (≥80%, ≥5 Qs); focus areas (`scope=last_3`); unexplored topics; one-line recommendation each |
+| **H. Footer / CTA** | Weak-areas practice link; optional QR; platform-only disclaimer |
+
+**Data model (`get_employee_report`)**
+
+```json
+{
+  "employee_id": "E1001",
+  "display_name": "Luis",
+  "report_generated_at": "2026-06-15T12:00:00Z",
+  "scope": "full_history",
+  "summary": {
+    "assessments_completed": 12,
+    "questions_answered": 186,
+    "overall_percent_correct": 71.2,
+    "proficiency_label": "Intermediate",
+    "total_time_seconds": 15420,
+    "avg_assessment_time_seconds": 1285
+  },
+  "languages": [
+    {
+      "language_code": "python",
+      "language_label": "Python",
+      "topics_covered": 8,
+      "topics_in_catalog": 12,
+      "questions_count": 142,
+      "percent_correct": 74.0,
+      "proficiency_label": "Intermediate",
+      "topics": []
+    }
+  ],
+  "score_timeline": [
+    { "assessment_id": "ASM-…", "submitted_at": "…", "percent": 68, "language_code": "python" }
+  ],
+  "question_type_breakdown": { "mcq": { "count": 90, "percent_correct": 78 } },
+  "mastery": { "mastered_count": 45, "needs_practice_count": 8 },
+  "insights": {
+    "strengths": ["OOP Basics"],
+    "focus_areas": ["Exception Handling"],
+    "unexplored_topics": ["Concurrency"]
+  }
+}
+```
+
+**Rendering & delivery**
+
+| Layer | Approach |
+|-------|----------|
+| Routes | `/admin/employee-report/:employee_id` (admin); `/client/my-report` (self-service) |
+| UI | `EmployeeReportPage.jsx` — ~900px max-width, print-friendly |
+| Charts | Recharts or Chart.js; score ring SVG; ≤4 chart types |
+| Export | `@media print` + Download PDF (`window.print()` or html2pdf.js / WeasyPrint server-side) |
+| Email (future) | `POST /admin/employee-report/send` with PDF blob |
+
+**Visual polish**
+
+- Traffic-light topic chips: green ≥75%, amber 50–74%, red <50%
+- Consistent color per language across charts
+- Empty state when no submissions
+
+**Implementation phases**
+
+| Phase | Deliverable |
+|-------|-------------|
+| **4a** | `get_employee_profile()` — API only |
+| **4b** | `get_employee_report()` — richer aggregation + timeline + time-on-platform |
+| **4c** | `EmployeeReportPage` — screen view with charts |
+| **4d** | Print/PDF stylesheet + Download PDF button |
+
+**Exit criteria (4B):** Admin or employee opens report for a user with history; sees hero, language cards, trend chart, topic table; exports a clean PDF.
+
+**Agent handoff:** “Depends on 4A aggregations; new report endpoint + page + print CSS.”
 
 ---
 
@@ -497,7 +615,8 @@ if len(rows) == 0: no assessment created — explain why
 | ----- | ------------------------------------------------------------------------- |
 | 1     | `tests/test_question_bank_service.py` — unit                              |
 | 2     | `tests/test_assessment_recycle.py` — hybrid generation, shortage metadata |
-| 4     | `tests/test_employee_profile_service.py` — rollup, unexplored topics      |
+| 4A    | `tests/test_employee_profile_service.py` — rollup, unexplored topics      |
+| 4B    | `tests/test_employee_report_service.py` — timeline, time-on-platform      |
 | 5–7   | API integration tests + manual QA on `/client`                            |
 
 

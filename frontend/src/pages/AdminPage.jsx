@@ -110,6 +110,7 @@ export default function AdminPage() {
   const [perTopicCounts, setPerTopicCounts] = useState({}); // { [topicId]: { mcq, coding, subjective } }
 
   const [isTimed, setIsTimed] = useState(false);
+  const [allowPyodidePaste, setAllowPyodidePaste] = useState(false);
   const [durationMinutes, setDurationMinutes] = useState(45);
   const [notebookGraceMinutes, setNotebookGraceMinutes] = useState(5);
 
@@ -530,6 +531,7 @@ export default function AdminPage() {
               notebook_grace_minutes: notebookGraceMinutes,
             }
           : {}),
+        allow_pyodide_paste: allowPyodidePaste,
         question_source: questionSource,
         ...(targetEmployeeId.trim()
           ? { target_employee_id: targetEmployeeId.trim() }
@@ -611,6 +613,8 @@ export default function AdminPage() {
         </p>
         <p className="muted" style={{ marginTop: "0.65rem" }}>
           <Link to="/admin/assessments">Browse assessments</Link>
+          {" · "}
+          <Link to="/admin/question-bank">Question bank</Link>
           {" · "}
           <Link to="/admin/catalog">Catalog</Link>
           {" · "}
@@ -1286,6 +1290,30 @@ export default function AdminPage() {
               Grace minutes allow uploading the Jupyter notebook after the main timer ends.
             </p>
           )}
+        </div>
+
+        <div
+          className="pyodide-paste-config"
+          style={{
+            marginTop: "1rem",
+            padding: "0.85rem 1.1rem",
+            borderRadius: "10px",
+            border: "1px solid rgba(0,0,0,0.1)",
+            background: "rgba(0,0,0,0.02)",
+          }}
+        >
+          <label className="type-count-tog" style={{ display: "block" }}>
+            <input
+              type="checkbox"
+              checked={allowPyodidePaste}
+              onChange={(e) => setAllowPyodidePaste(e.target.checked)}
+            />{" "}
+            <strong>Allow copy-paste in Pyodide terminal</strong>
+          </label>
+          <p className="muted small-print" style={{ margin: "0.5rem 0 0 0", lineHeight: 1.5 }}>
+            Off by default. When enabled, participants can paste into the in-browser coding editor
+            (Pyodide / shell). MCQ copy blocking is unchanged.
+          </p>
         </div>
 
         <div style={{ marginTop: "1.1rem" }}>

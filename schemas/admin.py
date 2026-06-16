@@ -52,6 +52,10 @@ class GenerateAssessmentBody(BaseModel):
         ge=0,
         description="Extra minutes after main timer for notebook upload (timed assessments only).",
     )
+    allow_pyodide_paste: bool = Field(
+        False,
+        description="When `true`, participants may paste into in-browser coding editors.",
+    )
     question_source: Literal["generate_new", "recycle_then_generate"] = Field(
         default="generate_new",
         description="`recycle_then_generate` pulls from the bank first, then LLM for any shortfall.",
@@ -228,6 +232,7 @@ class GenerateAssessmentResponse(BaseModel):
     is_timed: bool = False
     duration_minutes: int | None = None
     notebook_grace_minutes: int | None = None
+    allow_pyodide_paste: bool = False
     bank_sourced_count: int = 0
     llm_generated_count: int = 0
     shortage_messages: list[str] = Field(default_factory=list)
@@ -424,6 +429,7 @@ class ConfirmAssessmentBody(BaseModel):
     is_timed: bool = False
     duration_minutes: int | None = Field(default=None, ge=1)
     notebook_grace_minutes: int | None = Field(default=None, ge=0)
+    allow_pyodide_paste: bool = False
 
     @field_validator("level")
     @classmethod

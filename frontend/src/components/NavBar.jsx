@@ -28,6 +28,7 @@ export default function NavBar() {
             <Link to="/admin">Generate</Link>
             <Link to="/admin/assessments">Assessments</Link>
             <Link to="/admin/catalog">Catalog</Link>
+            <Link to="/admin/question-bank">Question bank</Link>
             <Link to="/admin/submissions">Submissions</Link>
             <button
               type="button"

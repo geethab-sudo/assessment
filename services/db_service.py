@@ -271,6 +271,7 @@ def save_shared_assessment_rows(
     is_timed: bool = False,
     duration_minutes: int | None = None,
     notebook_grace_minutes: int | None = None,
+    allow_pyodide_paste: bool = False,
 ) -> None:
     """Shared assessment: owner_client_id is NULL (any client may access).
 
@@ -306,6 +307,7 @@ def save_shared_assessment_rows(
             existing.notebook_grace_minutes = (
                 notebook_grace_minutes if is_timed else None
             )
+            existing.allow_pyodide_paste = allow_pyodide_paste
         else:
             session.add(
                 Assessment(
@@ -321,6 +323,7 @@ def save_shared_assessment_rows(
                     notebook_grace_minutes=(
                         notebook_grace_minutes if is_timed else None
                     ),
+                    allow_pyodide_paste=allow_pyodide_paste,
                 )
             )
         for row in rows:
@@ -423,6 +426,7 @@ def get_assessment_metadata(assessment_id: str) -> dict[str, Any]:
                 "is_timed": False,
                 "duration_minutes": None,
                 "notebook_grace_minutes": None,
+                "allow_pyodide_paste": False,
             }
         topic_names = _coerce_stored_topic_names(row.topic_names)
         jupyter_topic_names: list[str] = []
@@ -443,6 +447,7 @@ def get_assessment_metadata(assessment_id: str) -> dict[str, Any]:
             "is_timed": bool(row.is_timed),
             "duration_minutes": row.duration_minutes,
             "notebook_grace_minutes": row.notebook_grace_minutes,
+            "allow_pyodide_paste": bool(row.allow_pyodide_paste),
         }
 
 

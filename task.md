@@ -116,7 +116,7 @@
 
 ---
 
-## Stage 3 — Admin question bank browser
+## Stage 3 — Admin question bank browser ✅
 
 > **Goal:** Admin UI to browse/filter/sort bank stats.  
 > **Depends on:** Stage 1 (readable difficulty)  
@@ -124,28 +124,35 @@
 
 ### Frontend
 
-- [ ] `frontend/src/pages/AdminQuestionBankPage.jsx`
-- [ ] Route + nav link in `App.jsx` / `NavBar.jsx`
-- [ ] Filters: `language_code`, `topic_name`, `difficulty`, `question_type`
-- [ ] Table columns: topic, difficulty, type, times_used, % correct, % wrong, question preview (truncate)
-- [ ] Sort by `percent_wrong` desc (default) and `times_used` desc
-- [ ] `api.js` — wrapper for `GET /admin/question-bank`
+- [x] `frontend/src/pages/AdminQuestionBankPage.jsx`
+- [x] Route + nav link in `App.jsx` / `NavBar.jsx`
+- [x] Filters: `language_code`, `topic_name`, `difficulty`, `question_type`
+- [x] Table columns: topic, difficulty, type, times_used, % correct, % wrong, question preview (truncate)
+- [x] Sort by `percent_wrong` desc (default), `percent_correct` desc, and `times_used` desc
+- [x] `questionBankApi.js` — wrapper for `GET /admin/question-bank`
+
+### Admin extras (same release)
+
+- [x] Per-assessment **Allow copy-paste in Pyodide terminal** checkbox on `AdminPage.jsx` (default off)
+- [x] `allow_pyodide_paste` on `assessments` table + API + `ClientPage.jsx` coding editors
 
 ### Docs
 
-- [ ] README — one line under Admin portal listing question bank page
+- [x] README — one line under Admin portal listing question bank page
 
 **Acceptance:** Admin opens bank page, filters Python beginner MCQ, sees stats from seeded assessments.
 
 ---
 
-## Stage 4 — Employee performance profile
+## Stage 4 — Employee performance profile + stats report
 
-> **Goal:** API with **mode-specific history windows** — last 3 for weak areas; full history for new areas and difficulty.  
+> **Goal:** Backend profile API for “Help me improve” modes **and** a shippable employee stats report (screen + print/PDF).  
 > **Depends on:** Stage 0 (submissions + reports)  
 > **Blocks:** Stages 5–7
 
-### Backend
+### 4A — Profile API (improvement foundation)
+
+#### Backend
 
 - [ ] `services/employee_profile_service.py`
   - [ ] `get_employee_profile(employee_id, language_code=None, scope="last_3" | "full_history")`
@@ -155,14 +162,78 @@
 - [ ] `GET /client/employee-profile` in `app.py` (client JWT) with `scope` query param, or scope fixed per improvement route
 - [ ] Pydantic response schema in `schemas/assessment.py` or new `schemas/improvement.py`
 
-### Tests
+#### Tests
 
 - [ ] `tests/test_employee_profile_service.py`
   - [ ] Employee with 5 assessments: weak-areas scope analyzes only last 3
   - [ ] Full-history scope: topic from assessment #1 still in `explored_topic_names` even if not in last 3
   - [ ] `unexplored_topic_names` excludes all historically explored topics
 
-**Acceptance:** Weak areas ignores assessments older than the last 3; new areas and difficulty use complete history.
+**Acceptance (4A):** Weak areas ignores assessments older than the last 3; new areas and difficulty use complete history.
+
+### 4B — Employee stats report (shippable to user)
+
+> Rich, print-ready report for one `employee_id` — languages evaluated, topics covered, progress charts, proficiency, time on platform. Can be shown in-app or exported for email/PDF.
+
+#### Report identity
+
+- [ ] Title: **Skills Progress Report**
+- [ ] Fields: `employee_id`, display name, period toggle (“All time” / “Last 90 days”), `report_generated_at`, report version
+
+#### Page layout (print-ready)
+
+```text
+Hero strip → Proficiency by language + topic heatmap → Score trend + question-type donut
+→ Topic detail table + strengths/focus callouts → Recommended next steps (Help me improve CTAs)
+```
+
+#### Sections
+
+- [ ] **A. Executive summary (hero)** — overall proficiency index (0–100); assessments completed; questions answered; % correct overall; **time on platform** (sum of `submitted_at − started_at` per attempt + avg per assessment); language badges with mini scores
+- [ ] **B. Languages evaluated** — one card per `language_code`: topics covered vs catalog, question count, % correct, proficiency label (Beginner / Intermediate / Advanced using same thresholds as difficulty step-up: e.g. ≥75% at beginner → intermediate)
+- [ ] **C. Topics covered (per language)** — table per `(language, topic_name)`: attempted / mastered (`employee_question_mastery`), % correct (MCQ exact; coding ≥70), last difficulty, trend arrow vs previous assessment, optional sparkline of last 5 scores; optional heatmap (topic × difficulty → % correct)
+- [ ] **D. Progress over time (plots)** — line chart: assessment score % over time; stacked area: cumulative correct vs wrong; radar: latest assessment vs 3-assessment rolling average (weak-area view)
+- [ ] **E. Question-type analytics** — donut or grouped bars: MCQ vs coding vs subjective (count, % correct; avg time per type when per-question duration is available)
+- [ ] **F. Mastery & repetition** — mastered count (`employee_question_mastery`); needs-practice count (seen 2+ times, still below mastery)
+- [ ] **G. Strengths & focus areas (narrative)** — auto bullets: top 3 strengths (avg ≥80%, ≥5 questions); focus areas from last 3 (`scope=last_3`); unexplored catalog topics; one-sentence recommendation per focus area
+- [ ] **H. Footer / CTA** — link to weak-areas practice (`POST /client/improvement/weak-areas`); optional QR; disclaimer that scores reflect platform assessments only
+
+#### Data model (`get_employee_report`)
+
+- [ ] `employee_id`, `display_name`, `report_generated_at`, `scope`
+- [ ] `summary`: `assessments_completed`, `questions_answered`, `overall_percent_correct`, `proficiency_label`, `total_time_seconds`, `avg_assessment_time_seconds`
+- [ ] `languages[]`: per-language `topics_covered`, `topics_in_catalog`, `questions_count`, `percent_correct`, `proficiency_label`, `topics[]` (topic performance rows)
+- [ ] `score_timeline[]`: `{ assessment_id, submitted_at, percent, language_code }`
+- [ ] `question_type_breakdown`: per-type `{ count, percent_correct }`
+- [ ] `mastery`: `{ mastered_count, needs_practice_count }`
+- [ ] `insights`: `{ strengths[], focus_areas[], unexplored_topics[] }`
+
+#### Backend
+
+- [ ] `get_employee_report(employee_id, language_code=None, period="all_time" | "last_90_days")` in `employee_profile_service.py` (extends 4A aggregations)
+- [ ] `GET /admin/employee-report?employee_id=` (admin JWT)
+- [ ] `GET /client/my-report` (client JWT; `employee_id` must match session)
+- [ ] Pydantic `EmployeeReportResponse` in `schemas/improvement.py` or `schemas/assessment.py`
+
+#### Frontend
+
+- [ ] `EmployeeReportPage.jsx` — max-width ~900px, same design language as admin reports
+- [ ] Charts: Recharts or Chart.js — score ring (SVG), line, donut, radar (max 3–4 chart types)
+- [ ] Traffic-light topic chips: green ≥75%, amber 50–74%, red &lt;50%
+- [ ] Consistent color per language across charts
+- [ ] Empty state: “No submissions yet — complete your first assessment to see progress”
+- [ ] `@media print` stylesheet + **Download PDF** (`window.print()` or html2pdf.js / server WeasyPrint)
+- [ ] Routes: `/admin/employee-report/:employee_id`, `/client/my-report`
+
+#### Future (optional)
+
+- [ ] `POST /admin/employee-report/send` — email PDF attachment
+
+#### Tests
+
+- [ ] `tests/test_employee_report_service.py` — timeline ordering, time-on-platform sum, language rollup, empty employee
+
+**Acceptance (4B):** Admin or employee opens report for a user with ≥2 submissions; sees hero, language cards, trend chart, topic table, and can print/export a clean PDF.
 
 ---
 
@@ -280,7 +351,8 @@
 | Refactor seen → mastered exclusion | **1** |
 | Let admin recycle questions (bank + LLM + review) | **2** |
 | Show bank analytics in admin | **3** |
-| Build improvement API foundation | **4** |
+| Build improvement API foundation | **4A** |
+| Build shippable employee stats report | **4B** |
 | Add Help me improve button | **5** then **6**–**7** |
 
 Copy the stage block + **Acceptance** line into the agent prompt as scope boundary.

@@ -512,6 +512,7 @@ def confirm_assessment(
     is_timed: bool = False,
     duration_minutes: int | None = None,
     notebook_grace_minutes: int | None = None,
+    allow_pyodide_paste: bool = False,
 ) -> dict[str, Any]:
     """Persist an admin-reviewed (and possibly edited) question list to the DB.
 
@@ -588,6 +589,7 @@ def confirm_assessment(
         is_timed=is_timed,
         duration_minutes=dur,
         notebook_grace_minutes=grace,
+        allow_pyodide_paste=allow_pyodide_paste,
     )
 
     _upsert_to_bank(assessment_id, rows, level.strip().lower(), language_code)
@@ -612,6 +614,7 @@ def confirm_assessment(
         "is_timed": is_timed,
         "duration_minutes": dur,
         "notebook_grace_minutes": grace,
+        "allow_pyodide_paste": allow_pyodide_paste,
         **_generation_stats_fields(gen_stats),
     }
 
@@ -631,6 +634,7 @@ def create_assessment(
     notebook_grace_minutes: int | None = None,
     question_source: str = "generate_new",
     target_employee_id: str | None = None,
+    allow_pyodide_paste: bool = False,
 ) -> dict[str, Any]:
     """Generate questions via LLM and persist (shared assessment in PostgreSQL)."""
     difficulty = LEVEL_TO_DIFFICULTY.get(level.strip().lower())
@@ -690,6 +694,7 @@ def create_assessment(
         is_timed=is_timed,
         duration_minutes=dur,
         notebook_grace_minutes=grace,
+        allow_pyodide_paste=allow_pyodide_paste,
     )
 
     _upsert_to_bank(assessment_id, rows, level.strip().lower(), language_code)
@@ -712,6 +717,7 @@ def create_assessment(
         "is_timed": is_timed,
         "duration_minutes": dur,
         "notebook_grace_minutes": grace,
+        "allow_pyodide_paste": allow_pyodide_paste,
         **_generation_stats_fields(gen_stats),
     }
 
@@ -809,6 +815,7 @@ def get_assessment_for_user(
         "is_timed": meta.get("is_timed", False),
         "duration_minutes": meta.get("duration_minutes"),
         "notebook_grace_minutes": meta.get("notebook_grace_minutes"),
+        "allow_pyodide_paste": meta.get("allow_pyodide_paste", False),
         "already_submitted": False,
         "timer": None,
         **notebook_fields,

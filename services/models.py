@@ -183,6 +183,12 @@ class Assessment(Base):
     )
     duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     notebook_grace_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: When true, participants may paste into in-browser coding editors (Pyodide / shell).
+    allow_pyodide_paste: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )
 
     questions: Mapped[list["AssessmentQuestion"]] = relationship(
         "AssessmentQuestion",

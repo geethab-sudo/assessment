@@ -71,6 +71,7 @@ def init_db() -> None:
     _ensure_raw_notebook_column(eng)
     _ensure_question_topic_name_column(eng)
     _ensure_assessment_timed_columns(eng)
+    _ensure_allow_pyodide_paste_column(eng)
     _ensure_assessment_attempts_table(eng)
     _ensure_topic_coding_editor_language_column(eng)
     _ensure_question_code_snippet_column(eng)
@@ -247,6 +248,28 @@ def _ensure_assessment_timed_columns(eng) -> None:
                         WHERE table_name = 'assessments' AND column_name = 'notebook_grace_minutes'
                     ) THEN
                         ALTER TABLE assessments ADD COLUMN notebook_grace_minutes INTEGER NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
+
+
+def _ensure_allow_pyodide_paste_column(eng) -> None:
+    """Per-assessment opt-in for paste in in-browser coding editors."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessments'
+                          AND column_name = 'allow_pyodide_paste'
+                    ) THEN
+                        ALTER TABLE assessments
+                        ADD COLUMN allow_pyodide_paste BOOLEAN NOT NULL DEFAULT false;
                     END IF;
                 END $$;
                 """

@@ -456,6 +456,7 @@ def generate_assessment(
             notebook_grace_minutes=body.notebook_grace_minutes,
             question_source=body.question_source,
             target_employee_id=body.target_employee_id,
+            allow_pyodide_paste=body.allow_pyodide_paste,
         )
         response = GenerateAssessmentResponse.model_validate(result)
     except RuntimeError as e:
@@ -534,6 +535,7 @@ def confirm_assessment(request: Request, body: ConfirmAssessmentBody) -> Generat
             is_timed=body.is_timed,
             duration_minutes=body.duration_minutes,
             notebook_grace_minutes=body.notebook_grace_minutes,
+            allow_pyodide_paste=body.allow_pyodide_paste,
         )
         response = GenerateAssessmentResponse.model_validate(result)
     except RuntimeError as e:

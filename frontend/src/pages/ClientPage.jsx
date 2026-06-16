@@ -377,6 +377,8 @@ export default function ClientPage() {
   const formLocked =
     !!result || autoSubmitting || (timerState.isTimed && !timerState.inMainWindow);
 
+  const blockCodingPaste = formLocked || !assessment?.allow_pyodide_paste;
+
   const notebookUploadEnabled =
     !notebookResult &&
     (!timerState.isTimed ||
@@ -701,7 +703,7 @@ export default function ClientPage() {
                               value={answers[qk] ?? ""}
                               onChange={(v) => setAnswer(q.question_id, v)}
                               readOnly={formLocked}
-                              blockPaste={!formLocked}
+                              blockPaste={blockCodingPaste}
                               minHeight={320}
                               language={codingMonaco}
                             />
@@ -717,7 +719,7 @@ export default function ClientPage() {
                                   value={answers[qk] ?? ""}
                                   onChange={(v) => setAnswer(q.question_id, v)}
                                   readOnly={formLocked}
-                                  blockPaste={!formLocked}
+                                  blockPaste={blockCodingPaste}
                                   minHeight={320}
                                   language={codingMonaco}
                                 />

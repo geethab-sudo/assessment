@@ -1943,6 +1943,16 @@ code {
   gap: 0.25rem;
 }
 
+.submissions-toolbar-field--grow {
+  flex: 1 1 16rem;
+  min-width: 12rem;
+}
+
+.submissions-toolbar-field--grow .submissions-toolbar-input {
+  width: 100%;
+  min-width: 0;
+}
+
 .submissions-toolbar-label {
   font-size: 0.72rem;
   font-weight: 700;
@@ -3037,5 +3047,44 @@ button.primary {
 .unanswered-submit-alert__yes:hover:not(:disabled) {
   background: #b91c1c;
   border-color: #991b1b;
+}
+
+/* Admin question bank browser */
+.question-bank-table .question-bank-topic {
+  max-width: 14rem;
+}
+
+.question-bank-table .question-bank-preview {
+  max-width: 28rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.question-bank-row--tricky {
+  background: #fef2f2;
+}
+
+.question-bank-row--tricky:hover {
+  background: #fee2e2;
+}
+
+.question-bank-pct-wrong {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.pill--mcq {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.pill--coding {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.pill--subjective {
+  background: #fef9c3;
+  color: #854d0e;
 }
 

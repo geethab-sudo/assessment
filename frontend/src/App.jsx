@@ -6,6 +6,7 @@ import AdminAssessmentsPage from "./pages/AdminAssessmentsPage.jsx";
 import AdminReviewPage from "./pages/AdminReviewPage.jsx";
 import AdminSubmissionsPage from "./pages/AdminSubmissionsPage.jsx";
 import AdminCatalogPage from "./pages/AdminCatalogPage.jsx";
+import AdminQuestionBankPage from "./pages/AdminQuestionBankPage.jsx";
 import ClientPage from "./pages/ClientPage.jsx";
 import LoginAdminPage from "./pages/LoginAdminPage.jsx";
 import LoginClientPage from "./pages/LoginClientPage.jsx";
@@ -89,6 +90,14 @@ function Layout() {
           element={
             <ProtectedAdmin>
               <AdminCatalogPage />
+            </ProtectedAdmin>
+          }
+        />
+        <Route
+          path="/admin/question-bank"
+          element={
+            <ProtectedAdmin>
+              <AdminQuestionBankPage />
             </ProtectedAdmin>
           }
         />

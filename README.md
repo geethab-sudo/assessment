@@ -6,7 +6,7 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 
 ## Features
 
-- **Admin portal**: Sign in with a configured password; generate assessments (MCQ, coding, subjective); **review and edit generated questions before saving**; manage catalog languages/topics; browse all assessments with filter by Assessment ID and language, sort by date; delete assessments; review participant submissions with date display, sort by date, and filter by employee ID or assessment ID.
+- **Admin portal**: Sign in with a configured password; generate assessments (MCQ, coding, subjective); **review and edit generated questions before saving**; browse the **question bank** (stats, filters, sort by failure rate); manage catalog languages/topics; browse all assessments with filter by Assessment ID and language, sort by date; delete assessments; review participant submissions with date display, sort by date, and filter by employee ID or assessment ID.
 - **Participant portal**: Open a test with employee ID, name, and assessment ID — no account required for shared assessments.
 - **Tier 1 evaluation presets**: One-click **Beginner** / **Intermediate** / **Advanced** Python Tier 1 combos (25 questions: 15 MCQ + 10 coding) with editable per-topic counts and suggested timed duration (60 / 90 / 120 min).
 - **Question Bank**: Every generated and confirmed assessment question is automatically stored in a global bank, recording analytical stats (`times_used`, `times_correct`, `times_wrong`).
@@ -445,6 +445,7 @@ assessment/
 | `/admin/review` | Review and edit generated questions before saving |
 | `/admin/assessments` | List / delete assessments (filter by ID, language; sort by date) |
 | `/admin/catalog` | Languages and topics (with modality) |
+| `/admin/question-bank` | Browse question bank — filter, sort by % wrong, % correct, or times used |
 | `/admin/submissions` | Submission review — formatted dates, sort by date, filter by employee / assessment ID |
 | `/client` | Take assessment (Pyodide, Jupyter, mixed, timed) |
 
