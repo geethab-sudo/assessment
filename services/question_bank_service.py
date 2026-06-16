@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from services.database import get_session_factory
 from services.models import (
+    Assessment,
     AssessmentQuestion,
     EmployeeQuestionMastery,
     QuestionBank,
@@ -44,6 +45,29 @@ def normalize_bank_level(value: str) -> str:
         f"Invalid bank level/difficulty: {value!r}. "
         "Expected beginner, intermediate, advanced (or easy, medium, hard)."
     )
+
+
+def infer_bank_level_from_topic(
+    topic_name: str,
+    *,
+    explicit_difficulty: str | None = None,
+) -> str:
+    """
+    Infer bank level for legacy rows missing ``assessment_questions.difficulty``.
+
+    Tier 1 catalog topics → beginner; Tier 2 → intermediate; Tier 3 → advanced.
+    """
+    if explicit_difficulty:
+        try:
+            return normalize_bank_level(explicit_difficulty)
+        except ValueError:
+            pass
+    topic = (topic_name or "").strip()
+    if topic.startswith("Tier 2"):
+        return "intermediate"
+    if topic.startswith("Tier 3"):
+        return "advanced"
+    return "beginner"
 
 
 def _session() -> Session:
@@ -125,6 +149,106 @@ def add_questions_to_bank(
         session.commit()
 
     return hash_to_id
+
+
+def _topic_name_for_bank_row(
+    aq: AssessmentQuestion,
+    assessment: Assessment | None,
+) -> str:
+    """Resolve catalog topic name for a legacy assessment question row."""
+    topic = (aq.topic_name or "").strip()
+    if topic:
+        return topic
+    if not assessment:
+        return ""
+    names = assessment.topic_names or []
+    if not isinstance(names, list):
+        return ""
+    for raw in names:
+        candidate = str(raw or "").strip()
+        if candidate:
+            return candidate
+    return ""
+
+
+def backfill_question_bank_from_assessment_questions() -> int:
+    """
+    Import legacy ``assessment_questions`` into ``question_bank`` and link rows.
+
+    Idempotent: uses the same content-hash dedup as ``add_questions_to_bank``.
+    Returns the number of assessment question rows newly linked to the bank.
+    """
+    linked = 0
+
+    with _session() as session:
+        aq_rows = session.scalars(
+            select(AssessmentQuestion)
+            .where(AssessmentQuestion.bank_question_id.is_(None))
+            .order_by(AssessmentQuestion.id.asc())
+        ).all()
+
+        assessment_cache: dict[str, Assessment | None] = {}
+
+        def _assessment_for(aq: AssessmentQuestion) -> Assessment | None:
+            aid = aq.assessment_id
+            if aid not in assessment_cache:
+                assessment_cache[aid] = session.get(Assessment, aid)
+            return assessment_cache[aid]
+
+        for aq in aq_rows:
+            qtype = (aq.type or "").strip().lower()
+            qtext = (aq.question or "").strip()
+            if not qtype or not qtext:
+                continue
+
+            assessment = _assessment_for(aq)
+            topic = _topic_name_for_bank_row(aq, assessment)
+            if not topic:
+                continue
+
+            level = infer_bank_level_from_topic(
+                topic,
+                explicit_difficulty=aq.difficulty,
+            )
+            lang = None
+            if assessment and assessment.language_code:
+                lang = (assessment.language_code or "").strip()[:32] or None
+
+            ch = _content_hash(qtype, topic, qtext)
+            existing = session.scalar(
+                select(QuestionBank).where(QuestionBank.content_hash == ch)
+            )
+            if existing:
+                existing.times_used = (existing.times_used or 0) + 1
+                bank_id = existing.id
+            else:
+                bank_row = QuestionBank(
+                    content_hash=ch,
+                    question_text=qtext,
+                    type=qtype,
+                    options=aq.options or "",
+                    correct_answer=aq.correct_answer or "",
+                    code_snippet=aq.code_snippet or None,
+                    topic_name=topic,
+                    language_code=lang,
+                    difficulty=level,
+                    created_at=_utc_now_iso(),
+                    times_used=1,
+                    times_correct=0,
+                    times_wrong=0,
+                )
+                session.add(bank_row)
+                session.flush()
+                bank_id = bank_row.id
+
+            aq.bank_question_id = bank_id
+            if not aq.difficulty:
+                aq.difficulty = level
+            linked += 1
+
+        session.commit()
+
+    return linked
 
 
 # ---------------------------------------------------------------------------

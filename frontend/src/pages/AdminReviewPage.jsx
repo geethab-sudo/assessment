@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { apiFetch } from "../api";
+import {
+  buildConfirmBody,
+  isBankQuestion,
+  partitionReviewQuestions,
+} from "../lib/assessmentConfirm.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,37 +56,57 @@ function handleTabKey(e) {
   const end = el.selectionEnd;
   const indent = "    "; // 4 spaces
   el.value = el.value.slice(0, start) + indent + el.value.slice(end);
-  // Move caret after the inserted spaces; use nativeInputValueSetter if available
   el.selectionStart = el.selectionEnd = start + indent.length;
-  // Fire React's onChange so state stays in sync
   el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-function QuestionCard({ question, index, total, onChange }) {
+function QuestionCard({
+  question,
+  index,
+  total,
+  onChange,
+  readOnly = false,
+  fromBank = false,
+  showSourceBadge = false,
+}) {
   const isMcq = question.type === "mcq";
   const isCoding = question.type === "coding";
+  const locked = readOnly || fromBank;
 
   function updateField(field, value) {
+    if (locked) return;
     onChange({ ...question, [field]: value });
   }
 
   function updateOption(optIndex, value) {
+    if (locked) return;
     const next = [...(question.options ?? [])];
     next[optIndex] = value;
     onChange({ ...question, options: next });
   }
 
   function markCorrect(optIndex) {
+    if (locked) return;
     const correctText = (question.options ?? [])[optIndex] ?? "";
     onChange({ ...question, correct_answer: correctText });
   }
 
   return (
-    <article className="review-card">
+    <article className={`review-card${locked ? " review-card--readonly" : ""}`}>
       <header className="review-card-header">
         <span className={`review-card-type review-card-type--${question.type}`}>
           {typeLabel(question.type)}
         </span>
+        {showSourceBadge &&
+          (fromBank ? (
+            <span className="review-card-source-badge review-card-source-badge--bank">
+              Bank
+            </span>
+          ) : (
+            <span className="review-card-source-badge review-card-source-badge--new">
+              New
+            </span>
+          ))}
         {question.topic_name && (
           <span className="review-card-topic">{question.topic_name}</span>
         )}
@@ -91,7 +116,6 @@ function QuestionCard({ question, index, total, onChange }) {
       </header>
 
       <div className="review-card-body">
-        {/* Question prose */}
         <label className="review-field">
           <span className="review-field-label">Question</span>
           <textarea
@@ -99,10 +123,11 @@ function QuestionCard({ question, index, total, onChange }) {
             value={question.question}
             onChange={(e) => updateField("question", e.target.value)}
             rows={3}
+            readOnly={locked}
+            disabled={locked}
           />
         </label>
 
-        {/* Code snippet — only for MCQ and subjective; coding questions never have one */}
         {!isCoding && (
           <label className="review-field">
             <span className="review-field-label">
@@ -115,14 +140,15 @@ function QuestionCard({ question, index, total, onChange }) {
               className="review-field-textarea review-field-textarea--code"
               value={question.code_snippet ?? ""}
               onChange={(e) => updateField("code_snippet", e.target.value)}
-              onKeyDown={handleTabKey}
+              onKeyDown={locked ? undefined : handleTabKey}
               rows={5}
               spellCheck={false}
+              readOnly={locked}
+              disabled={locked}
             />
           </label>
         )}
 
-        {/* MCQ options + correct answer picker */}
         {isMcq && (
           <div className="review-options">
             <span className="review-field-label">
@@ -134,8 +160,8 @@ function QuestionCard({ question, index, total, onChange }) {
                 index={i}
                 option={opt}
                 isCorrect={opt !== "" && opt === question.correct_answer}
+                disabled={locked}
                 onTextChange={(val) => {
-                  // If this option was the correct one, update correct_answer too
                   const wasCorrect = opt === question.correct_answer;
                   updateOption(i, val);
                   if (wasCorrect) updateField("correct_answer", val);
@@ -143,7 +169,6 @@ function QuestionCard({ question, index, total, onChange }) {
                 onMarkCorrect={() => markCorrect(i)}
               />
             ))}
-            {/* Fallback: show correct_answer as plain text if no options array */}
             {(question.options ?? []).length === 0 && (
               <label className="review-field">
                 <span className="review-field-label">Correct answer</span>
@@ -152,13 +177,14 @@ function QuestionCard({ question, index, total, onChange }) {
                   className="review-field-input"
                   value={question.correct_answer ?? ""}
                   onChange={(e) => updateField("correct_answer", e.target.value)}
+                  readOnly={locked}
+                  disabled={locked}
                 />
               </label>
             )}
           </div>
         )}
 
-        {/* Coding / subjective reference answer */}
         {!isMcq && (
           <label className="review-field">
             <span className="review-field-label">Reference answer</span>
@@ -167,11 +193,52 @@ function QuestionCard({ question, index, total, onChange }) {
               value={question.correct_answer ?? ""}
               onChange={(e) => updateField("correct_answer", e.target.value)}
               rows={4}
+              readOnly={locked}
+              disabled={locked}
             />
           </label>
         )}
       </div>
     </article>
+  );
+}
+
+function ReviewHeader({ isRecycleMode, bankCount, llmCount }) {
+  if (isRecycleMode && bankCount > 0 && llmCount > 0) {
+    return (
+      <>
+        <h1>
+          Review {llmCount} new question{llmCount === 1 ? "" : "s"} ({bankCount} recycled)
+        </h1>
+        <p className="muted">
+          Recycled questions from the bank are pre-approved and included automatically.
+          Review and edit only the <strong>{llmCount}</strong> newly generated question
+          {llmCount === 1 ? "" : "s"} below, then save the full assessment.
+        </p>
+      </>
+    );
+  }
+
+  if (isRecycleMode && bankCount > 0 && llmCount === 0) {
+    return (
+      <>
+        <h1>Recycled assessment</h1>
+        <p className="muted">
+          All questions were pulled from the question bank and saved without manual review.
+        </p>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <h1>Review generated questions</h1>
+      <p className="muted">
+        Check every question below. For MCQ questions, select the radio button next to the
+        correct option. Edit any text, code snippet, or option as needed, then click{" "}
+        <strong>Confirm &amp; save</strong> to publish the assessment.
+      </p>
+    </>
   );
 }
 
@@ -186,15 +253,22 @@ export default function AdminReviewPage() {
   const initialQuestions = location.state?.questions ?? [];
   const confirmPayload = location.state?.confirmPayload ?? null;
   const previewMeta = location.state?.previewMeta ?? null;
+  const recycledOnly = Boolean(location.state?.recycledOnly);
 
   const [questions, setQuestions] = useState(initialQuestions);
+  const [showRecycled, setShowRecycled] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
-  const [savedId, setSavedId] = useState(null);
-  const [savedStats, setSavedStats] = useState(null);
+  const [savedId, setSavedId] = useState(location.state?.savedId ?? null);
+  const [savedStats, setSavedStats] = useState(location.state?.savedStats ?? null);
 
-  // Guard: if navigated here directly without state, redirect back
-  if (!confirmPayload) {
+  const isRecycleMode = confirmPayload?.question_source === "recycle_then_generate";
+  const { bankQuestions, llmQuestions } = partitionReviewQuestions(questions);
+  const bankCount = previewMeta?.bank_sourced_count ?? bankQuestions.length;
+  const llmCount = previewMeta?.llm_generated_count ?? llmQuestions.length;
+  const questionsToReview = isRecycleMode ? llmQuestions : questions;
+
+  if (!confirmPayload && !savedId) {
     return (
       <div className="page">
         <header className="header">
@@ -208,35 +282,21 @@ export default function AdminReviewPage() {
     );
   }
 
-  function updateQuestion(index, updated) {
-    setQuestions((prev) => {
-      const next = [...prev];
-      next[index] = updated;
-      return next;
-    });
+  function updateQuestion(questionId, updated) {
+    setQuestions((prev) =>
+      prev.map((q) => (q.question_id === questionId ? updated : q))
+    );
   }
 
   async function handleConfirm() {
+    if (!confirmPayload) return;
     setError(null);
     setSaving(true);
     try {
-      const body = {
-        ...confirmPayload,
-        questions: questions.map((q) => ({
-          question_id: String(q.question_id),
-          type: q.type,
-          question: q.question,
-          code_snippet: q.code_snippet ?? "",
-          options: q.options ?? [],
-          correct_answer: q.correct_answer ?? "",
-          topic_name: q.topic_name ?? "",
-          ...(q.bank_question_id != null ? { bank_question_id: q.bank_question_id } : {}),
-        })),
-      };
       const data = await apiFetch("/admin/confirm-assessment", {
         method: "POST",
         authRole: "admin",
-        body: JSON.stringify(body),
+        body: JSON.stringify(buildConfirmBody(confirmPayload, questions)),
       });
       setSavedId(data.assessment_id);
       setSavedStats({
@@ -257,7 +317,11 @@ export default function AdminReviewPage() {
         <header className="header">
           <p className="page-eyebrow">Administrator</p>
           <h1>Assessment saved</h1>
-          <p className="muted">The reviewed questions have been saved to the database.</p>
+          <p className="muted">
+            {recycledOnly
+              ? "All questions were recycled from the question bank and saved without manual review."
+              : "The reviewed questions have been saved to the database."}
+          </p>
         </header>
         <section className="card">
           <p>
@@ -293,13 +357,13 @@ export default function AdminReviewPage() {
     <div className="page page--wide">
       <header className="header">
         <p className="page-eyebrow">Administrator · Review</p>
-        <h1>Review generated questions</h1>
-        <p className="muted">
-          Check every question below. For MCQ questions, select the radio button next to the
-          correct option. Edit any text, code snippet, or option as needed, then click{" "}
-          <strong>Confirm &amp; save</strong> to publish the assessment.
-        </p>
+        <ReviewHeader
+          isRecycleMode={isRecycleMode}
+          bankCount={bankCount}
+          llmCount={llmCount}
+        />
         {previewMeta &&
+          isRecycleMode &&
           (previewMeta.bank_sourced_count > 0 || previewMeta.llm_generated_count > 0) && (
             <p className="muted" style={{ marginTop: "0.5rem" }}>
               Draft mix: <strong>{previewMeta.bank_sourced_count}</strong> from question bank ·{" "}
@@ -319,16 +383,54 @@ export default function AdminReviewPage() {
           )}
       </header>
 
+      {isRecycleMode && bankCount > 0 && (
+        <section className="review-recycled-summary card">
+          <p>
+            <strong>{bankCount}</strong> question{bankCount === 1 ? "" : "s"} recycled from the
+            question bank (pre-approved — included automatically).
+          </p>
+          <button
+            type="button"
+            className="button button--compact"
+            onClick={() => setShowRecycled((v) => !v)}
+          >
+            {showRecycled ? "Hide recycled questions" : "View recycled questions"}
+          </button>
+          {showRecycled && (
+            <div className="review-recycled-list">
+              {bankQuestions.map((q, i) => (
+                <QuestionCard
+                  key={q.question_id}
+                  question={q}
+                  index={i}
+                  total={bankQuestions.length}
+                  readOnly
+                  fromBank
+                  showSourceBadge
+                  onChange={() => {}}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       <div className="review-questions">
-        {questions.map((q, i) => (
-          <QuestionCard
-            key={q.question_id}
-            question={q}
-            index={i}
-            total={questions.length}
-            onChange={(updated) => updateQuestion(i, updated)}
-          />
-        ))}
+        {questionsToReview.length === 0 ? (
+          <p className="muted">No new questions require review.</p>
+        ) : (
+          questionsToReview.map((q, i) => (
+            <QuestionCard
+              key={q.question_id}
+              question={q}
+              index={i}
+              total={questionsToReview.length}
+              fromBank={isBankQuestion(q)}
+              showSourceBadge={isRecycleMode}
+              onChange={(updated) => updateQuestion(q.question_id, updated)}
+            />
+          ))
+        )}
       </div>
 
       <div className="review-actions">
@@ -352,11 +454,14 @@ export default function AdminReviewPage() {
             onClick={handleConfirm}
             disabled={saving}
           >
-            {saving ? "Saving…" : `Confirm & save (${questions.length} questions)`}
+            {saving
+              ? "Saving…"
+              : `Confirm & save (${questions.length} question${questions.length === 1 ? "" : "s"})`}
           </button>
         </div>
         <p className="muted small-print review-actions-hint">
-          Clicking <em>Regenerate</em> discards this draft and returns to the form without saving anything.
+          Clicking <em>Regenerate</em> discards this draft and returns to the form without saving
+          anything.
         </p>
       </div>
 

@@ -13,7 +13,9 @@ import TimerExpiredBanner from "../components/TimerExpiredBanner.jsx";
 import JupyterWorkspacePanel from "../components/JupyterWorkspacePanel.jsx";
 import MixedNotebookPanel, { JupyterRequiredBanner } from "../components/MixedNotebookPanel.jsx";
 import Pagination from "../components/Pagination.jsx";
+import UnansweredSubmitAlert from "../components/UnansweredSubmitAlert.jsx";
 import { usePagination } from "../hooks/usePagination.js";
+import { countUnansweredQuestions } from "../lib/assessmentAnswers.js";
 import { openReportPrintWindow } from "../lib/reportRenderer.js";
 
 export default function ClientPage() {
@@ -42,6 +44,7 @@ export default function ClientPage() {
   const [reportSummaryLoading, setReportSummaryLoading] = useState(false);
   const [reportData, setReportData] = useState(null);
   const [reportError, setReportError] = useState(null);
+  const [unansweredWarning, setUnansweredWarning] = useState(null);
   const autoSubmitLock = useRef(false);
   const graceNotebookSubmitLock = useRef(false);
   const lastGraceSubmittedFile = useRef(null);
@@ -119,6 +122,7 @@ export default function ClientPage() {
       setCodeLangByQid({});
       setNotebookFile(null);
       setTimeExpiredBanner(false);
+      setUnansweredWarning(null);
       autoSubmitLock.current = false;
       graceNotebookSubmitLock.current = false;
       lastGraceSubmittedFile.current = null;
@@ -394,6 +398,45 @@ export default function ClientPage() {
     paginatedItems: paginatedQuestions,
   } = usePagination(questions, { resetKey: assessment?.assessment_id });
 
+  const handleQuestionPageChange = useCallback(
+    (nextPage) => {
+      setQuestionPage(nextPage);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    },
+    [setQuestionPage]
+  );
+
+  const requestSubmit = useCallback(
+    (opts = {}) => {
+      if (opts.auto || opts.notebookOnly) {
+        handleSubmit(opts);
+        return;
+      }
+
+      if (assessment?.routing_flag === "jupyter" && needsNotebook) {
+        handleSubmit(opts);
+        return;
+      }
+
+      const { unanswered, total } = countUnansweredQuestions(assessment, answers);
+      const timeAllowsWarning = !timerState.isTimed || timerState.inMainWindow;
+
+      if (unanswered > 0 && timeAllowsWarning) {
+        setUnansweredWarning({ opts, unanswered, total });
+        return;
+      }
+
+      handleSubmit(opts);
+    },
+    [assessment, answers, needsNotebook, handleSubmit, timerState.isTimed, timerState.inMainWindow]
+  );
+
+  const handleConfirmUnansweredSubmit = useCallback(() => {
+    const pending = unansweredWarning;
+    setUnansweredWarning(null);
+    if (pending) handleSubmit(pending.opts);
+  }, [unansweredWarning, handleSubmit]);
+
   return (
     <div className={`page page--wide${showFixedTimer ? " page--timed-assessment" : ""}`}>
       {showFixedTimer && (
@@ -480,7 +523,7 @@ export default function ClientPage() {
               result={result}
               timerState={timerState}
               onFileChange={setNotebookFile}
-              onSubmit={() => handleSubmit()}
+              onSubmit={() => requestSubmit()}
             />
           ) : (
             <>
@@ -495,7 +538,7 @@ export default function ClientPage() {
                 totalPages={questionTotalPages}
                 totalItems={totalQuestions}
                 pageSize={questionPageSize}
-                onPageChange={setQuestionPage}
+                onPageChange={handleQuestionPageChange}
                 itemLabel="questions"
               />
               {paginatedQuestions.map((q, questionIndex) => {
@@ -736,7 +779,7 @@ export default function ClientPage() {
                 totalPages={questionTotalPages}
                 totalItems={totalQuestions}
                 pageSize={questionPageSize}
-                onPageChange={setQuestionPage}
+                onPageChange={handleQuestionPageChange}
                 itemLabel="questions"
               />
               <button
@@ -744,8 +787,8 @@ export default function ClientPage() {
                 className="primary"
                 onClick={() =>
                   timerState.inNotebookGrace && notebookFile && needsNotebook
-                    ? handleSubmit({ notebookOnly: true })
-                    : handleSubmit()
+                    ? requestSubmit({ notebookOnly: true })
+                    : requestSubmit()
                 }
                 disabled={
                   loading ||
@@ -773,6 +816,15 @@ export default function ClientPage() {
                   notebookResult={notebookResult}
                   notebookUploadEnabled={notebookUploadEnabled}
                   onFileChange={setNotebookFile}
+                />
+              )}
+
+              {unansweredWarning && (
+                <UnansweredSubmitAlert
+                  unansweredCount={unansweredWarning.unanswered}
+                  totalCount={unansweredWarning.total}
+                  onConfirm={handleConfirmUnansweredSubmit}
+                  onCancel={() => setUnansweredWarning(null)}
                 />
               )}
             </>

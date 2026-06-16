@@ -78,6 +78,7 @@ def init_db() -> None:
     _ensure_question_bank_table(eng)           # must run before FK column below
     _ensure_assessment_question_bank_columns(eng)
     _backfill_question_bank_difficulty_labels(eng)
+    _backfill_question_bank_from_assessment_questions_if_needed(eng)
     _ensure_employee_question_mastery_table(eng)
     _backfill_employee_question_mastery_if_empty(eng)
 
@@ -409,6 +410,21 @@ def _ensure_employee_question_mastery_table(eng) -> None:
                 """
             )
         )
+
+
+def _backfill_question_bank_from_assessment_questions_if_needed(eng) -> None:
+    """Import legacy assessment questions into question_bank (one-time per row)."""
+    with eng.connect() as conn:
+        count = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM assessment_questions WHERE bank_question_id IS NULL"
+            )
+        ).scalar()
+    if not count or int(count) == 0:
+        return
+    from services import question_bank_service
+
+    question_bank_service.backfill_question_bank_from_assessment_questions()
 
 
 def _backfill_employee_question_mastery_if_empty(eng) -> None:

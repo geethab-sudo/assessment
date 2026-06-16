@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { apiFetch } from "../api";
+import {
+  buildConfirmBody,
+  isFullBankRecycle,
+} from "../lib/assessmentConfirm.js";
 import SearchableLanguageSelect from "../components/SearchableLanguageSelect.jsx";
 import {
   applyPreset,
@@ -538,12 +542,35 @@ export default function AdminPage() {
         body: JSON.stringify(previewPayload),
       });
 
-      // Navigate to the review page, carrying the draft questions and confirm payload
+      const previewMeta = data.meta ?? null;
+      const questions = data.questions ?? [];
+
+      // 100% bank-sourced recycle: skip review and save immediately
+      if (isFullBankRecycle(previewMeta, questionSource)) {
+        const saved = await apiFetch("/admin/confirm-assessment", {
+          method: "POST",
+          authRole: "admin",
+          body: JSON.stringify(buildConfirmBody(previewPayload, questions)),
+        });
+        navigate("/admin/review", {
+          state: {
+            savedId: saved.assessment_id,
+            savedStats: {
+              bank: saved.bank_sourced_count ?? previewMeta.bank_sourced_count ?? 0,
+              llm: saved.llm_generated_count ?? 0,
+              messages: saved.shortage_messages ?? [],
+            },
+            recycledOnly: true,
+          },
+        });
+        return;
+      }
+
       navigate("/admin/review", {
         state: {
-          questions: data.questions,
+          questions,
           confirmPayload: previewPayload,
-          previewMeta: data.meta ?? null,
+          previewMeta,
         },
       });
     } catch (e) {

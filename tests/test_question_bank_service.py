@@ -11,10 +11,12 @@ from services.question_bank_service import (
     _submission_indicates_mastered,
     add_questions_to_bank,
     backfill_employee_mastery_from_submissions,
+    backfill_question_bank_from_assessment_questions,
     find_bank_questions,
     get_bank_availability,
     get_bank_stats,
     get_employee_mastered_bank_ids,
+    infer_bank_level_from_topic,
     normalize_bank_level,
     record_employee_question_mastery,
     record_question_outcome,
@@ -35,6 +37,82 @@ class TestNormalizeBankLevel(unittest.TestCase):
     def test_invalid_raises(self) -> None:
         with self.assertRaises(ValueError):
             normalize_bank_level("expert")
+
+
+class TestInferBankLevelFromTopic(unittest.TestCase):
+    def test_tier_prefixes(self) -> None:
+        self.assertEqual(
+            infer_bank_level_from_topic(
+                "Tier 1 - Logic & Flow Control (Conditionals, Loops, Comprehensions)"
+            ),
+            "beginner",
+        )
+        self.assertEqual(
+            infer_bank_level_from_topic(
+                "Tier 2 - Security: PII/Credit card Regex redaction strings"
+            ),
+            "intermediate",
+        )
+        self.assertEqual(
+            infer_bank_level_from_topic("Tier 3 - Advanced topic"),
+            "advanced",
+        )
+
+    def test_explicit_difficulty_wins(self) -> None:
+        self.assertEqual(
+            infer_bank_level_from_topic("Tier 1 - X", explicit_difficulty="advanced"),
+            "advanced",
+        )
+
+
+class TestBackfillQuestionBankFromAssessmentQuestions(unittest.TestCase):
+    def test_links_legacy_rows_using_topic_and_inferred_level(self) -> None:
+        assessment = SimpleNamespace(
+            topic_names=["Tier 1 - Topic A"],
+            language_code="py",
+        )
+        aq = SimpleNamespace(
+            id=1,
+            assessment_id="ASM-1",
+            bank_question_id=None,
+            type="mcq",
+            question="What is 1+1?",
+            options='["1","2"]',
+            correct_answer="2",
+            code_snippet=None,
+            topic_name="",
+            difficulty=None,
+        )
+
+        session = MagicMock()
+        session.scalars.return_value.all.return_value = [aq]
+        session.get.return_value = assessment
+
+        new_bank = SimpleNamespace(id=99, times_used=0)
+
+        session.scalar.return_value = None
+
+        def add_side_effect(obj) -> None:
+            nonlocal new_bank
+            new_bank = obj
+
+        session.add.side_effect = add_side_effect
+
+        def flush_side_effect() -> None:
+            new_bank.id = 99
+
+        session.flush.side_effect = flush_side_effect
+
+        @contextmanager
+        def fake_session():
+            yield session
+
+        with patch("services.question_bank_service._session", fake_session):
+            linked = backfill_question_bank_from_assessment_questions()
+
+        self.assertEqual(linked, 1)
+        self.assertEqual(aq.bank_question_id, 99)
+        self.assertEqual(aq.difficulty, "beginner")
 
 
 class TestSubmissionIndicatesMastered(unittest.TestCase):
