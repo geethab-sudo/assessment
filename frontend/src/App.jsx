@@ -8,6 +8,7 @@ import AdminSubmissionsPage from "./pages/AdminSubmissionsPage.jsx";
 import AdminCatalogPage from "./pages/AdminCatalogPage.jsx";
 import AdminQuestionBankPage from "./pages/AdminQuestionBankPage.jsx";
 import EmployeeReportPage from "./pages/EmployeeReportPage.jsx";
+import ImprovementPage from "./pages/ImprovementPage.jsx";
 import ClientPage from "./pages/ClientPage.jsx";
 import LoginAdminPage from "./pages/LoginAdminPage.jsx";
 import LoginClientPage from "./pages/LoginClientPage.jsx";
@@ -112,6 +113,7 @@ function Layout() {
         />
         <Route path="/client" element={<ClientPage />} />
         <Route path="/client/my-report" element={<EmployeeReportPage mode="client" />} />
+        <Route path="/client/improve" element={<ImprovementPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>

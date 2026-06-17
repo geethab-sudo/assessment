@@ -570,7 +570,7 @@ def get_participant_in_browser_submissions(
                 "routing_flag": r.routing_flag,
             }
         )
-        return out
+    return out
 
 
 def list_employee_completed_assessments(employee_id: str) -> list[dict[str, Any]]:

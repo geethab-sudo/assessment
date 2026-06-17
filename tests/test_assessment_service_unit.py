@@ -26,6 +26,7 @@ from services.assessment_service import (
     _parse_options,
     _row_from_question,
     build_notebook_template,
+    get_assessment_for_user,
 )
 
 
@@ -194,6 +195,42 @@ class TestGenerateRowsPerTopic(unittest.TestCase):
             )
         self.assertEqual(rows[0]["question_id"], "1")
         self.assertEqual(rows[1]["question_id"], "2")
+
+
+class TestGetAssessmentForUserAlreadySubmitted(unittest.TestCase):
+    @patch("services.assessment_service.notebook_plan_for_assessment")
+    @patch("services.assessment_service.attempt_service.user_has_submitted")
+    @patch("services.assessment_service.db_service.read_questions_by_assessment")
+    @patch("services.assessment_service.db_service.get_assessment_metadata")
+    def test_blocks_repeat_attempt_for_untimed_assessment(
+        self,
+        mock_meta: MagicMock,
+        mock_rows: MagicMock,
+        mock_submitted: MagicMock,
+        mock_plan: MagicMock,
+    ) -> None:
+        mock_meta.return_value = {
+            "language_code": "py",
+            "routing_flag": "pyodide",
+            "topic_names": ["Topic A"],
+            "jupyter_topic_names": [],
+            "is_timed": False,
+        }
+        mock_rows.return_value = [
+            {"question_id": "1", "type": "mcq", "question": "Q?", "options": "[]"},
+        ]
+        mock_submitted.return_value = True
+        mock_plan.return_value = {
+            "notebook_expected": False,
+            "notebook_ready": False,
+            "expected_notebook_coding_count": 0,
+            "actual_notebook_coding_count": 0,
+        }
+
+        out = get_assessment_for_user("ASM-TEST01", employee_id="C002")
+
+        self.assertTrue(out["already_submitted"])
+        self.assertEqual(out["questions"], [])
 
 
 if __name__ == "__main__":

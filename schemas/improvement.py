@@ -33,7 +33,14 @@ class ReportSummary(BaseModel):
     assessments_completed: int
     questions_answered: int
     overall_percent_correct: float
-    proficiency_label: str
+    assessed_level_label: str = Field(
+        default="Beginner",
+        description="Highest difficulty tier the employee has been assessed at.",
+    )
+    proficiency_label: str = Field(
+        ...,
+        description="Progress message within assessed_level (not the next tier).",
+    )
     total_time_seconds: int
     avg_assessment_time_seconds: int
 
@@ -55,6 +62,7 @@ class ReportLanguageSection(BaseModel):
     topics_in_catalog: int
     questions_count: int
     percent_correct: float
+    assessed_level_label: str = "Beginner"
     proficiency_label: str
     topics: list[ReportLanguageTopicItem] = Field(default_factory=list)
 
@@ -87,6 +95,23 @@ class RadarTopicItem(BaseModel):
     topic_name: str
     latest_percent: float
     rolling_avg_percent: float
+
+
+class WeakAreasImprovementRequest(BaseModel):
+    employee_id: str = Field(..., min_length=1, max_length=64)
+    language_code: str = Field(..., min_length=1, max_length=32)
+    questions_requested: int = Field(default=15, ge=1, le=50)
+
+
+class WeakAreasImprovementResponse(BaseModel):
+    employee_id: str
+    language_code: str
+    questions_requested: int
+    questions_delivered: int
+    assessment_id: str | None = None
+    availability_message: str | None = None
+    topic_summary: str | None = None
+    weak_topics: list[str] = Field(default_factory=list)
 
 
 class EmployeeReportResponse(BaseModel):

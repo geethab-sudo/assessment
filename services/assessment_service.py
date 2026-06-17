@@ -824,16 +824,25 @@ def get_assessment_for_user(
     if not rows:
         return {**base_out, "questions": [], "found": False}
 
+    eid = (employee_id or "").strip()
+    if eid and attempt_service.user_has_submitted(assessment_id, eid):
+        return {
+            **base_out,
+            "questions": [],
+            "found": True,
+            "already_submitted": True,
+        }
+
     questions_out = _build_questions_for_user(rows, meta)
 
-    if employee_id and employee_id.strip():
+    if eid:
         questions_out = apply_participant_shuffle(
-            assessment_id, employee_id.strip(), questions_out
+            assessment_id, eid, questions_out
         )
 
     out = {**base_out, "questions": questions_out, "found": True}
 
-    if meta.get("is_timed") and employee_id and employee_id.strip():
+    if meta.get("is_timed") and eid:
         out = _apply_timed_state(out, assessment_id, employee_id, meta)
 
     return out

@@ -130,6 +130,25 @@ python scripts/seed_sample_catalog.py
 
 Populates Python (Tier 1 + Tier 2), Java, Node.js, and general English CS topics. The script is **idempotent** — safe to re-run.
 
+### 3b. Seed demo students (optional)
+
+```bash
+python scripts/seed_demo_students.py
+```
+
+Creates a shared **Tier 1 Beginner Python** assessment (`ASM-DEMO0001`) and submissions for three demo participants:
+
+| Employee ID | Name | Profile |
+|-------------|------|---------|
+| `C001` | María | Strong (~91%) |
+| `C002` | Kumar | Regular (~68%; some weak topics) |
+| `C003` | Oscar | Struggling (~42%; many weak topics) |
+
+Safe to re-run when moving to a fresh database. Questions are stored in
+`scripts/demo_questions_snapshot.json` (real Tier 1 bank content). Re-capture from a
+live bank with `python scripts/seed_demo_students.py --refresh-snapshot`. See the script
+header for the assessment ID and usage notes.
+
 ### 4. Backend
 
 ```bash
@@ -430,6 +449,8 @@ assessment/
 │           ├── AdminSubmissionsPage.jsx  # Formatted dates, sort, employee/assessment filter
 │           └── ClientPage.jsx
 ├── scripts/seed_sample_catalog.py
+├── scripts/seed_demo_students.py      # Demo C001–C003 + ASM-DEMO0001
+├── scripts/demo_questions_snapshot.json  # Real Tier 1 questions for demo seed
 ├── docker-compose.yml
 ├── requirements.txt
 └── .env.example
@@ -448,6 +469,7 @@ assessment/
 | `/admin/question-bank` | Browse question bank — filter, sort by % wrong, % correct, or times used |
 | `/admin/employee-report/:employeeId` | Employee skills progress report (print/PDF) |
 | `/client/my-report` | Participant self-service skills report |
+| `/client/improve` | Help me improve — weak areas practice (bank-only) |
 | `/admin/submissions` | Submission review — formatted dates, sort by date, filter by employee / assessment ID |
 | `/client` | Take assessment (Pyodide, Jupyter, mixed, timed) |
 
@@ -467,6 +489,7 @@ assessment/
 | `GET /admin/employee-report?employee_id=` | Admin | Cross-assessment skills progress report (JSON) |
 | `GET /client/employee-profile?employee_id=&scope=` | Public | Topic performance profile for improvement flows |
 | `GET /client/my-report?employee_id=&period=` | Public | Shippable skills progress report (JSON) |
+| `POST /client/improvement/weak-areas` | Public | Bank-only practice assessment on weak topics (last 3 assessments) |
 | `GET /assessment/{id}?employee_id=…` | Public* | Questions, `topic_modality`, `notebook_expected`, `timer` |
 | `GET /assessment/{id}/report?employee_id=…` | Public* | Feedback report JSON (MCQ + Pyodide coding; no Jupyter) |
 | `POST /submit-assessment` | Public* | Grade in-browser answers (`employee_id` for timed) |

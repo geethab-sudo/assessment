@@ -3371,3 +3371,106 @@ button.primary {
   }
 }
 
+/* Help me improve (Stage 5) */
+.improve-page .improve-options {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.improve-option {
+  text-align: left;
+  padding: 1rem 1.1rem;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.improve-option h3 {
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+}
+
+.improve-option--active:hover {
+  border-color: var(--accent, #2563eb);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.12);
+}
+
+.improve-option--disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.improve-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.improve-section-header h2 {
+  margin: 0;
+}
+
+.improve-topic-summary {
+  margin: 0.75rem 0;
+  padding: 0.65rem 0.85rem;
+  border-radius: 6px;
+  background: rgba(37, 99, 235, 0.06);
+  border-left: 3px solid var(--accent, #2563eb);
+}
+
+.improve-topic-summary-lead {
+  margin: 0 0 0.5rem;
+}
+
+.improve-weak-topic-list {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.improve-weak-topic-list li {
+  margin: 0.25rem 0;
+  line-height: 1.35;
+}
+
+.emp-report-line-chart-single {
+  min-height: 80px;
+}
+
+.emp-report-line-chart-single p {
+  margin: 0.25rem 0;
+}
+
+.improve-topic-row--weak td:first-child {
+  font-weight: 600;
+}
+
+.improve-weak-badge {
+  display: inline-block;
+  margin-left: 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.15);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+
+.improve-availability {
+  margin: 1rem 0 0;
+  padding: 0.65rem 0.85rem;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.1);
+  border-left: 3px solid #f59e0b;
+}
+
+.improve-actions {
+  margin-top: 1.25rem;
+}
+

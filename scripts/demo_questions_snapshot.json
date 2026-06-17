@@ -1,0 +1,292 @@
+{
+  "version": 1,
+  "language_code": "py",
+  "language_label": "Python",
+  "level": "beginner",
+  "question_count": 25,
+  "questions": [
+    {
+      "question_id": "1",
+      "question": "What is the primary difference between a Python list and a Python set?",
+      "type": "mcq",
+      "options": "[\"A list is mutable, while a set is immutable\", \"A list is ordered, while a set is unordered\", \"A list can contain duplicate values, while a set cannot\", \"A list is used for sorting, while a set is used for searching\"]",
+      "correct_answer": "A list can contain duplicate values, while a set cannot",
+      "topic_name": "Tier 1 - Data Structures & Manipulation (Lists, Sets, Strings)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 140
+    },
+    {
+      "question_id": "2",
+      "question": "What is the primary purpose of using the 'set' data structure in Python?",
+      "type": "mcq",
+      "options": "[\"To store duplicate values\", \"To store data in a specific order\", \"To store unique elements\", \"To store large amounts of unstructured data\"]",
+      "correct_answer": "To store unique elements",
+      "topic_name": "Tier 1 - Data Structures & Manipulation (Lists, Sets, Strings)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 144
+    },
+    {
+      "question_id": "3",
+      "question": "Which of the following is NOT a valid way to create a list in Python?",
+      "type": "mcq",
+      "options": "[\"Using the list() function\", \"Using square brackets []\", \"Using parentheses ()\", \"Using the dict() function\"]",
+      "correct_answer": "Using the dict() function",
+      "topic_name": "Tier 1 - Data Structures & Manipulation (Lists, Sets, Strings)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 145
+    },
+    {
+      "question_id": "4",
+      "question": "Create a Python function that takes a list of integers as input and returns the sum of all the even numbers in the list. For example, if the input list is [1, 2, 3, 4, 5, 6], the output should be 12 (2 + 4 + 6).",
+      "type": "coding",
+      "options": "[]",
+      "correct_answer": "def sum_even_numbers(numbers): return sum(num for num in numbers if num % 2 == 0)",
+      "topic_name": "Tier 1 - Data Structures & Manipulation (Lists, Sets, Strings)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 28
+    },
+    {
+      "question_id": "5",
+      "question": "Write a Python function that implements a simple bank account class with methods to deposit and withdraw money. The class should have an initial balance of 0.0 and should raise a ValueError if the withdrawal amount exceeds the current balance.",
+      "type": "coding",
+      "options": "[]",
+      "correct_answer": "class BankAccount: def __init__(self): self.balance = 0.0; def deposit(self, amount): self.balance += amount; def withdraw(self, amount): if amount > self.balance: raise ValueError('Insufficient funds'); self.balance -= amount",
+      "topic_name": "Tier 1 - Data Structures & Manipulation (Lists, Sets, Strings)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 29
+    },
+    {
+      "question_id": "6",
+      "question": "What will be the output of the following code?",
+      "type": "mcq",
+      "options": "[\"x is greater than 10\", \"x is less than or equal to 10\", \"No output\", \"Error\"]",
+      "correct_answer": "x is less than or equal to 10",
+      "topic_name": "Tier 1 - Logic & Flow Control (Conditionals, Loops, Comprehensions)",
+      "code_snippet": "x = 5\nif x > 10: print('x is greater than 10')\n    else: print('x is less than or equal to 10')",
+      "difficulty": "beginner",
+      "source_bank_question_id": 247
+    },
+    {
+      "question_id": "7",
+      "question": "Which of the following is NOT a type of loop in Python?",
+      "type": "mcq",
+      "options": "[\"For loop\", \"While loop\", \"Do-while loop\", \"Nested loop\"]",
+      "correct_answer": "Do-while loop",
+      "topic_name": "Tier 1 - Logic & Flow Control (Conditionals, Loops, Comprehensions)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 248
+    },
+    {
+      "question_id": "8",
+      "question": "What is the purpose of the 'break' statement in a loop?",
+      "type": "mcq",
+      "options": "[\"To skip the current iteration and move to the next one\", \"To exit the loop entirely\", \"To restart the loop from the beginning\", \"To pause the loop temporarily\"]",
+      "correct_answer": "To exit the loop entirely",
+      "topic_name": "Tier 1 - Logic & Flow Control (Conditionals, Loops, Comprehensions)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 249
+    },
+    {
+      "question_id": "9",
+      "question": "Write a Python function to print the numbers from 1 to 10 using a for loop.",
+      "type": "coding",
+      "options": "[]",
+      "correct_answer": "for i in range(1, 11): print(i)",
+      "topic_name": "Tier 1 - Logic & Flow Control (Conditionals, Loops, Comprehensions)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 95
+    },
+    {
+      "question_id": "10",
+      "question": "Write a Python function to find the sum of all even numbers in a given list using list comprehension.",
+      "type": "coding",
+      "options": "[]",
+      "correct_answer": "sum([x for x in lst if x % 2 == 0])",
+      "topic_name": "Tier 1 - Logic & Flow Control (Conditionals, Loops, Comprehensions)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 96
+    },
+    {
+      "question_id": "11",
+      "question": "Consider the function def calculate_total(prices, tax_rate=0.08): return sum(prices) * (1 + tax_rate). What is the output of the following code?",
+      "type": "mcq",
+      "options": "[\"38.5\", \"39.6\", \"40.0\", \"41.0\"]",
+      "correct_answer": "38.5",
+      "topic_name": "Tier 1 - Functions & Dictionaries (Nested lookups, signatures, defaults)",
+      "code_snippet": "calculate_total([10, 20, 30], 0.05):",
+      "difficulty": "beginner",
+      "source_bank_question_id": 272
+    },
+    {
+      "question_id": "12",
+      "question": "What is the primary issue with using mutable default arguments in Python functions, as in def append_to_list(new_item, current_list=[]): current_list.append(new_item); return current_list?",
+      "type": "mcq",
+      "options": "[\"It causes a SyntaxError\", \"It leads to incorrect results due to shared state across function calls\", \"It results in a TypeError\", \"It has no impact on the function's behavior\"]",
+      "correct_answer": "It leads to incorrect results due to shared state across function calls",
+      "topic_name": "Tier 1 - Functions & Dictionaries (Nested lookups, signatures, defaults)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 273
+    },
+    {
+      "question_id": "13",
+      "question": "What is the primary purpose of the 'return' statement in a Python function: to stop execution, to send a value back to the caller, to skip to another part of the code, or to repeat a block of code?",
+      "type": "mcq",
+      "options": "[\"to stop execution\", \"to send a value back to the caller\", \"to skip to another part of the code\", \"to repeat a block of code\"]",
+      "correct_answer": "to send a value back to the caller",
+      "topic_name": "Tier 1 - Functions & Dictionaries (Nested lookups, signatures, defaults)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 333
+    },
+    {
+      "question_id": "14",
+      "question": "Create a function that takes a dictionary as input, and returns a new dictionary with the keys and values swapped. Assume that the input dictionary has unique values.",
+      "type": "coding",
+      "options": "[]",
+      "correct_answer": "def swap_keys_values(dictionary): return {v: k for k, v in dictionary.items()}",
+      "topic_name": "Tier 1 - Functions & Dictionaries (Nested lookups, signatures, defaults)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 18
+    },
+    {
+      "question_id": "15",
+      "question": "Write a Python function that takes a dictionary as an argument and returns the value of the key 'name' if it exists, otherwise returns 'Unknown'. Use the get() method to avoid a KeyError.",
+      "type": "coding",
+      "options": "[]",
+      "correct_answer": "def get_name(person): return person.get('name', 'Unknown')",
+      "topic_name": "Tier 1 - Functions & Dictionaries (Nested lookups, signatures, defaults)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 103
+    },
+    {
+      "question_id": "16",
+      "question": "What happens when an exception occurs in a try block and there is no corresponding except block to handle it: x = 5 / 0",
+      "type": "mcq",
+      "options": "[\"The program will terminate and display an error message\", \"The program will continue executing the next line of code\", \"The program will jump to the previous line of code\", \"The program will start executing from the beginning\"]",
+      "correct_answer": "The program will terminate and display an error message",
+      "topic_name": "Tier 1 - Error Handling (Basic try-except, raising exceptions)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 363
+    },
+    {
+      "question_id": "17",
+      "question": "What is the purpose of the raise keyword in Python: raise ValueError('Invalid input')",
+      "type": "mcq",
+      "options": "[\"To handle exceptions and prevent program termination\", \"To catch and handle exceptions\", \"To throw an exception when a certain condition occurs\", \"To skip to the next line of code\"]",
+      "correct_answer": "To throw an exception when a certain condition occurs",
+      "topic_name": "Tier 1 - Error Handling (Basic try-except, raising exceptions)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 364
+    },
+    {
+      "question_id": "18",
+      "question": "Write a Python function to calculate the average of two numbers. The function should handle a potential ZeroDivisionError when the denominator is zero, and a TypeError when the inputs are not numbers.",
+      "type": "coding",
+      "options": "[]",
+      "correct_answer": "Use try-except blocks to catch ZeroDivisionError and TypeError, return a meaningful error message",
+      "topic_name": "Tier 1 - Error Handling (Basic try-except, raising exceptions)",
+      "code_snippet": "def calculate_average(num1, num2):\n    # Your code here",
+      "difficulty": "beginner",
+      "source_bank_question_id": 218
+    },
+    {
+      "question_id": "19",
+      "question": "Which of the following statements about relative imports is true?",
+      "type": "mcq",
+      "options": "[\"Relative imports can only be used within a package\", \"Relative imports are used to import modules from the parent directory\", \"Relative imports can be used to import modules from the standard library\", \"Relative imports are deprecated since Python 3.x\"]",
+      "correct_answer": "Relative imports can only be used within a package",
+      "topic_name": "Tier 1 - Modules, Namespaces & Imports (Absolute/Relative, Circular imports)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 122
+    },
+    {
+      "question_id": "20",
+      "question": "What is the primary difference between an absolute import and a relative import in Python?",
+      "type": "mcq",
+      "options": "[\"Absolute imports are used for built-in modules, while relative imports are used for custom modules.\", \"Absolute imports are used for modules in the current package, while relative imports are used for modules outside the package.\", \"Absolute imports use the absolute path of the module, while relative imports use a relative path based on the current module's location.\", \"Absolute imports are faster than relative imports.\"]",
+      "correct_answer": "Absolute imports use the absolute path of the module, while relative imports use a relative path based on the current module's location.",
+      "topic_name": "Tier 1 - Modules, Namespaces & Imports (Absolute/Relative, Circular imports)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 189
+    },
+    {
+      "question_id": "21",
+      "question": "Create a Python module named 'math_utils' with a function 'add_numbers' that takes two numbers as input and returns their sum. Then, create another module named 'main' that imports 'math_utils' and uses the 'add_numbers' function to calculate the sum of 5 and 7.",
+      "type": "coding",
+      "options": "[]",
+      "correct_answer": "math_utils.py: def add_numbers(a, b): return a + b; main.py: import math_utils; result = math_utils.add_numbers(5, 7); print(result)",
+      "topic_name": "Tier 1 - Modules, Namespaces & Imports (Absolute/Relative, Circular imports)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 123
+    },
+    {
+      "question_id": "22",
+      "question": "What is the purpose of using a 'with' statement when working with files in Python?",
+      "type": "mcq",
+      "options": "[\"To improve file reading performance.\", \"To ensure the file is properly closed after use.\", \"To allow for concurrent file access.\", \"To bypass file permissions.\"]",
+      "correct_answer": "To ensure the file is properly closed after use.",
+      "topic_name": "Tier 1 - Basic File I/O & Context Managers (with open statements)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 118
+    },
+    {
+      "question_id": "23",
+      "question": "What happens when you use the 'with open' statement to read a file in Python?",
+      "type": "mcq",
+      "options": "[\"The file is read into memory all at once\", \"The file is read line by line and stored in a list\", \"The file is properly closed after it is no longer needed\", \"The file is deleted after it is read\"]",
+      "correct_answer": "The file is properly closed after it is no longer needed",
+      "topic_name": "Tier 1 - Basic File I/O & Context Managers (with open statements)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 193
+    },
+    {
+      "question_id": "24",
+      "question": "Write a Python function that opens a file named 'example.txt' in read mode and prints its contents. Use a context manager to handle the file.",
+      "type": "coding",
+      "options": "[]",
+      "correct_answer": "with open('example.txt', 'r') as file: print(file.read())",
+      "topic_name": "Tier 1 - Basic File I/O & Context Managers (with open statements)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 49
+    },
+    {
+      "question_id": "25",
+      "question": "Using the Google Gemini API, write a Python function that sends a POST request to generate text based on a given prompt. Assume you have a valid API key and the gemini-api-python-client library installed.",
+      "type": "coding",
+      "options": "[]",
+      "correct_answer": "from gemini_api_client import GeminiClient; client = GeminiClient(api_key='YOUR_API_KEY'); response = client.generate_text(prompt='YOUR_PROMPT')",
+      "topic_name": "Tier 1 - Basic File I/O & Context Managers (with open statements)",
+      "code_snippet": "",
+      "difficulty": "beginner",
+      "source_bank_question_id": 50
+    }
+  ],
+  "topic_names": [
+    "Tier 1 - Data Structures & Manipulation (Lists, Sets, Strings)",
+    "Tier 1 - Logic & Flow Control (Conditionals, Loops, Comprehensions)",
+    "Tier 1 - Functions & Dictionaries (Nested lookups, signatures, defaults)",
+    "Tier 1 - Error Handling (Basic try-except, raising exceptions)",
+    "Tier 1 - Modules, Namespaces & Imports (Absolute/Relative, Circular imports)",
+    "Tier 1 - Basic File I/O & Context Managers (with open statements)"
+  ]
+}

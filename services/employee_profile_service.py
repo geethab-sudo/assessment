@@ -130,11 +130,61 @@ def _pick_unexplored_for_recommendations(
 
 
 def proficiency_label(avg_percent: float) -> str:
+    """Legacy score-band label (Beginner/Intermediate/Advanced). Prefer level_progress_label."""
     if avg_percent >= 75:
         return "Advanced"
     if avg_percent >= 50:
         return "Intermediate"
     return "Beginner"
+
+
+_DIFFICULTY_RANK = {"beginner": 1, "intermediate": 2, "advanced": 3}
+
+
+def _highest_difficulty(levels: list[str | None]) -> str:
+    best = "beginner"
+    for raw in levels:
+        d = (raw or "beginner").strip().lower()
+        if d not in _DIFFICULTY_RANK:
+            d = "beginner"
+        if _DIFFICULTY_RANK[d] > _DIFFICULTY_RANK[best]:
+            best = d
+    return best
+
+
+def assessed_level_from_records(records: list[dict[str, Any]]) -> str:
+    """Highest difficulty tier the employee has actually been assessed at."""
+    levels: list[str | None] = []
+    for rec in records:
+        levels.extend((rec.get("topic_difficulty") or {}).values())
+    return _highest_difficulty(levels)
+
+
+def format_assessed_level_label(level: str) -> str:
+    d = (level or "beginner").strip().lower()
+    if d not in _DIFFICULTY_RANK:
+        d = "beginner"
+    return d.capitalize()
+
+
+def level_progress_label(avg_percent: float, assessed_level: str) -> str:
+    """
+    Progress wording within the employee's assessed difficulty — not the next tier.
+
+    Examples at beginner: ~40% → needs improvement; ~68% → on the right path;
+    ~90% → conquered beginner, ready to step up.
+    """
+    level = (assessed_level or "beginner").strip().lower()
+    if level not in _DIFFICULTY_RANK:
+        level = "beginner"
+
+    if avg_percent < 50:
+        return "Needs improvement"
+    if avg_percent < 75:
+        return "You're on the right path"
+    if level == "advanced":
+        return "You've conquered this level — excellent mastery!"
+    return "You've conquered this level — ready for the next!"
 
 
 def _recommended_difficulty(avg_percent: float, last_difficulty: str | None) -> str:
@@ -551,6 +601,7 @@ def _language_sections(
                 }
             )
         topic_items.sort(key=lambda x: x["percent_correct"])
+        lang_level = _highest_difficulty(list(bucket["topic_difficulty"].values()))
         sections.append(
             {
                 "language_code": code,
@@ -559,7 +610,8 @@ def _language_sections(
                 "topics_in_catalog": catalog_count,
                 "questions_count": len(scores),
                 "percent_correct": overall,
-                "proficiency_label": proficiency_label(overall),
+                "assessed_level_label": format_assessed_level_label(lang_level),
+                "proficiency_label": level_progress_label(overall, lang_level),
                 "topics": topic_items,
             }
         )
@@ -735,6 +787,8 @@ def get_employee_report(
 
     insights = _build_insights(records, topic_performance, unexplored)
 
+    assessed_level = assessed_level_from_records(records)
+
     return {
         "title": "Skills Progress Report",
         "report_version": REPORT_VERSION,
@@ -747,7 +801,8 @@ def get_employee_report(
             "assessments_completed": assessments_n,
             "questions_answered": len(all_scores),
             "overall_percent_correct": overall,
-            "proficiency_label": proficiency_label(overall),
+            "assessed_level_label": format_assessed_level_label(assessed_level),
+            "proficiency_label": level_progress_label(overall, assessed_level),
             "total_time_seconds": total_time,
             "avg_assessment_time_seconds": avg_time,
         },

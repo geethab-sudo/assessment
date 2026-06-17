@@ -45,9 +45,14 @@ from schemas.assessment import (
 from schemas.auth import ClientLoginResponse, LoginBody, LoginResponse
 from schemas.catalog import LanguagesResponse
 from schemas.common import ErrorDetail, HealthResponse, ValidationErrorItem, ValidationErrorResponse
-from schemas.improvement import EmployeeProfileResponse, EmployeeReportResponse
+from schemas.improvement import (
+    EmployeeProfileResponse,
+    EmployeeReportResponse,
+    WeakAreasImprovementRequest,
+    WeakAreasImprovementResponse,
+)
 from services import assessment_service, audit_log, auth_service, catalog_service, notebook_service, report_service
-from services import db_service, employee_profile_service
+from services import db_service, employee_profile_service, improvement_assessment_service
 from services.attempt_service import TimedAssessmentError
 from services.database import init_db, ping_database
 from services.llm_service import groq_key_configured
@@ -494,6 +499,34 @@ def get_client_employee_report(
             period=period_norm,  # type: ignore[arg-type]
         )
         return EmployeeReportResponse.model_validate(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post(
+    "/client/improvement/weak-areas",
+    tags=["client"],
+    summary="Create bank-only practice assessment on weak topics",
+    response_model=WeakAreasImprovementResponse,
+    responses={
+        200: {"description": "Practice assessment created or availability explanation returned."},
+        400: ERROR_400,
+        500: ERROR_500,
+    },
+)
+def post_client_improvement_weak_areas(
+    body: WeakAreasImprovementRequest,
+) -> WeakAreasImprovementResponse:
+    """Bank-only weak-areas practice — never calls the LLM."""
+    try:
+        data = improvement_assessment_service.create_weak_areas_assessment(
+            body.employee_id.strip(),
+            body.language_code.strip(),
+            questions_requested=body.questions_requested,
+        )
+        return WeakAreasImprovementResponse.model_validate(data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

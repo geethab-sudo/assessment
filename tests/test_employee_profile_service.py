@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from services.employee_profile_service import (
     get_employee_profile,
+    level_progress_label,
     proficiency_label,
     _merge_topic_performance,
     _recommended_difficulty,
@@ -59,10 +60,24 @@ def _fake_record(
 
 
 class TestProficiencyHelpers(unittest.TestCase):
-    def test_proficiency_labels(self) -> None:
+    def test_proficiency_labels_legacy(self) -> None:
         self.assertEqual(proficiency_label(40), "Beginner")
         self.assertEqual(proficiency_label(60), "Intermediate")
         self.assertEqual(proficiency_label(80), "Advanced")
+
+    def test_level_progress_label_at_beginner(self) -> None:
+        self.assertEqual(level_progress_label(40, "beginner"), "Needs improvement")
+        self.assertEqual(level_progress_label(68, "beginner"), "You're on the right path")
+        self.assertEqual(
+            level_progress_label(90, "beginner"),
+            "You've conquered this level — ready for the next!",
+        )
+
+    def test_level_progress_label_at_advanced(self) -> None:
+        self.assertEqual(
+            level_progress_label(85, "advanced"),
+            "You've conquered this level — excellent mastery!",
+        )
 
     def test_recommended_difficulty_step_up(self) -> None:
         self.assertEqual(_recommended_difficulty(76, "beginner"), "intermediate")

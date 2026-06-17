@@ -40,3 +40,22 @@ export async function fetchEmployeeProfile({
   }
   return apiFetch(`/client/employee-profile?${params}`);
 }
+
+/**
+ * @param {{ employeeId: string, languageCode: string, questionsRequested?: number }} opts
+ */
+export async function createWeakAreasAssessment({
+  employeeId,
+  languageCode,
+  questionsRequested = 15,
+}) {
+  return apiFetch("/client/improvement/weak-areas", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      employee_id: employeeId.trim(),
+      language_code: languageCode.trim(),
+      questions_requested: questionsRequested,
+    }),
+  });
+}

@@ -227,33 +227,33 @@
 
 ### Backend
 
-- [ ] `services/improvement_assessment_service.py`
-- [ ] `POST /client/improvement/weak-areas` — body: `employee_id`, `language_code`, optional `questions_requested`
-- [ ] Profile `scope=last_3` → `weakest_topics` → `per_topic_config`
-- [ ] **`question_source=bank_only`** — `find_bank_questions` only; never call LLM
-- [ ] Exclude **mastered** bank IDs for `employee_id`
-- [ ] Returns `{ assessment_id?, questions_requested, questions_delivered, availability_message, topic_summary }`
-- [ ] If `questions_delivered == 0` → no assessment; return explanation (all mastered or bank empty)
-- [ ] If `questions_delivered < questions_requested` → still create assessment + availability message
+- [x] `services/improvement_assessment_service.py`
+- [x] `POST /client/improvement/weak-areas` — body: `employee_id`, `language_code`, optional `questions_requested`
+- [x] Profile `scope=last_3` → `weakest_topics` → `per_topic_config`
+- [x] **`question_source=bank_only`** — `find_bank_questions` only; never call LLM
+- [x] Exclude **mastered** bank IDs for `employee_id`
+- [x] Returns `{ assessment_id?, questions_requested, questions_delivered, availability_message, topic_summary }`
+- [x] If `questions_delivered == 0` → no assessment; return explanation (all mastered or bank empty)
+- [x] If `questions_delivered < questions_requested` → still create assessment + availability message
 
 ### Frontend
 
-- [ ] **Help me improve** button on `ClientPage.jsx` (visible when `employee_id` filled)
-- [ ] Route or modal: `/client/improve` with three options (only wire **weak areas** in this stage)
-- [ ] Show merged **last-3-assessments** topic table (reuse report table styling)
-- [ ] Show availability message when delivered &lt; requested
-- [ ] **Start practice assessment** → call API → set `assessmentIdInput` and load assessment (or show “nothing left” state)
+- [x] **Help me improve** button on `ClientPage.jsx` (visible when `employee_id` filled)
+- [x] Route or modal: `/client/improve` with three options (only wire **weak areas** in this stage)
+- [x] Show merged **last-3-assessments** topic table (reuse report table styling)
+- [x] Show availability message when delivered &lt; requested
+- [x] **Start practice assessment** → call API → set `assessmentIdInput` and load assessment (or show “nothing left” state)
 
 ### Product note
 
-- [ ] **Never** pass LLM-generated questions to participants without admin review
-- [ ] Wrong answers may repeat; only mastered (correct) questions are excluded
+- [x] **Never** pass LLM-generated questions to participants without admin review
+- [x] Wrong answers may repeat; only mastered (correct) questions are excluded
 
 ### Tests
 
-- [ ] API test: weak-areas creates bank-only assessment on weak topics
-- [ ] API test: shortage returns 12/15 with message, not LLM fill
-- [ ] API test: all mastered → no assessment, clear message
+- [x] API test: weak-areas creates bank-only assessment on weak topics
+- [x] API test: shortage returns 12/15 with message, not LLM fill
+- [x] API test: all mastered → no assessment, clear message
 
 **Acceptance:** Participant opens weak areas → gets only bank questions; if 12 of 15 available, sees shortage message; if all mastered, sees “nothing left” instead of new assessment.
 

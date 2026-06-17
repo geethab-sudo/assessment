@@ -98,6 +98,20 @@ function LineChart({ points }) {
   if (!points?.length) {
     return <p className="muted small-print">No score history yet.</p>;
   }
+  if (points.length === 1) {
+    const p = points[0];
+    return (
+      <div className="emp-report-line-chart-single">
+        <p className="muted small-print">
+          One assessment so far — complete more to see a trend line.
+        </p>
+        <p>
+          <strong>{Math.round(p.percent)}%</strong>
+          <span className="muted"> · {p.assessment_id}</span>
+        </p>
+      </div>
+    );
+  }
   const width = 360;
   const height = 140;
   const pad = 24;
@@ -266,6 +280,16 @@ export default function EmployeeReportPage({ mode = "client" }) {
           ) : (
             <p className="muted">
               <Link to="/client">← Take test</Link>
+              {employeeIdInput.trim() && (
+                <>
+                  {" · "}
+                  <Link
+                    to={`/client/improve?employee_id=${encodeURIComponent(employeeIdInput.trim())}`}
+                  >
+                    Help me improve →
+                  </Link>
+                </>
+              )}
             </p>
           )}
         </div>
@@ -342,8 +366,8 @@ export default function EmployeeReportPage({ mode = "client" }) {
                 </div>
               </div>
               <p className="emp-report-proficiency">
-                Overall proficiency:{" "}
-                <strong>{report.summary.proficiency_label}</strong>
+                Progress at <strong>{report.summary.assessed_level_label || "Beginner"}</strong>{" "}
+                level: <strong>{report.summary.proficiency_label}</strong>
               </p>
             </div>
             <ScoreRing
@@ -370,7 +394,8 @@ export default function EmployeeReportPage({ mode = "client" }) {
                     </span>
                     <span>{lang.questions_count} questions</span>
                     <span>
-                      {Math.round(lang.percent_correct)}% · {lang.proficiency_label}
+                      {Math.round(lang.percent_correct)}% · {lang.assessed_level_label || "Beginner"} ·{" "}
+                      {lang.proficiency_label}
                     </span>
                   </div>
                 ))}

@@ -24,9 +24,13 @@ export default function ClientPage() {
     typeof location.state?.assessmentId === "string"
       ? location.state.assessmentId
       : "";
+  const initialEmployeeId =
+    typeof location.state?.employeeId === "string"
+      ? location.state.employeeId
+      : "";
 
   const [assessmentIdInput, setAssessmentIdInput] = useState(initialId);
-  const [employeeId, setEmployeeId] = useState("");
+  const [employeeId, setEmployeeId] = useState(initialEmployeeId);
   const [participantName, setParticipantName] = useState("");
 
   const [assessment, setAssessment] = useState(null);
@@ -60,6 +64,12 @@ export default function ClientPage() {
       setAssessmentIdInput(initialId);
     }
   }, [initialId]);
+
+  useEffect(() => {
+    if (initialEmployeeId) {
+      setEmployeeId(initialEmployeeId);
+    }
+  }, [initialEmployeeId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,7 +123,7 @@ export default function ClientPage() {
         `/assessment/${encodeURIComponent(id)}?${params.toString()}`
       );
       if (data.already_submitted) {
-        setAssessment({ ...data, questions: [] });
+        setAssessment(null);
         setError("You have already submitted this assessment.");
         return;
       }
@@ -492,6 +502,12 @@ export default function ClientPage() {
               to={`/client/my-report?employee_id=${encodeURIComponent(employeeId.trim())}`}
             >
               View my skills progress report →
+            </Link>
+            {" · "}
+            <Link
+              to={`/client/improve?employee_id=${encodeURIComponent(employeeId.trim())}`}
+            >
+              Help me improve →
             </Link>
           </p>
         )}
