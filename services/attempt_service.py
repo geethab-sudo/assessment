@@ -197,6 +197,17 @@ def assert_notebook_submit_allowed(assessment_id: str, employee_id: str, *, is_t
         raise TimedAssessmentError("Notebook upload grace period has ended.")
 
 
+def get_attempt_timing(assessment_id: str, employee_id: str) -> dict[str, str | None] | None:
+    """Return started_at / submitted_at for a timed attempt, if any."""
+    row = _get_attempt_row(assessment_id, employee_id)
+    if not row:
+        return None
+    return {
+        "started_at": row.started_at,
+        "submitted_at": row.submitted_at,
+    }
+
+
 def parse_employee_id_from_user_label(user_id: str) -> str:
     """Extract employee id from ``empid | name`` label (name is never used for matching)."""
     return (user_id or "").split("|", 1)[0].strip()

@@ -30,6 +30,7 @@ export default function NavBar() {
             <Link to="/admin/catalog">Catalog</Link>
             <Link to="/admin/question-bank">Question bank</Link>
             <Link to="/admin/submissions">Submissions</Link>
+            <Link to="/admin/employee-report">Reports</Link>
             <button
               type="button"
               className="nav-btn"

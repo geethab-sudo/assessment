@@ -446,6 +446,8 @@ assessment/
 | `/admin/assessments` | List / delete assessments (filter by ID, language; sort by date) |
 | `/admin/catalog` | Languages and topics (with modality) |
 | `/admin/question-bank` | Browse question bank — filter, sort by % wrong, % correct, or times used |
+| `/admin/employee-report/:employeeId` | Employee skills progress report (print/PDF) |
+| `/client/my-report` | Participant self-service skills report |
 | `/admin/submissions` | Submission review — formatted dates, sort by date, filter by employee / assessment ID |
 | `/client` | Take assessment (Pyodide, Jupyter, mixed, timed) |
 
@@ -462,6 +464,9 @@ assessment/
 | `DELETE /admin/assessments/{id}` | Admin | Delete assessment |
 | `GET /admin/question-bank` | Admin | Browse the reusable question bank and view correctness stats |
 | `GET /admin/question-bank/availability` | Admin | Check bank availability by topics and difficulty before generation |
+| `GET /admin/employee-report?employee_id=` | Admin | Cross-assessment skills progress report (JSON) |
+| `GET /client/employee-profile?employee_id=&scope=` | Public | Topic performance profile for improvement flows |
+| `GET /client/my-report?employee_id=&period=` | Public | Shippable skills progress report (JSON) |
 | `GET /assessment/{id}?employee_id=…` | Public* | Questions, `topic_modality`, `notebook_expected`, `timer` |
 | `GET /assessment/{id}/report?employee_id=…` | Public* | Feedback report JSON (MCQ + Pyodide coding; no Jupyter) |
 | `POST /submit-assessment` | Public* | Grade in-browser answers (`employee_id` for timed) |

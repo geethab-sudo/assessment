@@ -213,6 +213,14 @@ export default function AdminSubmissionsPage() {
                   {groups.reduce((n, g) => n + g.attempts.length, 0) !== 1 ? "s" : ""} matching
                 </span>
               )}
+              {employeeFilter.trim() && (
+                <Link
+                  className="submissions-report-link"
+                  to={`/admin/employee-report/${encodeURIComponent(employeeFilter.trim())}`}
+                >
+                  Skills report for {employeeFilter.trim()} →
+                </Link>
+              )}
             </div>
 
             {groups.length === 0 ? (

@@ -7,6 +7,7 @@ import AdminReviewPage from "./pages/AdminReviewPage.jsx";
 import AdminSubmissionsPage from "./pages/AdminSubmissionsPage.jsx";
 import AdminCatalogPage from "./pages/AdminCatalogPage.jsx";
 import AdminQuestionBankPage from "./pages/AdminQuestionBankPage.jsx";
+import EmployeeReportPage from "./pages/EmployeeReportPage.jsx";
 import ClientPage from "./pages/ClientPage.jsx";
 import LoginAdminPage from "./pages/LoginAdminPage.jsx";
 import LoginClientPage from "./pages/LoginClientPage.jsx";
@@ -101,7 +102,16 @@ function Layout() {
             </ProtectedAdmin>
           }
         />
+        <Route
+          path="/admin/employee-report/:employeeId?"
+          element={
+            <ProtectedAdmin>
+              <EmployeeReportPage mode="admin" />
+            </ProtectedAdmin>
+          }
+        />
         <Route path="/client" element={<ClientPage />} />
+        <Route path="/client/my-report" element={<EmployeeReportPage mode="client" />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>

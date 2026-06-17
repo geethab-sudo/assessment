@@ -6,6 +6,7 @@ import {
   isBankQuestion,
   partitionReviewQuestions,
 } from "../lib/assessmentConfirm.js";
+import { applyTabIndent } from "../lib/tabIndent.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -45,19 +46,6 @@ function OptionRow({ option, index, isCorrect, disabled, onTextChange, onMarkCor
       {isCorrect && <span className="review-option-badge">Correct</span>}
     </div>
   );
-}
-
-/** Insert 4 spaces at the cursor position instead of moving focus away. */
-function handleTabKey(e) {
-  if (e.key !== "Tab") return;
-  e.preventDefault();
-  const el = e.currentTarget;
-  const start = el.selectionStart;
-  const end = el.selectionEnd;
-  const indent = "    "; // 4 spaces
-  el.value = el.value.slice(0, start) + indent + el.value.slice(end);
-  el.selectionStart = el.selectionEnd = start + indent.length;
-  el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function QuestionCard({
@@ -140,7 +128,14 @@ function QuestionCard({
               className="review-field-textarea review-field-textarea--code"
               value={question.code_snippet ?? ""}
               onChange={(e) => updateField("code_snippet", e.target.value)}
-              onKeyDown={locked ? undefined : handleTabKey}
+              onKeyDown={
+                locked
+                  ? undefined
+                  : (e) =>
+                      applyTabIndent(e, question.code_snippet ?? "", (next) =>
+                        updateField("code_snippet", next)
+                      )
+              }
               rows={5}
               spellCheck={false}
               readOnly={locked}

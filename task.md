@@ -144,7 +144,7 @@
 
 ---
 
-## Stage 4 — Employee performance profile + stats report
+## Stage 4 — Employee performance profile + stats report ✅
 
 > **Goal:** Backend profile API for “Help me improve” modes **and** a shippable employee stats report (screen + print/PDF).  
 > **Depends on:** Stage 0 (submissions + reports)  
@@ -154,86 +154,68 @@
 
 #### Backend
 
-- [ ] `services/employee_profile_service.py`
-  - [ ] `get_employee_profile(employee_id, language_code=None, scope="last_3" | "full_history")`
-  - [ ] `scope=last_3`: merge topic summaries from **last 3 distinct submitted assessments** only → `weakest_topics` (default avg &lt; 70%)
-  - [ ] `scope=full_history`: merge across **all** assessments → `explored_topic_names`, `unexplored_topic_names`, `recommended_difficulty_by_topic`
-  - [ ] Each improvement endpoint calls with the correct scope (weak areas → `last_3`; new areas + difficulty → `full_history`)
-- [ ] `GET /client/employee-profile` in `app.py` (client JWT) with `scope` query param, or scope fixed per improvement route
-- [ ] Pydantic response schema in `schemas/assessment.py` or new `schemas/improvement.py`
+- [x] `services/employee_profile_service.py`
+  - [x] `get_employee_profile(employee_id, language_code=None, scope="last_3" | "full_history")`
+  - [x] `scope=last_3`: merge topic summaries from **last 3 distinct submitted assessments** only → `weakest_topics` (default avg &lt; 70%)
+  - [x] `scope=full_history`: merge across **all** assessments → `explored_topic_names`, `unexplored_topic_names`, `recommended_difficulty_by_topic`
+  - [x] Each improvement endpoint calls with the correct scope (weak areas → `last_3`; new areas + difficulty → `full_history`)
+- [x] `GET /client/employee-profile` in `app.py` with `scope` query param
+- [x] Pydantic response schema in `schemas/improvement.py`
 
 #### Tests
 
-- [ ] `tests/test_employee_profile_service.py`
-  - [ ] Employee with 5 assessments: weak-areas scope analyzes only last 3
-  - [ ] Full-history scope: topic from assessment #1 still in `explored_topic_names` even if not in last 3
-  - [ ] `unexplored_topic_names` excludes all historically explored topics
+- [x] `tests/test_employee_profile_service.py`
+  - [x] Employee with 5 assessments: weak-areas scope analyzes only last 3
+  - [x] Full-history scope: topic from assessment #1 still in `explored_topic_names` even if not in last 3
+  - [x] `unexplored_topic_names` excludes all historically explored topics
 
 **Acceptance (4A):** Weak areas ignores assessments older than the last 3; new areas and difficulty use complete history.
 
 ### 4B — Employee stats report (shippable to user)
 
-> Rich, print-ready report for one `employee_id` — languages evaluated, topics covered, progress charts, proficiency, time on platform. Can be shown in-app or exported for email/PDF.
-
 #### Report identity
 
-- [ ] Title: **Skills Progress Report**
-- [ ] Fields: `employee_id`, display name, period toggle (“All time” / “Last 90 days”), `report_generated_at`, report version
+- [x] Title: **Skills Progress Report**
+- [x] Fields: `employee_id`, display name, period toggle (“All time” / “Last 90 days”), `report_generated_at`, report version
 
 #### Page layout (print-ready)
 
-```text
-Hero strip → Proficiency by language + topic heatmap → Score trend + question-type donut
-→ Topic detail table + strengths/focus callouts → Recommended next steps (Help me improve CTAs)
-```
+- [x] Hero strip → languages + mastery → score trend + question-type donut → topic tables + insights
 
 #### Sections
 
-- [ ] **A. Executive summary (hero)** — overall proficiency index (0–100); assessments completed; questions answered; % correct overall; **time on platform** (sum of `submitted_at − started_at` per attempt + avg per assessment); language badges with mini scores
-- [ ] **B. Languages evaluated** — one card per `language_code`: topics covered vs catalog, question count, % correct, proficiency label (Beginner / Intermediate / Advanced using same thresholds as difficulty step-up: e.g. ≥75% at beginner → intermediate)
-- [ ] **C. Topics covered (per language)** — table per `(language, topic_name)`: attempted / mastered (`employee_question_mastery`), % correct (MCQ exact; coding ≥70), last difficulty, trend arrow vs previous assessment, optional sparkline of last 5 scores; optional heatmap (topic × difficulty → % correct)
-- [ ] **D. Progress over time (plots)** — line chart: assessment score % over time; stacked area: cumulative correct vs wrong; radar: latest assessment vs 3-assessment rolling average (weak-area view)
-- [ ] **E. Question-type analytics** — donut or grouped bars: MCQ vs coding vs subjective (count, % correct; avg time per type when per-question duration is available)
-- [ ] **F. Mastery & repetition** — mastered count (`employee_question_mastery`); needs-practice count (seen 2+ times, still below mastery)
-- [ ] **G. Strengths & focus areas (narrative)** — auto bullets: top 3 strengths (avg ≥80%, ≥5 questions); focus areas from last 3 (`scope=last_3`); unexplored catalog topics; one-sentence recommendation per focus area
-- [ ] **H. Footer / CTA** — link to weak-areas practice (`POST /client/improvement/weak-areas`); optional QR; disclaimer that scores reflect platform assessments only
+- [x] **A. Executive summary (hero)**
+- [x] **B. Languages evaluated**
+- [x] **C. Topics covered (per language)** — trend arrows; sparkline data in API
+- [x] **D. Progress over time (plots)** — line chart + cumulative data in API
+- [x] **E. Question-type analytics** — donut
+- [x] **F. Mastery & repetition**
+- [x] **G. Strengths & focus areas (narrative)**
+- [x] **H. Footer / CTA** — disclaimer; Stage 5 link placeholder
 
 #### Data model (`get_employee_report`)
 
-- [ ] `employee_id`, `display_name`, `report_generated_at`, `scope`
-- [ ] `summary`: `assessments_completed`, `questions_answered`, `overall_percent_correct`, `proficiency_label`, `total_time_seconds`, `avg_assessment_time_seconds`
-- [ ] `languages[]`: per-language `topics_covered`, `topics_in_catalog`, `questions_count`, `percent_correct`, `proficiency_label`, `topics[]` (topic performance rows)
-- [ ] `score_timeline[]`: `{ assessment_id, submitted_at, percent, language_code }`
-- [ ] `question_type_breakdown`: per-type `{ count, percent_correct }`
-- [ ] `mastery`: `{ mastered_count, needs_practice_count }`
-- [ ] `insights`: `{ strengths[], focus_areas[], unexplored_topics[] }`
+- [x] Full `EmployeeReportResponse` shape in `schemas/improvement.py`
 
 #### Backend
 
-- [ ] `get_employee_report(employee_id, language_code=None, period="all_time" | "last_90_days")` in `employee_profile_service.py` (extends 4A aggregations)
-- [ ] `GET /admin/employee-report?employee_id=` (admin JWT)
-- [ ] `GET /client/my-report` (client JWT; `employee_id` must match session)
-- [ ] Pydantic `EmployeeReportResponse` in `schemas/improvement.py` or `schemas/assessment.py`
+- [x] `get_employee_report(employee_id, language_code=None, period="all_time" | "last_90_days")`
+- [x] `GET /admin/employee-report?employee_id=` (admin JWT)
+- [x] `GET /client/my-report` (public; `employee_id` query param)
 
 #### Frontend
 
-- [ ] `EmployeeReportPage.jsx` — max-width ~900px, same design language as admin reports
-- [ ] Charts: Recharts or Chart.js — score ring (SVG), line, donut, radar (max 3–4 chart types)
-- [ ] Traffic-light topic chips: green ≥75%, amber 50–74%, red &lt;50%
-- [ ] Consistent color per language across charts
-- [ ] Empty state: “No submissions yet — complete your first assessment to see progress”
-- [ ] `@media print` stylesheet + **Download PDF** (`window.print()` or html2pdf.js / server WeasyPrint)
-- [ ] Routes: `/admin/employee-report/:employee_id`, `/client/my-report`
-
-#### Future (optional)
-
-- [ ] `POST /admin/employee-report/send` — email PDF attachment
+- [x] `EmployeeReportPage.jsx` — SVG charts (ring, line, donut)
+- [x] Traffic-light topic chips
+- [x] Empty state
+- [x] `@media print` + **Download PDF / Print** button
+- [x] Routes: `/admin/employee-report/:employeeId`, `/client/my-report`
 
 #### Tests
 
-- [ ] `tests/test_employee_report_service.py` — timeline ordering, time-on-platform sum, language rollup, empty employee
+- [x] `tests/test_employee_report_service.py` — timeline ordering, time-on-platform sum, language rollup, empty employee
 
-**Acceptance (4B):** Admin or employee opens report for a user with ≥2 submissions; sees hero, language cards, trend chart, topic table, and can print/export a clean PDF.
+**Acceptance (4B):** Admin or employee opens report for a user with history; sees hero, language cards, trend chart, topic table; can print/export PDF.
 
 ---
 

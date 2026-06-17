@@ -23,7 +23,9 @@ from schemas.admin import (
 from schemas.assessment import AssessmentResponse
 from schemas.catalog import LanguageResponse, LanguagesResponse, TopicResponse, TopicsResponse
 from schemas.common import OkDeletedResponse
+from schemas.improvement import EmployeeReportResponse
 from services import assessment_service, audit_log, catalog_service, db_service, question_bank_service
+from services import employee_profile_service
 
 admin_router = APIRouter(
     prefix="/admin",
@@ -551,6 +553,50 @@ def confirm_assessment(request: Request, body: ConfirmAssessmentBody) -> Generat
         resource_id=response.assessment_id,
     )
     return response
+
+
+@admin_router.get(
+    "/employee-report",
+    summary="Employee skills progress report",
+    response_model=EmployeeReportResponse,
+    dependencies=[Depends(require_admin)],
+    responses={
+        200: {"description": "Full cross-assessment stats report for one employee."},
+        **admin_crud_errors(include_404=False),
+    },
+)
+def admin_employee_report(
+    employee_id: Annotated[
+        str,
+        Query(min_length=1, max_length=64, description="Participant employee id."),
+    ],
+    period: Annotated[
+        str,
+        Query(description="`all_time` or `last_90_days`."),
+    ] = "all_time",
+    language_code: Annotated[
+        str | None,
+        Query(max_length=32, description="Optional catalog language code filter."),
+    ] = None,
+) -> EmployeeReportResponse:
+    """Admin view of the shippable employee stats report."""
+    period_norm = period.strip().lower()
+    if period_norm not in ("all_time", "last_90_days"):
+        raise HTTPException(
+            status_code=400,
+            detail="period must be all_time or last_90_days",
+        )
+    try:
+        data = employee_profile_service.get_employee_report(
+            employee_id.strip(),
+            language_code=language_code,
+            period=period_norm,  # type: ignore[arg-type]
+        )
+        return EmployeeReportResponse.model_validate(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @admin_router.patch(

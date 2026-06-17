@@ -45,8 +45,9 @@ from schemas.assessment import (
 from schemas.auth import ClientLoginResponse, LoginBody, LoginResponse
 from schemas.catalog import LanguagesResponse
 from schemas.common import ErrorDetail, HealthResponse, ValidationErrorItem, ValidationErrorResponse
+from schemas.improvement import EmployeeProfileResponse, EmployeeReportResponse
 from services import assessment_service, audit_log, auth_service, catalog_service, notebook_service, report_service
-from services import db_service
+from services import db_service, employee_profile_service
 from services.attempt_service import TimedAssessmentError
 from services.database import init_db, ping_database
 from services.llm_service import groq_key_configured
@@ -405,6 +406,96 @@ def get_participant_report(
         msg = str(e)
         status = 404 if "not found" in msg.lower() or "unknown" in msg.lower() else 400
         raise HTTPException(status_code=status, detail=msg) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get(
+    "/client/employee-profile",
+    tags=["client"],
+    summary="Cross-assessment employee performance profile",
+    response_model=EmployeeProfileResponse,
+    responses={
+        200: {"description": "Topic performance rollup for improvement flows."},
+        400: ERROR_400,
+        500: ERROR_500,
+    },
+)
+def get_client_employee_profile(
+    employee_id: Annotated[
+        str,
+        Query(min_length=1, max_length=64, description="Participant employee id."),
+    ],
+    scope: Annotated[
+        str,
+        Query(description="`last_3` for weak areas; `full_history` for new areas / difficulty."),
+    ] = "last_3",
+    language_code: Annotated[
+        str | None,
+        Query(max_length=32, description="Optional catalog language code filter."),
+    ] = None,
+) -> EmployeeProfileResponse:
+    """Profile API used by Help me improve (Stage 5+) and report insights."""
+    scope_norm = scope.strip().lower()
+    if scope_norm not in ("last_3", "full_history"):
+        raise HTTPException(
+            status_code=400,
+            detail="scope must be last_3 or full_history",
+        )
+    try:
+        data = employee_profile_service.get_employee_profile(
+            employee_id.strip(),
+            language_code=language_code,
+            scope=scope_norm,  # type: ignore[arg-type]
+        )
+        return EmployeeProfileResponse.model_validate(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get(
+    "/client/my-report",
+    tags=["client"],
+    summary="Shippable employee skills progress report",
+    response_model=EmployeeReportResponse,
+    responses={
+        200: {"description": "Full stats report for screen view or PDF export."},
+        400: ERROR_400,
+        500: ERROR_500,
+    },
+)
+def get_client_employee_report(
+    employee_id: Annotated[
+        str,
+        Query(min_length=1, max_length=64, description="Participant employee id."),
+    ],
+    period: Annotated[
+        str,
+        Query(description="`all_time` or `last_90_days`."),
+    ] = "all_time",
+    language_code: Annotated[
+        str | None,
+        Query(max_length=32, description="Optional catalog language code filter."),
+    ] = None,
+) -> EmployeeReportResponse:
+    """Participant-facing stats report (self-service when employee_id is known)."""
+    period_norm = period.strip().lower()
+    if period_norm not in ("all_time", "last_90_days"):
+        raise HTTPException(
+            status_code=400,
+            detail="period must be all_time or last_90_days",
+        )
+    try:
+        data = employee_profile_service.get_employee_report(
+            employee_id.strip(),
+            language_code=language_code,
+            period=period_norm,  # type: ignore[arg-type]
+        )
+        return EmployeeReportResponse.model_validate(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

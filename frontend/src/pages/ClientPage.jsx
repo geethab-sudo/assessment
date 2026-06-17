@@ -486,6 +486,15 @@ export default function ClientPage() {
             />
           </label>
         </div>
+        {employeeId.trim() && (
+          <p className="muted small-print" style={{ margin: "0.5rem 0 0" }}>
+            <Link
+              to={`/client/my-report?employee_id=${encodeURIComponent(employeeId.trim())}`}
+            >
+              View my skills progress report →
+            </Link>
+          </p>
+        )}
         <div className="row">
           <label className="grow">
             Assessment ID

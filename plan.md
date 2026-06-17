@@ -295,7 +295,7 @@ target_employee_id: str | null   # optional; exclude bank questions this employe
 
 ---
 
-### Stage 4 — Employee performance profile + stats report
+### Stage 4 — Employee performance profile + stats report ✅
 
 **Goal:** (A) Backend service that powers all three “Help me improve” modes with **different history windows per mode**; (B) a **shippable employee stats report** (screen + print/PDF) for one `employee_id`.
 
