@@ -78,7 +78,15 @@ class HealthResponse(BaseModel):
     database: bool = Field(..., description="Whether the database connection is reachable.")
     groq_configured: bool = Field(
         ...,
-        description="Whether `GROQ_API_KEY` is set for LLM question generation and grading.",
+        description="Whether an active LLM agent is configured (legacy field name).",
+    )
+    llm_configured: bool = Field(
+        ...,
+        description="Whether a selected active LLM agent has an API key configured.",
+    )
+    active_agent: str | None = Field(
+        default=None,
+        description="Name of the currently selected LLM provider, if any.",
     )
     auth_configured: bool = Field(
         ...,
@@ -92,6 +100,8 @@ class HealthResponse(BaseModel):
                     "status": "ok",
                     "database": True,
                     "groq_configured": True,
+                    "llm_configured": True,
+                    "active_agent": "groq",
                     "auth_configured": True,
                 }
             ]

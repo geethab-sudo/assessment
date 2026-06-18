@@ -1,6 +1,6 @@
 """
-LLM calls via Groq (OpenAI-compatible Chat Completions API) with JSON responses.
-Get a key at https://console.groq.com/keys — set GROQ_API_KEY in .env
+LLM calls via configurable providers (Groq, OpenAI, Claude, Gemini).
+The active provider and API key are read from the `agents` table at request time.
 """
 
 from __future__ import annotations
@@ -8,23 +8,57 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 from openai import APIStatusError, OpenAI
 
-# Ensure `.env` is loaded when this module is imported (project root = parent of `services/`)
+from services import agent_service
+
 load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
 
-# Groq OpenAI-compatible base URL (not the OpenAI Responses API)
-GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-
-_client: OpenAI | None = None
+ClientType = Literal["openai", "anthropic"]
 
 
-def _normalize_groq_key(raw: str | None) -> str | None:
-    """Strip whitespace and optional surrounding quotes often pasted by mistake."""
+@dataclass(frozen=True)
+class ProviderConfig:
+    client_type: ClientType
+    base_url: str | None
+    default_model: str
+    display_name: str
+
+
+PROVIDER_CONFIGS: dict[str, ProviderConfig] = {
+    "groq": ProviderConfig(
+        client_type="openai",
+        base_url="https://api.groq.com/openai/v1",
+        default_model=os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile"),
+        display_name="Groq",
+    ),
+    "openai": ProviderConfig(
+        client_type="openai",
+        base_url="https://api.openai.com/v1",
+        default_model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        display_name="OpenAI",
+    ),
+    "gemini": ProviderConfig(
+        client_type="openai",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        default_model=os.environ.get("GEMINI_MODEL", "gemini-2.0-flash"),
+        display_name="Gemini",
+    ),
+    "claude": ProviderConfig(
+        client_type="anthropic",
+        base_url=None,
+        default_model=os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-20250514"),
+        display_name="Claude",
+    ),
+}
+
+
+def _normalize_key(raw: str | None) -> str | None:
     if raw is None:
         return None
     key = raw.strip().strip('"').strip("'").strip()
@@ -32,48 +66,81 @@ def _normalize_groq_key(raw: str | None) -> str | None:
 
 
 def groq_key_configured() -> bool:
-    """True if a non-empty GROQ_API_KEY is present after normalization."""
-    return _normalize_groq_key(os.environ.get("GROQ_API_KEY")) is not None
+    """Backward-compatible alias: true when a usable LLM agent is configured."""
+    return llm_key_configured()
 
 
-def _get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        api_key = _normalize_groq_key(os.environ.get("GROQ_API_KEY"))
-        if not api_key:
-            raise RuntimeError(
-                "GROQ_API_KEY is not set. Add it to your environment or .env "
-                "(create a key at https://console.groq.com/keys)."
-            )
-        _client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL)
-    return _client
+def llm_key_configured() -> bool:
+    """True if the selected active agent has a non-empty API key."""
+    agent = agent_service.get_selected_agent()
+    if not agent:
+        return False
+    return _normalize_key(agent.get("api_key_masked")) is not None
 
 
-def _groq_auth_hint() -> str:
+def get_active_agent_info() -> dict[str, Any] | None:
+    """Public summary of the selected agent (no API key)."""
+    agent = agent_service.get_selected_agent()
+    if not agent:
+        return None
+    name = agent["agent_name"]
+    cfg = PROVIDER_CONFIGS.get(name)
+    return {
+        "id": agent["id"],
+        "agent_name": name,
+        "display_name": cfg.display_name if cfg else name,
+        "model": cfg.default_model if cfg else None,
+    }
+
+
+def _get_active_agent() -> dict[str, Any]:
+    agent = agent_service.get_selected_agent()
+    if not agent:
+        raise RuntimeError(
+            "No active LLM agent is configured. An admin must add an agent and select it "
+            "under Admin → Agents."
+        )
+    api_key = _normalize_key(agent.get("api_key_masked"))
+    if not api_key:
+        raise RuntimeError(
+            f"The selected agent ({agent.get('agent_name', 'unknown')}) has no API key. "
+            "Update it in Admin → Agents."
+        )
+    name = agent["agent_name"]
+    cfg = PROVIDER_CONFIGS.get(name)
+    if not cfg:
+        raise RuntimeError(
+            f"Unsupported agent provider: {name!r}. "
+            f"Supported: {', '.join(sorted(PROVIDER_CONFIGS))}."
+        )
+    return {
+        "id": agent["id"],
+        "agent_name": name,
+        "api_key": api_key,
+        "config": cfg,
+    }
+
+
+def _auth_hint(provider: str) -> str:
     return (
-        "Groq returned 401 (invalid API key). (1) Copy a key from "
-        "https://console.groq.com/keys (starts with `gsk_`). (2) Put it in `.env` as "
-        "GROQ_API_KEY=gsk_... on one line, no quotes. (3) Save the file — unsaved editor "
-        "buffers still leave the old placeholder on disk. (4) Restart uvicorn. "
-        "If you previously `export`ed GROQ_API_KEY in the terminal, close that shell or "
-        "unset it; the app now prefers `.env` over stale env vars."
+        f"{provider} returned 401 (invalid API key). Update the API key for this agent "
+        "in Admin → Agents, then try again."
     )
 
 
-def _chat_json_text(
-    prompt: str,
-    model: str | None = None,
+def _chat_openai_json(
     *,
-    temperature: float = 0.4,
+    api_key: str,
+    base_url: str,
+    model: str,
+    prompt: str,
+    temperature: float,
+    provider_label: str,
 ) -> str:
-    """
-    Chat Completions with JSON object mode (Groq supports this for compatible models).
-    """
-    m = model or os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-    client = _get_client()
+    client = OpenAI(api_key=api_key, base_url=base_url)
     try:
         response = client.chat.completions.create(
-            model=m,
+            model=model,
             messages=[
                 {
                     "role": "system",
@@ -86,14 +153,80 @@ def _chat_json_text(
         )
     except APIStatusError as e:
         if e.status_code == 401:
-            raise RuntimeError(_groq_auth_hint()) from e
-        raise RuntimeError(f"Groq API error ({e.status_code}): {e}") from e
+            raise RuntimeError(_auth_hint(provider_label)) from e
+        raise RuntimeError(f"{provider_label} API error ({e.status_code}): {e}") from e
 
     choice = response.choices[0].message
     text = choice.content if choice else None
     if not text:
-        raise RuntimeError("Empty response from Groq")
+        raise RuntimeError(f"Empty response from {provider_label}")
     return text
+
+
+def _chat_anthropic_json(
+    *,
+    api_key: str,
+    model: str,
+    prompt: str,
+    temperature: float,
+) -> str:
+    try:
+        import anthropic
+    except ImportError as e:
+        raise RuntimeError(
+            "Claude support requires the anthropic package. Install with: pip install anthropic"
+        ) from e
+
+    client = anthropic.Anthropic(api_key=api_key)
+    try:
+        response = client.messages.create(
+            model=model,
+            max_tokens=4096,
+            system="You reply only with a single valid JSON object. No markdown.",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+        )
+    except anthropic.AuthenticationError as e:
+        raise RuntimeError(_auth_hint("Claude")) from e
+    except anthropic.APIStatusError as e:
+        raise RuntimeError(f"Claude API error ({e.status_code}): {e}") from e
+
+    parts: list[str] = []
+    for block in response.content:
+        if getattr(block, "type", None) == "text":
+            parts.append(block.text)
+    text = "".join(parts).strip()
+    if not text:
+        raise RuntimeError("Empty response from Claude")
+    return text
+
+
+def _chat_json_text(
+    prompt: str,
+    model: str | None = None,
+    *,
+    temperature: float = 0.4,
+) -> str:
+    active = _get_active_agent()
+    cfg: ProviderConfig = active["config"]
+    m = model or cfg.default_model
+    api_key = active["api_key"]
+
+    if cfg.client_type == "openai":
+        return _chat_openai_json(
+            api_key=api_key,
+            base_url=cfg.base_url or "",
+            model=m,
+            prompt=prompt,
+            temperature=temperature,
+            provider_label=cfg.display_name,
+        )
+    return _chat_anthropic_json(
+        api_key=api_key,
+        model=m,
+        prompt=prompt,
+        temperature=temperature,
+    )
 
 
 def _parse_strict_json(raw: str) -> dict[str, Any]:

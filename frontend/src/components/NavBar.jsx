@@ -29,6 +29,7 @@ export default function NavBar() {
             <Link to="/admin/assessments">Assessments</Link>
             <Link to="/admin/catalog">Catalog</Link>
             <Link to="/admin/question-bank">Question bank</Link>
+            <Link to="/admin/agents">Agents</Link>
             <Link to="/admin/submissions">Submissions</Link>
             <Link to="/admin/employee-report">Reports</Link>
             <button

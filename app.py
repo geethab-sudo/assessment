@@ -59,7 +59,7 @@ from services import assessment_service, audit_log, auth_service, catalog_servic
 from services import db_service, employee_profile_service, improvement_assessment_service
 from services.attempt_service import TimedAssessmentError
 from services.database import init_db, ping_database
-from services.llm_service import groq_key_configured
+from services.llm_service import get_active_agent_info, groq_key_configured, llm_key_configured
 
 MAX_NOTEBOOK_BYTES = 5 * 1024 * 1024  # 5 MiB
 
@@ -170,10 +170,14 @@ def health() -> HealthResponse:
 
     Does not require authentication. Use for load-balancer probes and deployment checks.
     """
+    active = get_active_agent_info()
+    llm_ok = llm_key_configured()
     return HealthResponse(
         status="ok",
         database=ping_database(),
-        groq_configured=groq_key_configured(),
+        groq_configured=llm_ok,
+        llm_configured=llm_ok,
+        active_agent=active["agent_name"] if active else None,
         auth_configured=bool(
             auth_service.jwt_configured() and auth_service.admin_password_configured()
         ),

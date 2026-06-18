@@ -20,6 +20,28 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from services.database import Base
 
 
+class Agent(Base):
+    """LLM provider configuration (Groq, Claude, OpenAI, Gemini, etc.)."""
+
+    __tablename__ = "agents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_name: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    api_key: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default=text("'Active'"),
+    )
+    is_selected: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )
+    created_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
 class Language(Base):
     """Supported languages (human or course locale); `code` and `name` are required."""
 

@@ -21,10 +21,11 @@ from schemas.admin import (
     BankAvailabilityResponse,
 )
 from schemas.assessment import AssessmentResponse
+from schemas.agents import AgentCreateBody, AgentResponse, AgentsResponse, AgentUpdateBody
 from schemas.catalog import LanguageResponse, LanguagesResponse, TopicResponse, TopicsResponse
 from schemas.common import OkDeletedResponse
 from schemas.improvement import EmployeeReportResponse
-from services import assessment_service, audit_log, catalog_service, db_service, question_bank_service
+from services import agent_service, assessment_service, audit_log, catalog_service, db_service, question_bank_service
 from services import employee_profile_service
 
 admin_router = APIRouter(
@@ -380,6 +381,116 @@ def admin_update_topic(
     return result
 
 
+@admin_router.get(
+    "/agents",
+    summary="List LLM agents",
+    response_model=AgentsResponse,
+    responses={
+        200: {"description": "Configured LLM providers and which one is selected."},
+        **admin_crud_errors(include_404=False, include_auth=False),
+    },
+)
+def admin_list_agents() -> AgentsResponse:
+    """List all configured LLM agents (API keys are masked)."""
+    return AgentsResponse(agents=agent_service.list_agents())
+
+
+@admin_router.post(
+    "/agents",
+    summary="Create LLM agent",
+    response_model=AgentResponse,
+    dependencies=[Depends(require_admin)],
+    responses={
+        200: {"description": "Agent created."},
+        **admin_crud_errors(include_404=False),
+    },
+)
+def admin_create_agent(request: Request, body: AgentCreateBody) -> AgentResponse:
+    """Add a new LLM provider configuration with API key."""
+    try:
+        result = AgentResponse(agent=agent_service.create_agent(
+            agent_name=body.agent_name,
+            api_key=body.api_key,
+        ))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    audit_log.admin_action(
+        request,
+        action="agent.create",
+        resource="agent",
+        resource_id=result.agent.id,
+    )
+    return result
+
+
+@admin_router.put(
+    "/agents/{agent_id}",
+    summary="Update LLM agent",
+    response_model=AgentResponse,
+    dependencies=[Depends(require_admin)],
+    responses={
+        200: {"description": "Agent updated."},
+        **admin_crud_errors(),
+    },
+)
+def admin_update_agent(
+    request: Request,
+    agent_id: Annotated[int, Path(description="Primary key of the agent.", ge=1)],
+    body: AgentUpdateBody,
+) -> AgentResponse:
+    """Update agent name, API key, and/or status."""
+    try:
+        result = AgentResponse(
+            agent=agent_service.update_agent(
+                agent_id=agent_id,
+                agent_name=body.agent_name,
+                api_key=body.api_key,
+                status=body.status,
+            )
+        )
+    except ValueError as e:
+        msg = str(e)
+        status = 404 if msg == "Agent not found" else 400
+        raise HTTPException(status_code=status, detail=msg) from e
+    audit_log.admin_action(
+        request,
+        action="agent.update",
+        resource="agent",
+        resource_id=agent_id,
+    )
+    return result
+
+
+@admin_router.post(
+    "/agents/{agent_id}/select",
+    summary="Select active LLM agent",
+    response_model=AgentResponse,
+    dependencies=[Depends(require_admin)],
+    responses={
+        200: {"description": "Agent selected for all LLM requests."},
+        **admin_crud_errors(),
+    },
+)
+def admin_select_agent(
+    request: Request,
+    agent_id: Annotated[int, Path(description="Primary key of the agent to select.", ge=1)],
+) -> AgentResponse:
+    """Set this agent as the active provider for generation and grading."""
+    try:
+        result = AgentResponse(agent=agent_service.select_agent(agent_id=agent_id))
+    except ValueError as e:
+        msg = str(e)
+        status = 404 if msg == "Agent not found" else 400
+        raise HTTPException(status_code=status, detail=msg) from e
+    audit_log.admin_action(
+        request,
+        action="agent.select",
+        resource="agent",
+        resource_id=agent_id,
+    )
+    return result
+
+
 @admin_router.delete(
     "/topics/{topic_id}",
     summary="Delete catalog topic",
@@ -441,7 +552,7 @@ def generate_assessment(
     - `questions_per_type`: keys must match `types`; counts 1–30 each
     - `is_timed`: when `true`, `duration_minutes` is required
 
-    Returns HTTP 503 when `GROQ_API_KEY` is not configured.
+    Returns HTTP 503 when no active LLM agent is configured.
     """
     try:
         result = assessment_service.create_assessment(

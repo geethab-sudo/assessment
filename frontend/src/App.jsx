@@ -7,6 +7,7 @@ import AdminReviewPage from "./pages/AdminReviewPage.jsx";
 import AdminSubmissionsPage from "./pages/AdminSubmissionsPage.jsx";
 import AdminCatalogPage from "./pages/AdminCatalogPage.jsx";
 import AdminQuestionBankPage from "./pages/AdminQuestionBankPage.jsx";
+import AdminAgentsPage from "./pages/AdminAgentsPage.jsx";
 import EmployeeReportPage from "./pages/EmployeeReportPage.jsx";
 import ImprovementPage from "./pages/ImprovementPage.jsx";
 import ClientPage from "./pages/ClientPage.jsx";
@@ -100,6 +101,14 @@ function Layout() {
           element={
             <ProtectedAdmin>
               <AdminQuestionBankPage />
+            </ProtectedAdmin>
+          }
+        />
+        <Route
+          path="/admin/agents"
+          element={
+            <ProtectedAdmin>
+              <AdminAgentsPage />
             </ProtectedAdmin>
           }
         />

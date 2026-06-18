@@ -75,6 +75,7 @@ def init_db() -> None:
     _ensure_assessment_attempts_table(eng)
     _ensure_topic_coding_editor_language_column(eng)
     _ensure_question_code_snippet_column(eng)
+    _ensure_agents_table(eng)
     _ensure_required_indexes(eng)
     _ensure_question_bank_table(eng)           # must run before FK column below
     _ensure_assessment_question_bank_columns(eng)
@@ -82,6 +83,9 @@ def init_db() -> None:
     _backfill_question_bank_from_assessment_questions_if_needed(eng)
     _ensure_employee_question_mastery_table(eng)
     _backfill_employee_question_mastery_if_empty(eng)
+    from services.agent_service import seed_default_agent_from_env
+
+    seed_default_agent_from_env()
 
 
 def _ensure_raw_notebook_column(eng) -> None:
@@ -319,6 +323,27 @@ def _ensure_question_code_snippet_column(eng) -> None:
         )
 
 
+def _ensure_agents_table(eng) -> None:
+    """Create agents table if missing (also created by create_all on fresh DB)."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS agents (
+                    id SERIAL PRIMARY KEY,
+                    agent_name VARCHAR(64) NOT NULL UNIQUE,
+                    api_key TEXT NOT NULL DEFAULT '',
+                    status VARCHAR(16) NOT NULL DEFAULT 'Active',
+                    is_selected BOOLEAN NOT NULL DEFAULT false,
+                    created_at VARCHAR(64) NOT NULL,
+                    updated_at VARCHAR(64) NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS ix_agents_agent_name ON agents (agent_name);
+                """
+            )
+        )
+
+
 def _ensure_question_bank_table(eng) -> None:
     """Create question_bank table and its indexes if they do not exist."""
     with eng.begin() as conn:
@@ -461,7 +486,6 @@ def _backfill_employee_question_mastery_if_empty(eng) -> None:
     from services import question_bank_service
 
     question_bank_service.backfill_employee_mastery_from_submissions()
-
 
 def _ensure_required_indexes(eng) -> None:
     """Add btree indexes used by frequent filters/sorts (idempotent on PostgreSQL)."""
