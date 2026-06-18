@@ -1,4 +1,9 @@
-"""Unit tests for participant shuffle utilities."""
+"""Participant shuffle utilities (``services.shuffle_service``).
+
+Each employee sees the same assessment questions in a deterministic but
+per-participant order; MCQ option order is shuffled independently per question.
+See TEST_GUIDE.md § IDs and low-level utilities.
+"""
 
 from __future__ import annotations
 
@@ -21,24 +26,32 @@ def _coding(qid: str) -> dict:
 
 
 class TestParticipantSeed(unittest.TestCase):
+    """Seed derivation must be stable and employee-specific."""
+
     def test_stable_for_same_inputs(self) -> None:
+        """Same assessment + employee always yields the same seed."""
         a = participant_seed("assess-1", "E1001")
         b = participant_seed("assess-1", "E1001")
         self.assertEqual(a, b)
 
     def test_case_insensitive_employee_id(self) -> None:
+        """Employee ID casing must not change the shuffle seed."""
         a = participant_seed("assess-1", "e1001")
         b = participant_seed("assess-1", "E1001")
         self.assertEqual(a, b)
 
     def test_different_employee_different_seed(self) -> None:
+        """Different employees on the same assessment get different seeds."""
         a = participant_seed("assess-1", "E1001")
         b = participant_seed("assess-1", "E1002")
         self.assertNotEqual(a, b)
 
 
 class TestShuffleQuestions(unittest.TestCase):
+    """Question order is permuted deterministically from the participant seed."""
+
     def test_deterministic_order(self) -> None:
+        """Repeated shuffles with the same seed produce identical order (not identity)."""
         qs = [_coding(str(i)) for i in range(1, 8)]
         seed = participant_seed("a1", "E1")
         o1 = [q["question_id"] for q in shuffle_questions(qs, seed)]
@@ -47,6 +60,7 @@ class TestShuffleQuestions(unittest.TestCase):
         self.assertNotEqual(o1, [str(i) for i in range(1, 8)])
 
     def test_different_seed_different_order(self) -> None:
+        """Different seeds on the same question list yield different permutations."""
         qs = [_coding(str(i)) for i in range(1, 11)]
         s1 = participant_seed("a1", "E1")
         s2 = participant_seed("a1", "E2")
@@ -56,7 +70,10 @@ class TestShuffleQuestions(unittest.TestCase):
 
 
 class TestShuffleMcqOptions(unittest.TestCase):
+    """MCQ options are shuffled without changing question_id or option set."""
+
     def test_shuffles_options_not_question_id(self) -> None:
+        """Options reorder; question_id and sorted option values stay the same."""
         q = _mcq("1", ["A", "B", "C", "D"])
         seed = participant_seed("a1", "E1")
         out = shuffle_mcq_options(q, seed)
@@ -65,6 +82,7 @@ class TestShuffleMcqOptions(unittest.TestCase):
         self.assertNotEqual(out["options"], ["A", "B", "C", "D"])
 
     def test_stable_option_order_per_question(self) -> None:
+        """Same question + seed always yields the same option permutation."""
         q = _mcq("2", ["w", "x", "y", "z"])
         seed = 12345
         o1 = shuffle_mcq_options(q, seed)["options"]
@@ -73,13 +91,17 @@ class TestShuffleMcqOptions(unittest.TestCase):
 
 
 class TestApplyParticipantShuffle(unittest.TestCase):
+    """End-to-end: question order + per-MCQ option shuffle for one participant."""
+
     def test_empty_employee_id_unchanged(self) -> None:
+        """Anonymous / missing employee_id skips shuffle entirely."""
         qs = [_mcq("1", ["a", "b"]), _coding("2")]
         out = apply_participant_shuffle("aid", "", qs)
         self.assertEqual([q["question_id"] for q in out], ["1", "2"])
         self.assertEqual(out[0]["options"], ["a", "b"])
 
     def test_apply_changes_order_and_mcq_options(self) -> None:
+        """With employee_id set, both question order and MCQ options may change."""
         qs = [_mcq("1", ["a", "b", "c", "d"]), _mcq("2", ["w", "x", "y", "z"]), _coding("3")]
         out = apply_participant_shuffle("aid", "E99", qs)
         ids = [q["question_id"] for q in out]

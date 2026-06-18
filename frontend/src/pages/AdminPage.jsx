@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { apiFetch } from "../api";
+import {
+  buildConfirmBody,
+  isFullBankRecycle,
+} from "../lib/assessmentConfirm.js";
 import SearchableLanguageSelect from "../components/SearchableLanguageSelect.jsx";
 import {
   applyPreset,
@@ -106,6 +110,7 @@ export default function AdminPage() {
   const [perTopicCounts, setPerTopicCounts] = useState({}); // { [topicId]: { mcq, coding, subjective } }
 
   const [isTimed, setIsTimed] = useState(false);
+  const [allowPyodidePaste, setAllowPyodidePaste] = useState(false);
   const [durationMinutes, setDurationMinutes] = useState(45);
   const [notebookGraceMinutes, setNotebookGraceMinutes] = useState(5);
 
@@ -113,6 +118,10 @@ export default function AdminPage() {
   const [selectedPresetName, setSelectedPresetName] = useState(null);
   const [showDistributionEditor, setShowDistributionEditor] = useState(false);
   const [presetMissingTopics, setPresetMissingTopics] = useState([]);
+
+  const [questionSource, setQuestionSource] = useState("generate_new");
+  const [targetEmployeeId, setTargetEmployeeId] = useState("");
+  const [bankAvailability, setBankAvailability] = useState(null);
 
   const tier1Presets = useMemo(() => getTier1Presets(), []);
 
@@ -370,6 +379,53 @@ export default function AdminPage() {
     return { mcq, coding, subjective };
   }, [selectedTopicIds, perTopicCounts]);
 
+  const totalQuestionCount = useMemo(
+    () => totalCounts.mcq + totalCounts.coding + totalCounts.subjective,
+    [totalCounts]
+  );
+
+  useEffect(() => {
+    if (questionSource !== "recycle_then_generate") {
+      setBankAvailability(null);
+      return;
+    }
+    if (
+      topicMode !== "catalog" ||
+      topicNamesForGenerate.length === 0 ||
+      totalQuestionCount === 0
+    ) {
+      setBankAvailability(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const params = new URLSearchParams();
+        for (const name of topicNamesForGenerate) {
+          params.append("topic_names", name);
+        }
+        params.set("difficulty", effectiveLevel);
+        params.set("n_requested", String(totalQuestionCount));
+        const eid = targetEmployeeId.trim();
+        if (eid) params.set("exclude_employee_id", eid);
+        const data = await apiFetch(`/admin/question-bank/availability?${params}`);
+        if (!cancelled) setBankAvailability(data);
+      } catch {
+        if (!cancelled) setBankAvailability(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    questionSource,
+    topicNamesForGenerate,
+    effectiveLevel,
+    totalQuestionCount,
+    targetEmployeeId,
+    topicMode,
+  ]);
+
   const buildTypesAndCounts = useMemo(() => {
     if (topicMode === "catalog" && (usePresetTier1 || allocationMode === "per-topic")) {
       const types = [];
@@ -475,6 +531,11 @@ export default function AdminPage() {
               notebook_grace_minutes: notebookGraceMinutes,
             }
           : {}),
+        allow_pyodide_paste: allowPyodidePaste,
+        question_source: questionSource,
+        ...(targetEmployeeId.trim()
+          ? { target_employee_id: targetEmployeeId.trim() }
+          : {}),
       };
 
       const data = await apiFetch("/admin/preview-questions", {
@@ -483,11 +544,35 @@ export default function AdminPage() {
         body: JSON.stringify(previewPayload),
       });
 
-      // Navigate to the review page, carrying the draft questions and confirm payload
+      const previewMeta = data.meta ?? null;
+      const questions = data.questions ?? [];
+
+      // 100% bank-sourced recycle: skip review and save immediately
+      if (isFullBankRecycle(previewMeta, questionSource)) {
+        const saved = await apiFetch("/admin/confirm-assessment", {
+          method: "POST",
+          authRole: "admin",
+          body: JSON.stringify(buildConfirmBody(previewPayload, questions)),
+        });
+        navigate("/admin/review", {
+          state: {
+            savedId: saved.assessment_id,
+            savedStats: {
+              bank: saved.bank_sourced_count ?? previewMeta.bank_sourced_count ?? 0,
+              llm: saved.llm_generated_count ?? 0,
+              messages: saved.shortage_messages ?? [],
+            },
+            recycledOnly: true,
+          },
+        });
+        return;
+      }
+
       navigate("/admin/review", {
         state: {
-          questions: data.questions,
+          questions,
           confirmPayload: previewPayload,
+          previewMeta,
         },
       });
     } catch (e) {
@@ -529,6 +614,8 @@ export default function AdminPage() {
         <p className="muted" style={{ marginTop: "0.65rem" }}>
           <Link to="/admin/assessments">Browse assessments</Link>
           {" · "}
+          <Link to="/admin/question-bank">Question bank</Link>
+          {" · "}
           <Link to="/admin/catalog">Catalog</Link>
           {" · "}
           <Link to="/admin/submissions">Submissions</Link>
@@ -537,6 +624,58 @@ export default function AdminPage() {
 
       <section className="card">
         <h2>Configuration</h2>
+        {topicMode === "catalog" && (
+          <div className="bank-source-block" style={{ marginBottom: "1.25rem" }}>
+            <h3 className="topic-preview-title">Question source</h3>
+            <label className="radio-row">
+              <input
+                type="radio"
+                name="questionSource"
+                value="generate_new"
+                checked={questionSource === "generate_new"}
+                onChange={() => setQuestionSource("generate_new")}
+              />
+              Generate new (LLM only)
+            </label>
+            <label className="radio-row">
+              <input
+                type="radio"
+                name="questionSource"
+                value="recycle_then_generate"
+                checked={questionSource === "recycle_then_generate"}
+                onChange={() => setQuestionSource("recycle_then_generate")}
+              />
+              Recycle then generate (bank first, LLM for any shortfall)
+            </label>
+            {questionSource === "recycle_then_generate" && (
+              <>
+                <label style={{ display: "block", marginTop: "0.75rem" }}>
+                  Exclude mastered questions for employee (optional)
+                  <input
+                    type="text"
+                    value={targetEmployeeId}
+                    onChange={(e) => setTargetEmployeeId(e.target.value)}
+                    placeholder="e.g. E1001"
+                    style={{ display: "block", width: "100%", marginTop: "0.25rem" }}
+                  />
+                </label>
+                {bankAvailability && (
+                  <p className="muted" style={{ marginTop: "0.75rem" }} role="status">
+                    Bank: <strong>{bankAvailability.available}</strong> of{" "}
+                    <strong>{bankAvailability.requested}</strong> questions available
+                    {bankAvailability.shortage > 0 ? (
+                      <>
+                        {" "}
+                        — we will generate <strong>{bankAvailability.shortage}</strong> new
+                      </>
+                    ) : null}
+                    .
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
         <div className="grid">
           {!(usePresetTier1 && topicMode === "catalog") && (
             <label>
@@ -1151,6 +1290,30 @@ export default function AdminPage() {
               Grace minutes allow uploading the Jupyter notebook after the main timer ends.
             </p>
           )}
+        </div>
+
+        <div
+          className="pyodide-paste-config"
+          style={{
+            marginTop: "1rem",
+            padding: "0.85rem 1.1rem",
+            borderRadius: "10px",
+            border: "1px solid rgba(0,0,0,0.1)",
+            background: "rgba(0,0,0,0.02)",
+          }}
+        >
+          <label className="type-count-tog" style={{ display: "block" }}>
+            <input
+              type="checkbox"
+              checked={allowPyodidePaste}
+              onChange={(e) => setAllowPyodidePaste(e.target.checked)}
+            />{" "}
+            <strong>Allow copy-paste in Pyodide terminal</strong>
+          </label>
+          <p className="muted small-print" style={{ margin: "0.5rem 0 0 0", lineHeight: 1.5 }}>
+            Off by default. When enabled, participants can paste into the in-browser coding editor
+            (Pyodide / shell). MCQ copy blocking is unchanged.
+          </p>
         </div>
 
         <div style={{ marginTop: "1.1rem" }}>

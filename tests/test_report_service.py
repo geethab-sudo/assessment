@@ -1,4 +1,9 @@
-"""Tests for participant feedback report building."""
+"""Participant feedback report (``services.report_service``).
+
+Pytest tests for topic aggregation and per-assessment participant reports.
+Jupyter-topic coding is excluded from in-browser report scope and scoring.
+See TEST_GUIDE.md § Employee analytics.
+"""
 
 from __future__ import annotations
 
@@ -10,6 +15,7 @@ from services.report_service import aggregate_topic_summary, build_report
 
 
 def test_aggregate_topic_summary_groups_and_averages():
+    """Topics are grouped; empty topic_name becomes General; averages are computed."""
     questions = [
         {"topic_name": "OOP", "score": 90},
         {"topic_name": "OOP", "score": 80},
@@ -37,6 +43,7 @@ def test_build_report_joins_submissions_and_skips_jupyter_coding(
     mock_submissions,
     mock_modality,
 ):
+    """In-browser report includes MCQ + Pyodide coding only; Jupyter coding omitted."""
     mock_meta.return_value = {"jupyter_topic_names": ["Live API"]}
     mock_modality.return_value = {"Live API": "jupyter", "OOP": "pyodide"}
     mock_read_questions.return_value = [
@@ -117,6 +124,7 @@ def test_build_report_raises_when_no_submission(
     mock_read_questions,
     mock_submissions,
 ):
+    """Missing participant submission raises ValueError with a clear message."""
     mock_meta.return_value = {"jupyter_topic_names": []}
     mock_read_questions.return_value = [{"question_id": "1", "type": "mcq", "question": "Q"}]
     mock_submissions.return_value = []

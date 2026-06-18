@@ -1,8 +1,8 @@
 """
 Unit tests for assessment_service helpers that don't need a DB or LLM.
 
-These tests cover the refactored helper functions extracted from create_assessment
-and submit_assessment, verifying core logic without mocking heavy infrastructure.
+Covers options parsing, grading rules, routing flags, row builders, notebook
+templates, and already_submitted blocking on repeat load. See TEST_GUIDE.md.
 """
 
 from __future__ import annotations
@@ -26,10 +26,13 @@ from services.assessment_service import (
     _parse_options,
     _row_from_question,
     build_notebook_template,
+    get_assessment_for_user,
 )
 
 
 class TestOptionsForCsv(unittest.TestCase):
+    """Serialize MCQ options for CSV/database storage."""
+
     def test_none_returns_empty(self):
         self.assertEqual(_options_for_csv(None), "")
 
@@ -46,6 +49,8 @@ class TestOptionsForCsv(unittest.TestCase):
 
 
 class TestParseOptions(unittest.TestCase):
+    """Parse stored options JSON back to a list for grading/display."""
+
     def test_empty_string(self):
         self.assertEqual(_parse_options(""), [])
 
@@ -60,6 +65,8 @@ class TestParseOptions(unittest.TestCase):
 
 
 class TestIsAnswerCorrect(unittest.TestCase):
+    """Per-question-type correctness rules including coding score threshold."""
+
     def test_mcq_case_insensitive_match(self):
         self.assertTrue(_is_answer_correct("mcq", "  Answer A  ", "answer a", 0.0))
 
@@ -77,6 +84,8 @@ class TestIsAnswerCorrect(unittest.TestCase):
 
 
 class TestRowFromQuestion(unittest.TestCase):
+    """Convert LLM question dict to assessment_questions row shape."""
+
     def test_basic_structure(self):
         q = {"question": "What?", "type": "mcq", "options": ["a", "b"], "answer": "a"}
         row = _row_from_question(q, 3, "Topic A")
@@ -92,6 +101,8 @@ class TestRowFromQuestion(unittest.TestCase):
 
 
 class TestComputeRoutingFlag(unittest.TestCase):
+    """pyodide | jupyter | mixed from topic modality lists."""
+
     def test_empty_topics_is_pyodide(self):
         self.assertEqual(_compute_routing_flag([]), "pyodide")
 
@@ -120,6 +131,8 @@ class TestComputeRoutingFlag(unittest.TestCase):
 
 
 class TestBuildNotebookTemplate(unittest.TestCase):
+    """nbformat 4 notebook skeleton for Jupyter coding assessments."""
+
     def test_empty_questions_produces_no_cells(self):
         nb = build_notebook_template([], "test-id")
         self.assertEqual(nb["cells"], [])
@@ -144,6 +157,8 @@ class TestBuildNotebookTemplate(unittest.TestCase):
 
 
 class TestGenerateRowsLegacy(unittest.TestCase):
+    """Single-topic LLM generation path (pre per-topic config)."""
+
     def test_mismatched_types_raises(self):
         with self.assertRaises(ValueError):
             _generate_rows_legacy("id", "topic", "easy", ["mcq"], {"coding": 1})
@@ -162,6 +177,8 @@ class TestGenerateRowsLegacy(unittest.TestCase):
 
 
 class TestGenerateRowsPerTopic(unittest.TestCase):
+    """Per-topic LLM calls with global sequential question_id assignment."""
+
     def test_skips_topics_with_no_matching_type(self):
         per_topic = {
             "Topic A": {"mcq": 2},
@@ -194,6 +211,45 @@ class TestGenerateRowsPerTopic(unittest.TestCase):
             )
         self.assertEqual(rows[0]["question_id"], "1")
         self.assertEqual(rows[1]["question_id"], "2")
+
+
+class TestGetAssessmentForUserAlreadySubmitted(unittest.TestCase):
+    """Repeat load after submit must set already_submitted (timed and untimed)."""
+
+    @patch("services.assessment_service.notebook_plan_for_assessment")
+    @patch("services.assessment_service.attempt_service.user_has_submitted")
+    @patch("services.assessment_service.db_service.read_questions_by_assessment")
+    @patch("services.assessment_service.db_service.get_assessment_metadata")
+    def test_blocks_repeat_attempt_for_untimed_assessment(
+        self,
+        mock_meta: MagicMock,
+        mock_rows: MagicMock,
+        mock_submitted: MagicMock,
+        mock_plan: MagicMock,
+    ) -> None:
+        """Untimed assessment with prior submit returns empty questions + flag."""
+        mock_meta.return_value = {
+            "language_code": "py",
+            "routing_flag": "pyodide",
+            "topic_names": ["Topic A"],
+            "jupyter_topic_names": [],
+            "is_timed": False,
+        }
+        mock_rows.return_value = [
+            {"question_id": "1", "type": "mcq", "question": "Q?", "options": "[]"},
+        ]
+        mock_submitted.return_value = True
+        mock_plan.return_value = {
+            "notebook_expected": False,
+            "notebook_ready": False,
+            "expected_notebook_coding_count": 0,
+            "actual_notebook_coding_count": 0,
+        }
+
+        out = get_assessment_for_user("ASM-TEST01", employee_id="C002")
+
+        self.assertTrue(out["already_submitted"])
+        self.assertEqual(out["questions"], [])
 
 
 if __name__ == "__main__":

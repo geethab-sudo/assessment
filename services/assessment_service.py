@@ -12,6 +12,7 @@ from services.ids import generate_assessment_id
 from typing import Any
 
 from services import db_service
+from services import question_bank_service
 from services import attempt_service
 from services.database import get_session_factory
 from services.llm_service import evaluate_answers, generate_questions
@@ -58,6 +59,31 @@ _SHELL_CODING_HINT = (
 # Small helpers
 # ---------------------------------------------------------------------------
 
+def _upsert_to_bank(
+    assessment_id: str,
+    rows: list[dict[str, Any]],
+    level: str,
+    language_code: str | None = None,
+) -> None:
+    """Upsert new questions into the bank; link recycled rows by existing bank_question_id."""
+    bank_level = level.strip().lower()
+    new_rows: list[dict[str, Any]] = []
+    for row in rows:
+        bank_id = row.get("bank_question_id")
+        if bank_id is not None:
+            question_bank_service.increment_question_usage(int(bank_id))
+        else:
+            new_rows.append(row)
+
+    if new_rows:
+        hash_to_id = question_bank_service.add_questions_to_bank(
+            new_rows, bank_level, language_code
+        )
+        question_bank_service.link_assessment_questions_to_bank(
+            assessment_id, hash_to_id, bank_level
+        )
+
+
 def _options_for_csv(options: Any) -> str:
     """Serialize options list/dict to a JSON string for storage."""
     if options is None:
@@ -98,6 +124,170 @@ def _types_and_counts_from_rows(
 
 
 def _row_from_question(q: dict[str, Any], question_id: Any, topic_name: str) -> dict[str, Any]:
+    """Normalise a single LLM question dict into a DB-ready row dict."""
+    return {
+        "question_id": str(question_id),
+        "question": q["question"],
+        "type": q["type"],
+        "options": _options_for_csv(q.get("options") or []),
+        "correct_answer": q.get("answer", ""),
+        "topic_name": topic_name,
+        "code_snippet": q.get("code_snippet") or "",
+    }
+
+
+def _row_from_bank_item(
+    bank_item: dict[str, Any], question_id: int, level: str
+) -> dict[str, Any]:
+    """Map a bank pull into an assessment row dict (already linked to bank)."""
+    return {
+        "question_id": str(question_id),
+        "question": bank_item["question"],
+        "type": bank_item["type"],
+        "options": bank_item.get("options") or "",
+        "correct_answer": bank_item.get("correct_answer") or "",
+        "topic_name": bank_item.get("topic_name") or "",
+        "code_snippet": bank_item.get("code_snippet") or "",
+        "bank_question_id": bank_item["bank_question_id"],
+        "difficulty": level.strip().lower(),
+    }
+
+
+def _generate_rows_for_topic_type(
+    assessment_id: str,
+    tname: str,
+    topic_string: str,
+    difficulty: str,
+    qtype: str,
+    count: int,
+    start_id: int,
+) -> list[dict[str, Any]]:
+    """LLM-generate ``count`` questions of one type for a single catalog topic."""
+    if count <= 0:
+        return []
+    questions = generate_questions(
+        topic_string,
+        difficulty,
+        [qtype],
+        questions_per_type={qtype: count},
+        assessment_id=f"{assessment_id}-{tname[:24]}-{qtype}",
+    )
+    rows: list[dict[str, Any]] = []
+    qid = start_id
+    for q in questions:
+        rows.append(_row_from_question(q, qid, tname))
+        qid += 1
+    return rows
+
+
+def _build_assessment_rows(
+    assessment_id: str,
+    level: str,
+    topic: str,
+    difficulty: str,
+    types: list[str],
+    questions_per_type: dict[str, int],
+    catalog_topic_names: list[str],
+    effective_per_topic: dict[str, dict[str, int]] | None,
+    *,
+    question_source: str = "generate_new",
+    target_employee_id: str | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """
+    Build assessment question rows (bank + LLM hybrid or LLM-only).
+
+    Returns (rows, stats) where stats has bank_sourced_count, llm_generated_count,
+    shortage_messages.
+    """
+    recycle = (
+        question_source == "recycle_then_generate"
+        and effective_per_topic
+        and catalog_topic_names
+    )
+
+    if not recycle:
+        if effective_per_topic and catalog_topic_names:
+            topic_strings = _build_per_topic_strings(catalog_topic_names)
+            rows = _generate_rows_per_topic(
+                assessment_id,
+                catalog_topic_names,
+                topic_strings,
+                difficulty,
+                types,
+                effective_per_topic,
+            )
+        else:
+            rows = _generate_rows_legacy(
+                assessment_id, topic, difficulty, types, questions_per_type
+            )
+        return rows, {
+            "bank_sourced_count": 0,
+            "llm_generated_count": len(rows),
+            "shortage_messages": [],
+        }
+
+    topic_strings = _build_per_topic_strings(catalog_topic_names)
+    rows: list[dict[str, Any]] = []
+    used_bank_ids: set[int] = set()
+    shortage_messages: list[str] = []
+    bank_sourced = 0
+    llm_generated = 0
+    global_q_id = 1
+    bank_level = level.strip().lower()
+
+    for tname in catalog_topic_names:
+        cfg = effective_per_topic.get(tname) or {}
+        for qtype in _TYPE_ORDER:
+            needed = int(cfg.get(qtype, 0) or 0)
+            if needed <= 0:
+                continue
+
+            found, shortage = question_bank_service.find_bank_questions(
+                [tname],
+                bank_level,
+                needed,
+                question_type=qtype,
+                exclude_bank_ids=used_bank_ids,
+                exclude_employee_id=target_employee_id,
+            )
+            for bq in found:
+                rows.append(_row_from_bank_item(bq, global_q_id, bank_level))
+                used_bank_ids.add(int(bq["bank_question_id"]))
+                global_q_id += 1
+                bank_sourced += 1
+
+            if shortage > 0:
+                available = needed - shortage
+                shortage_messages.append(
+                    f"{tname}: only {available} {qtype} available in bank; "
+                    f"generating {shortage} new"
+                )
+                generated = _generate_rows_for_topic_type(
+                    assessment_id,
+                    tname,
+                    topic_strings.get(tname, tname),
+                    difficulty,
+                    qtype,
+                    shortage,
+                    global_q_id,
+                )
+                rows.extend(generated)
+                global_q_id += len(generated)
+                llm_generated += len(generated)
+
+    return rows, {
+        "bank_sourced_count": bank_sourced,
+        "llm_generated_count": llm_generated,
+        "shortage_messages": shortage_messages,
+    }
+
+
+def _generation_stats_fields(stats: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "bank_sourced_count": int(stats.get("bank_sourced_count", 0)),
+        "llm_generated_count": int(stats.get("llm_generated_count", 0)),
+        "shortage_messages": list(stats.get("shortage_messages") or []),
+    }
     """Normalise a single LLM question dict into a DB-ready row dict."""
     return {
         "question_id": str(question_id),
@@ -238,6 +428,8 @@ def preview_questions(
     *,
     topic_names: list[str] | None = None,
     per_topic_config: dict[str, dict[str, int]] | None = None,
+    question_source: str = "generate_new",
+    target_employee_id: str | None = None,
 ) -> dict[str, Any]:
     """Generate questions via LLM and return them for admin review — nothing is written to the DB.
 
@@ -262,13 +454,18 @@ def preview_questions(
             else derive_per_topic_config(catalog_topic_names, types, questions_per_type)
         )
 
-    if effective_per_topic and catalog_topic_names:
-        topic_strings = _build_per_topic_strings(catalog_topic_names)
-        rows = _generate_rows_per_topic(
-            preview_id, catalog_topic_names, topic_strings, difficulty, types, effective_per_topic
-        )
-    else:
-        rows = _generate_rows_legacy(preview_id, topic, difficulty, types, questions_per_type)
+    rows, gen_stats = _build_assessment_rows(
+        preview_id,
+        level.strip().lower(),
+        topic,
+        difficulty,
+        types,
+        questions_per_type,
+        catalog_topic_names,
+        effective_per_topic,
+        question_source=question_source,
+        target_employee_id=target_employee_id,
+    )
 
     routing_flag = _compute_routing_flag(catalog_topic_names)
 
@@ -277,7 +474,7 @@ def preview_questions(
     for r in rows:
         raw_opts = r.get("options") or ""
         options = _parse_options(raw_opts) if raw_opts else []
-        questions_for_review.append({
+        item: dict[str, Any] = {
             "question_id": r["question_id"],
             "type": r["type"],
             "question": r["question"],
@@ -285,7 +482,10 @@ def preview_questions(
             "options": options,
             "correct_answer": r.get("correct_answer") or "",
             "topic_name": r.get("topic_name") or "",
-        })
+        }
+        if r.get("bank_question_id") is not None:
+            item["bank_question_id"] = r["bank_question_id"]
+        questions_for_review.append(item)
 
     return {
         "questions": questions_for_review,
@@ -295,6 +495,7 @@ def preview_questions(
             "difficulty": difficulty,
             "catalog_topic_names": catalog_topic_names,
             "routing_flag": routing_flag,
+            **_generation_stats_fields(gen_stats),
         },
     }
 
@@ -311,6 +512,7 @@ def confirm_assessment(
     is_timed: bool = False,
     duration_minutes: int | None = None,
     notebook_grace_minutes: int | None = None,
+    allow_pyodide_paste: bool = False,
 ) -> dict[str, Any]:
     """Persist an admin-reviewed (and possibly edited) question list to the DB.
 
@@ -342,8 +544,10 @@ def confirm_assessment(
                 effective_per_topic.setdefault(tname, {})
                 effective_per_topic[tname][qtype] = effective_per_topic[tname].get(qtype, 0) + 1
 
-    rows: list[dict[str, Any]] = [
-        {
+    rows: list[dict[str, Any]] = []
+    level_norm = level.strip().lower()
+    for i, q in enumerate(questions):
+        row: dict[str, Any] = {
             "question_id": str(i + 1),
             "question": (q.get("question") or "").strip(),
             "type": (q.get("type") or "").strip().lower(),
@@ -352,8 +556,18 @@ def confirm_assessment(
             "topic_name": (q.get("topic_name") or "").strip(),
             "code_snippet": (q.get("code_snippet") or "").strip(),
         }
-        for i, q in enumerate(questions)
-    ]
+        bid = q.get("bank_question_id")
+        if bid is not None:
+            row["bank_question_id"] = int(bid)
+            row["difficulty"] = level_norm
+        rows.append(row)
+
+    bank_sourced = sum(1 for r in rows if r.get("bank_question_id") is not None)
+    gen_stats = {
+        "bank_sourced_count": bank_sourced,
+        "llm_generated_count": len(rows) - bank_sourced,
+        "shortage_messages": [],
+    }
 
     routing_flag = _compute_routing_flag(catalog_topic_names)
 
@@ -375,7 +589,10 @@ def confirm_assessment(
         is_timed=is_timed,
         duration_minutes=dur,
         notebook_grace_minutes=grace,
+        allow_pyodide_paste=allow_pyodide_paste,
     )
+
+    _upsert_to_bank(assessment_id, rows, level.strip().lower(), language_code)
 
     types, questions_per_type = _types_and_counts_from_rows(rows)
 
@@ -397,6 +614,8 @@ def confirm_assessment(
         "is_timed": is_timed,
         "duration_minutes": dur,
         "notebook_grace_minutes": grace,
+        "allow_pyodide_paste": allow_pyodide_paste,
+        **_generation_stats_fields(gen_stats),
     }
 
 
@@ -413,6 +632,9 @@ def create_assessment(
     is_timed: bool = False,
     duration_minutes: int | None = None,
     notebook_grace_minutes: int | None = None,
+    question_source: str = "generate_new",
+    target_employee_id: str | None = None,
+    allow_pyodide_paste: bool = False,
 ) -> dict[str, Any]:
     """Generate questions via LLM and persist (shared assessment in PostgreSQL)."""
     difficulty = LEVEL_TO_DIFFICULTY.get(level.strip().lower())
@@ -437,14 +659,19 @@ def create_assessment(
             else derive_per_topic_config(catalog_topic_names, types, questions_per_type)
         )
 
-    # Generate question rows
-    if effective_per_topic and catalog_topic_names:
-        topic_strings = _build_per_topic_strings(catalog_topic_names)
-        rows = _generate_rows_per_topic(
-            assessment_id, catalog_topic_names, topic_strings, difficulty, types, effective_per_topic
-        )
-    else:
-        rows = _generate_rows_legacy(assessment_id, topic, difficulty, types, questions_per_type)
+    # Generate question rows (bank + LLM hybrid when requested)
+    rows, gen_stats = _build_assessment_rows(
+        assessment_id,
+        level.strip().lower(),
+        topic,
+        difficulty,
+        types,
+        questions_per_type,
+        catalog_topic_names,
+        effective_per_topic,
+        question_source=question_source,
+        target_employee_id=target_employee_id,
+    )
 
     # Routing flag computed here once — passed to db_service (no re-computation there)
     routing_flag = _compute_routing_flag(catalog_topic_names)
@@ -467,7 +694,10 @@ def create_assessment(
         is_timed=is_timed,
         duration_minutes=dur,
         notebook_grace_minutes=grace,
+        allow_pyodide_paste=allow_pyodide_paste,
     )
+
+    _upsert_to_bank(assessment_id, rows, level.strip().lower(), language_code)
 
     return {
         "assessment_id": assessment_id,
@@ -487,6 +717,8 @@ def create_assessment(
         "is_timed": is_timed,
         "duration_minutes": dur,
         "notebook_grace_minutes": grace,
+        "allow_pyodide_paste": allow_pyodide_paste,
+        **_generation_stats_fields(gen_stats),
     }
 
 
@@ -583,6 +815,7 @@ def get_assessment_for_user(
         "is_timed": meta.get("is_timed", False),
         "duration_minutes": meta.get("duration_minutes"),
         "notebook_grace_minutes": meta.get("notebook_grace_minutes"),
+        "allow_pyodide_paste": meta.get("allow_pyodide_paste", False),
         "already_submitted": False,
         "timer": None,
         **notebook_fields,
@@ -591,16 +824,25 @@ def get_assessment_for_user(
     if not rows:
         return {**base_out, "questions": [], "found": False}
 
+    eid = (employee_id or "").strip()
+    if eid and attempt_service.user_has_submitted(assessment_id, eid):
+        return {
+            **base_out,
+            "questions": [],
+            "found": True,
+            "already_submitted": True,
+        }
+
     questions_out = _build_questions_for_user(rows, meta)
 
-    if employee_id and employee_id.strip():
+    if eid:
         questions_out = apply_participant_shuffle(
-            assessment_id, employee_id.strip(), questions_out
+            assessment_id, eid, questions_out
         )
 
     out = {**base_out, "questions": questions_out, "found": True}
 
-    if meta.get("is_timed") and employee_id and employee_id.strip():
+    if meta.get("is_timed") and eid:
         out = _apply_timed_state(out, assessment_id, employee_id, meta)
 
     return out
@@ -755,6 +997,14 @@ def submit_assessment(
             assessment_id, user_id, qid, user_text, str(sc), fb, ts,
             submitter_client_id=submitter_client_id,
         )
+
+        question_bank_service.record_question_outcome(
+            row.get("bank_question_id"), correct
+        )
+        if correct and eid:
+            question_bank_service.record_employee_question_mastery(
+                eid, row.get("bank_question_id")
+            )
 
     if not scores:
         raise ValueError("No matching answers for this assessment")

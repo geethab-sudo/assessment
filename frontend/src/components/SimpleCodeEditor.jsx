@@ -1,6 +1,7 @@
 import { useRef, useEffect } from "react";
 import { blockPasteEvent } from "../lib/assessmentClipboard.js";
 import { defaultEditorPlaceholder, highlightForLanguage } from "../lib/codeHighlight.js";
+import { applyTabIndent } from "../lib/tabIndent.js";
 
 export default function SimpleCodeEditor({
   value,
@@ -26,18 +27,10 @@ export default function SimpleCodeEditor({
   }, [value, language]);
 
   const handleKeyDown = (e) => {
+    if (readOnly) return;
     const ta = textareaRef.current;
 
-    if (e.key === "Tab" && !e.shiftKey) {
-      e.preventDefault();
-      const val = ta.value;
-      const start = ta.selectionStart;
-      const end = ta.selectionEnd;
-      const spaces = "    ";
-      onChange(val.substring(0, start) + spaces + val.substring(end));
-      setTimeout(() => {
-        if (ta) ta.selectionStart = ta.selectionEnd = start + spaces.length;
-      }, 0);
+    if (applyTabIndent(e, value, onChange)) {
       return;
     }
 

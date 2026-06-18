@@ -133,6 +133,7 @@ class AssessmentResponse(BaseModel):
     is_timed: bool = False
     duration_minutes: int | None = None
     notebook_grace_minutes: int | None = None
+    allow_pyodide_paste: bool = False
     notebook_expected: bool = False
     notebook_ready: bool = False
     expected_notebook_coding_count: int = 0

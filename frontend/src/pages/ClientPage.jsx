@@ -13,7 +13,9 @@ import TimerExpiredBanner from "../components/TimerExpiredBanner.jsx";
 import JupyterWorkspacePanel from "../components/JupyterWorkspacePanel.jsx";
 import MixedNotebookPanel, { JupyterRequiredBanner } from "../components/MixedNotebookPanel.jsx";
 import Pagination from "../components/Pagination.jsx";
+import UnansweredSubmitAlert from "../components/UnansweredSubmitAlert.jsx";
 import { usePagination } from "../hooks/usePagination.js";
+import { countUnansweredQuestions } from "../lib/assessmentAnswers.js";
 import { openReportPrintWindow } from "../lib/reportRenderer.js";
 
 export default function ClientPage() {
@@ -22,9 +24,13 @@ export default function ClientPage() {
     typeof location.state?.assessmentId === "string"
       ? location.state.assessmentId
       : "";
+  const initialEmployeeId =
+    typeof location.state?.employeeId === "string"
+      ? location.state.employeeId
+      : "";
 
   const [assessmentIdInput, setAssessmentIdInput] = useState(initialId);
-  const [employeeId, setEmployeeId] = useState("");
+  const [employeeId, setEmployeeId] = useState(initialEmployeeId);
   const [participantName, setParticipantName] = useState("");
 
   const [assessment, setAssessment] = useState(null);
@@ -42,6 +48,7 @@ export default function ClientPage() {
   const [reportSummaryLoading, setReportSummaryLoading] = useState(false);
   const [reportData, setReportData] = useState(null);
   const [reportError, setReportError] = useState(null);
+  const [unansweredWarning, setUnansweredWarning] = useState(null);
   const autoSubmitLock = useRef(false);
   const graceNotebookSubmitLock = useRef(false);
   const lastGraceSubmittedFile = useRef(null);
@@ -57,6 +64,12 @@ export default function ClientPage() {
       setAssessmentIdInput(initialId);
     }
   }, [initialId]);
+
+  useEffect(() => {
+    if (initialEmployeeId) {
+      setEmployeeId(initialEmployeeId);
+    }
+  }, [initialEmployeeId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,7 +123,7 @@ export default function ClientPage() {
         `/assessment/${encodeURIComponent(id)}?${params.toString()}`
       );
       if (data.already_submitted) {
-        setAssessment({ ...data, questions: [] });
+        setAssessment(null);
         setError("You have already submitted this assessment.");
         return;
       }
@@ -119,6 +132,7 @@ export default function ClientPage() {
       setCodeLangByQid({});
       setNotebookFile(null);
       setTimeExpiredBanner(false);
+      setUnansweredWarning(null);
       autoSubmitLock.current = false;
       graceNotebookSubmitLock.current = false;
       lastGraceSubmittedFile.current = null;
@@ -373,6 +387,8 @@ export default function ClientPage() {
   const formLocked =
     !!result || autoSubmitting || (timerState.isTimed && !timerState.inMainWindow);
 
+  const blockCodingPaste = formLocked || !assessment?.allow_pyodide_paste;
+
   const notebookUploadEnabled =
     !notebookResult &&
     (!timerState.isTimed ||
@@ -393,6 +409,45 @@ export default function ClientPage() {
     totalPages: questionTotalPages,
     paginatedItems: paginatedQuestions,
   } = usePagination(questions, { resetKey: assessment?.assessment_id });
+
+  const handleQuestionPageChange = useCallback(
+    (nextPage) => {
+      setQuestionPage(nextPage);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    },
+    [setQuestionPage]
+  );
+
+  const requestSubmit = useCallback(
+    (opts = {}) => {
+      if (opts.auto || opts.notebookOnly) {
+        handleSubmit(opts);
+        return;
+      }
+
+      if (assessment?.routing_flag === "jupyter" && needsNotebook) {
+        handleSubmit(opts);
+        return;
+      }
+
+      const { unanswered, total } = countUnansweredQuestions(assessment, answers);
+      const timeAllowsWarning = !timerState.isTimed || timerState.inMainWindow;
+
+      if (unanswered > 0 && timeAllowsWarning) {
+        setUnansweredWarning({ opts, unanswered, total });
+        return;
+      }
+
+      handleSubmit(opts);
+    },
+    [assessment, answers, needsNotebook, handleSubmit, timerState.isTimed, timerState.inMainWindow]
+  );
+
+  const handleConfirmUnansweredSubmit = useCallback(() => {
+    const pending = unansweredWarning;
+    setUnansweredWarning(null);
+    if (pending) handleSubmit(pending.opts);
+  }, [unansweredWarning, handleSubmit]);
 
   return (
     <div className={`page page--wide${showFixedTimer ? " page--timed-assessment" : ""}`}>
@@ -441,6 +496,21 @@ export default function ClientPage() {
             />
           </label>
         </div>
+        {employeeId.trim() && (
+          <p className="muted small-print" style={{ margin: "0.5rem 0 0" }}>
+            <Link
+              to={`/client/my-report?employee_id=${encodeURIComponent(employeeId.trim())}`}
+            >
+              View my skills progress report →
+            </Link>
+            {" · "}
+            <Link
+              to={`/client/improve?employee_id=${encodeURIComponent(employeeId.trim())}`}
+            >
+              Help me improve →
+            </Link>
+          </p>
+        )}
         <div className="row">
           <label className="grow">
             Assessment ID
@@ -480,7 +550,7 @@ export default function ClientPage() {
               result={result}
               timerState={timerState}
               onFileChange={setNotebookFile}
-              onSubmit={() => handleSubmit()}
+              onSubmit={() => requestSubmit()}
             />
           ) : (
             <>
@@ -495,7 +565,7 @@ export default function ClientPage() {
                 totalPages={questionTotalPages}
                 totalItems={totalQuestions}
                 pageSize={questionPageSize}
-                onPageChange={setQuestionPage}
+                onPageChange={handleQuestionPageChange}
                 itemLabel="questions"
               />
               {paginatedQuestions.map((q, questionIndex) => {
@@ -658,7 +728,7 @@ export default function ClientPage() {
                               value={answers[qk] ?? ""}
                               onChange={(v) => setAnswer(q.question_id, v)}
                               readOnly={formLocked}
-                              blockPaste={!formLocked}
+                              blockPaste={blockCodingPaste}
                               minHeight={320}
                               language={codingMonaco}
                             />
@@ -674,7 +744,7 @@ export default function ClientPage() {
                                   value={answers[qk] ?? ""}
                                   onChange={(v) => setAnswer(q.question_id, v)}
                                   readOnly={formLocked}
-                                  blockPaste={!formLocked}
+                                  blockPaste={blockCodingPaste}
                                   minHeight={320}
                                   language={codingMonaco}
                                 />
@@ -736,7 +806,7 @@ export default function ClientPage() {
                 totalPages={questionTotalPages}
                 totalItems={totalQuestions}
                 pageSize={questionPageSize}
-                onPageChange={setQuestionPage}
+                onPageChange={handleQuestionPageChange}
                 itemLabel="questions"
               />
               <button
@@ -744,8 +814,8 @@ export default function ClientPage() {
                 className="primary"
                 onClick={() =>
                   timerState.inNotebookGrace && notebookFile && needsNotebook
-                    ? handleSubmit({ notebookOnly: true })
-                    : handleSubmit()
+                    ? requestSubmit({ notebookOnly: true })
+                    : requestSubmit()
                 }
                 disabled={
                   loading ||
@@ -773,6 +843,15 @@ export default function ClientPage() {
                   notebookResult={notebookResult}
                   notebookUploadEnabled={notebookUploadEnabled}
                   onFileChange={setNotebookFile}
+                />
+              )}
+
+              {unansweredWarning && (
+                <UnansweredSubmitAlert
+                  unansweredCount={unansweredWarning.unanswered}
+                  totalCount={unansweredWarning.total}
+                  onConfirm={handleConfirmUnansweredSubmit}
+                  onCancel={() => setUnansweredWarning(null)}
                 />
               )}
             </>

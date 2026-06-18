@@ -38,6 +38,9 @@ __all__ = [
     "delete_assessment",
     "list_all_submissions",
     "get_participant_in_browser_submissions",
+    "list_employee_completed_assessments",
+    "count_employee_mastered_by_topic",
+    "count_employee_needs_practice_bank_questions",
     "save_submission_row",
 ]
 
@@ -271,6 +274,7 @@ def save_shared_assessment_rows(
     is_timed: bool = False,
     duration_minutes: int | None = None,
     notebook_grace_minutes: int | None = None,
+    allow_pyodide_paste: bool = False,
 ) -> None:
     """Shared assessment: owner_client_id is NULL (any client may access).
 
@@ -306,6 +310,7 @@ def save_shared_assessment_rows(
             existing.notebook_grace_minutes = (
                 notebook_grace_minutes if is_timed else None
             )
+            existing.allow_pyodide_paste = allow_pyodide_paste
         else:
             session.add(
                 Assessment(
@@ -321,6 +326,7 @@ def save_shared_assessment_rows(
                     notebook_grace_minutes=(
                         notebook_grace_minutes if is_timed else None
                     ),
+                    allow_pyodide_paste=allow_pyodide_paste,
                 )
             )
         for row in rows:
@@ -334,6 +340,8 @@ def save_shared_assessment_rows(
                     correct_answer=row.get("correct_answer", "") or "",
                     topic_name=str(row.get("topic_name") or ""),
                     code_snippet=row.get("code_snippet") or None,
+                    bank_question_id=row.get("bank_question_id"),
+                    difficulty=row.get("difficulty"),
                 )
             )
         session.commit()
@@ -356,6 +364,8 @@ def read_questions_by_assessment(assessment_id: str) -> list[dict[str, Any]]:
                 "correct_answer": r.correct_answer or "",
                 "topic_name": r.topic_name or "",
                 "code_snippet": r.code_snippet or "",
+                "bank_question_id": r.bank_question_id,
+                "difficulty": r.difficulty or "",
             }
             for r in rows
         ]
@@ -419,6 +429,7 @@ def get_assessment_metadata(assessment_id: str) -> dict[str, Any]:
                 "is_timed": False,
                 "duration_minutes": None,
                 "notebook_grace_minutes": None,
+                "allow_pyodide_paste": False,
             }
         topic_names = _coerce_stored_topic_names(row.topic_names)
         jupyter_topic_names: list[str] = []
@@ -439,6 +450,7 @@ def get_assessment_metadata(assessment_id: str) -> dict[str, Any]:
             "is_timed": bool(row.is_timed),
             "duration_minutes": row.duration_minutes,
             "notebook_grace_minutes": row.notebook_grace_minutes,
+            "allow_pyodide_paste": bool(row.allow_pyodide_paste),
         }
 
 
@@ -559,6 +571,136 @@ def get_participant_in_browser_submissions(
             }
         )
     return out
+
+
+def list_employee_completed_assessments(employee_id: str) -> list[dict[str, Any]]:
+    """Distinct assessments with in-browser submissions for one employee, newest first."""
+    from services.attempt_service import normalize_employee_id
+
+    eid = normalize_employee_id(employee_id)
+    if not eid:
+        return []
+
+    with _session() as session:
+        rows = session.scalars(
+            select(Submission).where(
+                Submission.question_id != _NOTEBOOK_QUESTION_ID,
+                Submission.routing_flag != "jupyter",
+            )
+        ).all()
+
+    by_aid: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        uid = r.user_id or ""
+        part = uid.split("|", 1)[0].strip().casefold()
+        if part != eid:
+            continue
+        aid = r.assessment_id
+        ts = r.timestamp or ""
+        if aid not in by_aid:
+            by_aid[aid] = {
+                "assessment_id": aid,
+                "user_id": r.user_id,
+                "submitted_at": ts,
+                "earliest_timestamp": ts,
+            }
+        else:
+            if ts > by_aid[aid]["submitted_at"]:
+                by_aid[aid]["submitted_at"] = ts
+            if ts < by_aid[aid]["earliest_timestamp"]:
+                by_aid[aid]["earliest_timestamp"] = ts
+
+    out = list(by_aid.values())
+    out.sort(key=lambda x: str(x.get("submitted_at") or ""), reverse=True)
+    return out
+
+
+def count_employee_mastered_by_topic(employee_id: str) -> dict[str, int]:
+    """Count mastered bank questions grouped by topic_name."""
+    from services.attempt_service import normalize_employee_id
+    from services.models import EmployeeQuestionMastery, QuestionBank
+
+    eid = normalize_employee_id(employee_id)
+    if not eid:
+        return {}
+
+    with _session() as session:
+        rows = session.execute(
+            select(QuestionBank.topic_name, func.count())
+            .join(
+                EmployeeQuestionMastery,
+                EmployeeQuestionMastery.bank_question_id == QuestionBank.id,
+            )
+            .where(EmployeeQuestionMastery.employee_id == eid)
+            .group_by(QuestionBank.topic_name)
+        ).all()
+
+    out: dict[str, int] = {}
+    for topic_name, count in rows:
+        key = (topic_name or "").strip() or "General"
+        out[key] = int(count)
+    return out
+
+
+def count_employee_needs_practice_bank_questions(employee_id: str) -> int:
+    """
+    Bank questions answered incorrectly 2+ times and not yet mastered.
+    """
+    from collections import defaultdict
+
+    from services.attempt_service import normalize_employee_id
+    from services.question_bank_service import get_employee_mastered_bank_ids
+
+    eid = normalize_employee_id(employee_id)
+    if not eid:
+        return 0
+
+    mastered = get_employee_mastered_bank_ids(employee_id)
+    wrong_counts: dict[int, int] = defaultdict(int)
+
+    with _session() as session:
+        subs = session.scalars(
+            select(Submission).where(
+                Submission.question_id != _NOTEBOOK_QUESTION_ID,
+                Submission.routing_flag != "jupyter",
+            )
+        ).all()
+        if not subs:
+            return 0
+
+        aids = {s.assessment_id for s in subs if _submission_row_belongs_to_employee(s.user_id, eid)}
+        if not aids:
+            return 0
+
+        qrows = session.scalars(
+            select(AssessmentQuestion).where(
+                AssessmentQuestion.assessment_id.in_(aids),
+                AssessmentQuestion.bank_question_id.isnot(None),
+            )
+        ).all()
+        bank_by_key: dict[tuple[str, str], int] = {}
+        for q in qrows:
+            bank_by_key[(q.assessment_id, str(q.question_id))] = int(q.bank_question_id)
+
+        for s in subs:
+            if not _submission_row_belongs_to_employee(s.user_id, eid):
+                continue
+            bid = bank_by_key.get((s.assessment_id, str(s.question_id)))
+            if bid is None:
+                continue
+            try:
+                score = float(s.score or 0)
+            except (TypeError, ValueError):
+                score = 0.0
+            if score < 70:
+                wrong_counts[bid] += 1
+
+    return sum(1 for bid, n in wrong_counts.items() if bid not in mastered and n >= 2)
+
+
+def _submission_row_belongs_to_employee(user_id: str, eid_norm: str) -> bool:
+    part = (user_id or "").split("|", 1)[0].strip().casefold()
+    return part == eid_norm
 
 
 def list_all_submissions() -> list[dict[str, Any]]:

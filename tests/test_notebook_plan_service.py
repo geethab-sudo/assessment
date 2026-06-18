@@ -1,4 +1,9 @@
-"""Tests for auto per-topic config and notebook expectation planning."""
+"""Notebook plan and per-topic allocation (``services.notebook_plan_service``).
+
+Pytest-style tests for splitting MCQ/coding counts across topics, counting
+expected Jupyter vs Pyodide coding cells, and validating plans after generation.
+See TEST_GUIDE.md § Assessment generation and delivery.
+"""
 
 from unittest.mock import patch
 
@@ -11,6 +16,7 @@ from services.notebook_plan_service import (
 
 
 def test_derive_per_topic_config_even_split():
+    """Four topics and 8 questions split 1+1 MCQ/coding each."""
     topics = ["A", "B", "C", "D"]
     cfg = derive_per_topic_config(
         topics,
@@ -26,6 +32,7 @@ def test_derive_per_topic_config_even_split():
 
 
 def test_derive_per_topic_config_remainder():
+    """Remainder questions go to the first topics in list order."""
     cfg = derive_per_topic_config(
         ["T1", "T2", "T3"],
         ["mcq"],
@@ -37,6 +44,7 @@ def test_derive_per_topic_config_remainder():
 
 
 def test_expected_notebook_coding_from_config():
+    """Only topics marked jupyter in modality map count toward notebook coding."""
     per_topic = {
         "Pyodide Topic": {"mcq": 1, "coding": 1},
         "Jupyter Topic": {"mcq": 1, "coding": 1},
@@ -48,6 +56,7 @@ def test_expected_notebook_coding_from_config():
 
 @patch("services.notebook_plan_service.db_service.get_topic_modality_by_names")
 def test_notebook_plan_no_jupyter_coding_expected(mock_modality):
+    """Assessment with only Pyodide coding rows does not expect a notebook."""
     mock_modality.return_value = {
         "Jupyter Tier": "jupyter",
         "Pyodide": "pyodide",
@@ -72,6 +81,7 @@ def test_notebook_plan_no_jupyter_coding_expected(mock_modality):
 
 @patch("services.notebook_plan_service.db_service.get_topic_modality_by_names")
 def test_notebook_plan_jupyter_coding_tagged(mock_modality):
+    """Jupyter-topic coding rows are counted as notebook-ready when present."""
     mock_modality.return_value = {
         "Async IO": "jupyter",
         "Basics": "pyodide",
@@ -96,6 +106,7 @@ def test_notebook_plan_jupyter_coding_tagged(mock_modality):
 
 
 def test_validate_fails_when_expected_but_no_actual():
+    """Generation must fail if notebook coding was promised but not delivered."""
     plan = {
         "expected_notebook_coding_count": 2,
         "actual_notebook_coding_count": 0,
@@ -109,6 +120,7 @@ def test_validate_fails_when_expected_but_no_actual():
 
 
 def test_validate_ok_when_no_notebook_expected():
+    """Zero expected notebook coding always passes validation."""
     validate_notebook_plan_after_generation(
         {"expected_notebook_coding_count": 0, "actual_notebook_coding_count": 0}
     )

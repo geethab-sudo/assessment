@@ -1,4 +1,9 @@
-"""Tests for security headers, rate limiting, and audit logging."""
+"""Security headers, rate limiting, and audit logging (HTTP layer).
+
+Verifies middleware response headers, 429 on exceeded login rate limits, and
+structured audit events on failed authentication.
+See TEST_GUIDE.md § Security, auth, API contract.
+"""
 
 from __future__ import annotations
 
@@ -17,6 +22,8 @@ TEST_ADMIN_PASSWORD = "test-admin-password"
 
 
 class TestSecurityMiddleware(unittest.TestCase):
+    """Standard security headers on API responses."""
+
     _env_patch: patch
 
     @classmethod
@@ -48,6 +55,7 @@ class TestSecurityMiddleware(unittest.TestCase):
         sys.modules.pop("app", None)
 
     def test_security_headers_on_health(self) -> None:
+        """/health includes nosniff, DENY frame, CSP, and referrer policy."""
         res = self.client.get("/health")
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.headers.get("X-Content-Type-Options"), "nosniff")
@@ -56,6 +64,7 @@ class TestSecurityMiddleware(unittest.TestCase):
         self.assertEqual(res.headers.get("Referrer-Policy"), "strict-origin-when-cross-origin")
 
     def test_security_headers_relaxed_for_docs(self) -> None:
+        """Swagger /docs CSP allows cdn.jsdelivr.net for UI assets."""
         res = self.client.get("/docs")
         self.assertEqual(res.status_code, 200)
         csp = res.headers.get("Content-Security-Policy", "")
@@ -63,7 +72,10 @@ class TestSecurityMiddleware(unittest.TestCase):
 
 
 class TestRateLimiting(unittest.TestCase):
+    """Per-endpoint rate limits return 429 when exceeded."""
+
     def test_rate_limit_returns_429(self) -> None:
+        """Third login attempt within window → 429 Too many requests."""
         with patch.dict(
             os.environ,
             {
@@ -101,7 +113,10 @@ class TestRateLimiting(unittest.TestCase):
 
 
 class TestAuditLogging(unittest.TestCase):
+    """Structured JSON audit lines for security-sensitive events."""
+
     def test_login_failure_emits_audit_event(self) -> None:
+        """Failed admin login writes auth.login.failure with role and status."""
         log_buffer = StringIO()
         handler = logging.StreamHandler(log_buffer)
         handler.setFormatter(logging.Formatter("%(message)s"))

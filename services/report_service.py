@@ -19,10 +19,9 @@ _UNTOPPED_TOPIC_LABEL = "General"
 
 
 def _submission_matches_employee(user_id: str, employee_id: str) -> bool:
-    from services.attempt_service import normalize_employee_id
+    from services.attempt_service import submission_belongs_to_employee
 
-    part = parse_employee_id_from_user_label(user_id).casefold()
-    return part == normalize_employee_id(employee_id)
+    return submission_belongs_to_employee(user_id, employee_id)
 
 
 def _parse_participant_name(user_id: str) -> str:

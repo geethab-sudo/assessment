@@ -1,4 +1,9 @@
-"""Tier 1 preset topic names must exist in seed catalog."""
+"""Tier 1 admin preset contract (frontend JSON ↔ seed catalog).
+
+Ensures ``tier1EvaluationPresets.json`` references real catalog topic names and
+uses consistent 25-question / duration conventions per difficulty band.
+See TEST_GUIDE.md § Frontend / catalog contracts.
+"""
 
 from __future__ import annotations
 
@@ -27,7 +32,10 @@ def _seed_tier1_topic_names() -> set[str]:
 
 
 class TestTier1Presets(unittest.TestCase):
+    """Admin Tier 1 evaluation presets must align with seeded Python catalog."""
+
     def test_preset_topic_names_in_seed(self) -> None:
+        """Every topic_name in every preset exists in scripts/seed_sample_catalog.py."""
         data = json.loads(_PRESETS_PATH.read_text(encoding="utf-8"))
         seed_names = _seed_tier1_topic_names()
         missing: list[str] = []
@@ -39,6 +47,7 @@ class TestTier1Presets(unittest.TestCase):
         self.assertEqual(missing, [], f"Topics not in seed: {missing}")
 
     def test_preset_totals_are_25(self) -> None:
+        """Each preset is 15 MCQ + 10 coding = 25 questions total."""
         data = json.loads(_PRESETS_PATH.read_text(encoding="utf-8"))
         for preset in data.get("presets") or []:
             mcq = sum(int(t.get("mcq") or 0) for t in preset.get("topics") or [])
@@ -48,6 +57,7 @@ class TestTier1Presets(unittest.TestCase):
             self.assertEqual(mcq + coding, 25, preset.get("name"))
 
     def test_preset_durations(self) -> None:
+        """Beginner 60 / Intermediate 90 / Advanced 120 minute targets."""
         data = json.loads(_PRESETS_PATH.read_text(encoding="utf-8"))
         expected = {"Beginner": 60, "Intermediate": 90, "Advanced": 120}
         for preset in data.get("presets") or []:
