@@ -28,6 +28,12 @@ Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema mig
 - **Timer stops on submit**: The countdown bar is hidden and the interval cleared as soon as the participant's submission succeeds; auto-expire callbacks no longer fire after that point.
 - **Admin question review**: After generation, admins land on a review page to edit question text, MCQ options, correct answer, and code snippets (Tab inserts 4-space indent). Coding questions do not show a code-snippet field. Nothing is written to the DB until **Confirm & save**.
 - **Participant feedback report (PDF)**: After submitting in-browser answers, the results section shows a **topic summary table** (topic, questions, score, average %) and a **Download report (PDF)** button. The printable report includes per-question results, feedback, and the same topic rollup. Printing uses a hidden iframe (no pop-up blocker). Covers **MCQ and Pyodide coding only** — Jupyter notebook grading is excluded for now.
+- **Question source modes (admin)**: Generate new questions via LLM, or **Recycle then generate** — fill from the question bank first and only call the LLM for shortages. Availability preview before generation.
+- **Help me improve (participant)**: From `/client` or the skills report, participants can start **bank-only** practice assessments — no LLM-generated questions without admin review:
+  - **Weak areas** — topics below 70% in the last 3 assessments
+  - **Explore new areas** — catalog topics not yet attempted (full history)
+  - **Step up difficulty** — same topics at intermediate/advanced bank difficulty when performance warrants it
+- **Skills Progress Report (employee analytics)**: Cross-assessment report for admins (`/admin/employee-report/:id`) and participants (`/client/my-report`). Includes hero summary, language cards, **topic heatmap** (language × topic), **score trend**, **cumulative correct/wrong** stacked chart, **topic radar** (latest vs last-3 average), question-type breakdown, topic tables, strengths/focus/unexplored insights, and print/PDF export. Charts are **click-to-enlarge** in the web view.
 
 ## How do we use LLM calls? Is it expensive?
 
@@ -63,6 +69,9 @@ Implementation references: `_is_answer_correct` in `services/assessment_service.
 
 | Document | Description |
 |----------|-------------|
+| [plan.md](plan.md) | Stage roadmap (question bank, improvement flows, employee report) |
+| [task.md](task.md) | Checkbox tasks per stage |
+| [tests/TEST_GUIDE.md](tests/TEST_GUIDE.md) | Index of all automated tests |
 | [docs/assessment-generation.md](docs/assessment-generation.md) | Auto vs per-topic allocation, `routing_flag`, `notebook_expected`, template 404/409 |
 | [docs/tier1-presets.md](docs/tier1-presets.md) | Beginner / Intermediate / Advanced Python Tier 1 preset combos |
 | [docs/timed-assessments.md](docs/timed-assessments.md) | Duration, grace period, attempts, enforcement |
@@ -226,6 +235,49 @@ The report includes:
 **Scope (v1):** MCQ, coding, and subjective questions submitted through the web UI. Jupyter notebook rows (`question_id=notebook`, `routing_flag=jupyter`) and jupyter-modality coding placeholders are excluded.
 
 **Backend:** `services/report_service.py` (`build_report`, `aggregate_topic_summary`). **Frontend:** `frontend/src/lib/reportRenderer.js`, results UI in `ClientPage.jsx`.
+
+## Skills Progress Report (employee analytics)
+
+Cross-assessment analytics for one `employee_id` — used by admins and participants (self-service with employee ID in the query string).
+
+| Route | Audience |
+|-------|----------|
+| `/admin/employee-report/:employeeId` | Admin (JWT) |
+| `/client/my-report?employee_id=&period=` | Participant |
+
+**Period:** All time or last 90 days. **Time on platform** sums timed assessment duration only.
+
+| Section | Content |
+|---------|---------|
+| Hero | Overall score ring, assessments completed, questions answered, time stats, proficiency label |
+| Languages | Per-language topic coverage, question counts, % correct |
+| Topic heatmap | Color grid: topic × language (% correct; green / amber / red) |
+| Score trend | Assessment score % over time (Y-axis 0–100) |
+| Cumulative progress | Running total of correct vs wrong **questions** after each assessment (not score %) |
+| Topic radar | Latest assessment vs rolling 3-assessment average per topic (letter key for long topic names) |
+| Question types | MCQ / coding / subjective donut |
+| Topic tables | Per-language detail with traffic-light chips and trend arrows |
+| Insights | Strengths, focus areas (last 3), unexplored topics, recommendations |
+
+**Web UX:** Click any chart block to open a larger lightbox view (Escape or backdrop to close). **Print/PDF:** `@media print` + **Download PDF / Print** button.
+
+**API:** `GET /admin/employee-report`, `GET /client/my-report` → `EmployeeReportResponse` (`services/employee_profile_service.py`, `schemas/improvement.py`). **Frontend:** `EmployeeReportPage.jsx`, `employeeReportApi.js`.
+
+**Help me improve link:** `/client/improve?employee_id=…` from the participant report footer.
+
+## Help me improve (bank-only practice)
+
+Participants never receive LLM-generated questions without admin review. All three flows use **`question_source=bank_only`** and exclude **mastered** bank questions for that employee.
+
+| Flow | Profile scope | Endpoint |
+|------|---------------|----------|
+| Weak areas | Last 3 assessments | `POST /client/improvement/weak-areas` |
+| Explore new areas | Full history | `POST /client/improvement/new-areas` |
+| Step up difficulty | Full history | `POST /client/improvement/difficulty` |
+
+If the bank cannot supply the requested count, the API returns `questions_delivered` &lt; `questions_requested` with an `availability_message` (assessment still created when at least one question is available). If all relevant questions are mastered, no assessment is created and a clear message is returned.
+
+**UI:** `ImprovementPage.jsx` at `/client/improve`. **Backend:** `improvement_assessment_service.py`, profile data from `employee_profile_service.py`.
 
 ## Per-participant randomization (anti-cheating)
 
@@ -407,13 +459,22 @@ assessment/
 │   ├── models.py               # ORM (modality, routing_flag, timed columns)
 │   ├── notebook_plan_service.py # notebook_expected, derive_per_topic_config
 │   ├── notebook_service.py     # Jupyter parsing and cell grading
+│   ├── employee_profile_service.py  # Employee profile + skills progress report
+│   ├── improvement_assessment_service.py  # Help me improve (weak / new / difficulty)
+│   ├── question_bank_service.py    # Bank CRUD, find_bank_questions, mastered exclusion
 │   ├── report_service.py       # Participant feedback report (in-browser questions)
 │   ├── question_stem.py        # Stem parsing/prettification (split_stem_for_display)
 │   └── shuffle_service.py      # Per-participant shuffle
 ├── tests/
-│   ├── test_assessment_service_unit.py  # 26 unit tests for refactored helpers
+│   ├── TEST_GUIDE.md           # Index of all test files
+│   ├── test_assessment_recycle.py
+│   ├── test_assessment_service_unit.py
 │   ├── test_attempt_service.py
+│   ├── test_employee_profile_service.py
+│   ├── test_employee_report_service.py
+│   ├── test_improvement_assessment_service.py
 │   ├── test_notebook_plan_service.py
+│   ├── test_question_bank_service.py
 │   ├── test_question_stem.py
 │   ├── test_shuffle_service.py
 │   ├── test_tier1_presets.py
@@ -435,19 +496,23 @@ assessment/
 │       │   └── TimerExpiredBanner.jsx     # Grace-period notification bar
 │       ├── hooks/useAssessmentTimer.js  # paused option stops ticker + callbacks after submit
 │       ├── lib/
-│       │   ├── assessmentClipboard.js # Block copy (snippets) / paste (editors) on client
-│       │   ├── codeHighlight.js       # escapeHtml + token highlighters
-│       │   ├── resolveQuestionStem.js # Pass-through (server pre-splits prose/code)
-│       │   ├── reportRenderer.js      # Report HTML + iframe print (Save as PDF)
+│       │   ├── assessmentClipboard.js
+│       │   ├── codeHighlight.js
+│       │   ├── employeeReportApi.js   # Skills progress report fetch
+│       │   ├── resolveQuestionStem.js
+│       │   ├── reportRenderer.js
 │       │   ├── shellEditor.js
 │       │   └── tier1Presets.js
 │       └── pages/
-│           ├── AdminPage.jsx             # Generate → preview (no DB write)
-│           ├── AdminReviewPage.jsx       # Edit questions; Confirm & save
-│           ├── AdminAssessmentsPage.jsx  # Filter by ID/language, sort by date
+│           ├── AdminPage.jsx
+│           ├── AdminReviewPage.jsx
+│           ├── AdminAssessmentsPage.jsx
 │           ├── AdminCatalogPage.jsx
-│           ├── AdminSubmissionsPage.jsx  # Formatted dates, sort, employee/assessment filter
-│           └── ClientPage.jsx
+│           ├── AdminQuestionBankPage.jsx
+│           ├── AdminSubmissionsPage.jsx
+│           ├── ClientPage.jsx
+│           ├── EmployeeReportPage.jsx   # Skills progress report + chart lightbox
+│           └── ImprovementPage.jsx    # Help me improve wizard
 ├── scripts/seed_sample_catalog.py
 ├── scripts/seed_demo_students.py      # Demo C001–C003 + ASM-DEMO0001
 ├── scripts/demo_questions_snapshot.json  # Real Tier 1 questions for demo seed
@@ -469,7 +534,7 @@ assessment/
 | `/admin/question-bank` | Browse question bank — filter, sort by % wrong, % correct, or times used |
 | `/admin/employee-report/:employeeId` | Employee skills progress report (print/PDF) |
 | `/client/my-report` | Participant self-service skills report |
-| `/client/improve` | Help me improve — weak areas practice (bank-only) |
+| `/client/improve` | Help me improve — weak areas, new areas, step-up difficulty (bank-only) |
 | `/admin/submissions` | Submission review — formatted dates, sort by date, filter by employee / assessment ID |
 | `/client` | Take assessment (Pyodide, Jupyter, mixed, timed) |
 
@@ -508,8 +573,11 @@ Run from the **project root** (`assessment/`), not from inside `tests/`:
 source .venv/bin/activate
 pip install -r requirements.txt pytest
 
-# All tests (93 total)
+# All tests (149 total)
 python -m pytest tests/ -q
+
+# Test index
+# See tests/TEST_GUIDE.md
 
 # One file (pytest)
 python -m pytest tests/test_question_stem.py -q
@@ -523,12 +591,20 @@ Do not run `python tests/test_question_stem.py` unless you use `python -m unitte
 | Test file | Coverage |
 |-----------|----------|
 | `test_assessment_service_unit.py` | `create_assessment` helpers, routing flag, notebook template builder, row normalization |
+| `test_assessment_recycle.py` | Recycle-then-generate hybrid, bank shortage metadata |
+| `test_question_bank_service.py` | Bank queries, mastered exclusion, difficulty labels, stats |
+| `test_employee_profile_service.py` | Profile scopes (last 3 vs full history), unexplored topics |
+| `test_employee_report_service.py` | Report timeline, time-on-platform, language rollup |
+| `test_improvement_assessment_service.py` | Weak areas, new areas, difficulty step-up flows |
 | `test_question_stem.py` | Stem parsing, inline/fenced code extraction, compound-statement prettification |
 | `test_tier1_presets.py` | Preset totals, topic names, suggested durations |
 | `test_shuffle_service.py` | Per-participant shuffle determinism, MCQ option ordering |
 | `test_attempt_service.py` | Timed config validation, deadline enforcement, `TimedAssessmentError` |
 | `test_notebook_plan_service.py` | Per-topic config derivation, notebook plan logic |
 | `test_report_service.py` | Topic rollup and in-browser report building (Jupyter excluded) |
+| `test_openapi.py` | OpenAPI schema includes improvement and report routes |
+
+Full index: [tests/TEST_GUIDE.md](tests/TEST_GUIDE.md).
 
 ## Security notes
 
@@ -544,7 +620,12 @@ Do not run `python tests/test_question_stem.py` unless you use `python -m unitte
 
 | Goal | Notes |
 |------|--------|
-| *(none queued)* | Add items here as new product goals are agreed. |
+| Employee authentication | Replace self-declared `employee_id` with SSO / users table |
+| Bank question retirement | Admin archive high-failure or low-discrimination items |
+| Bulk bank seed script | `scripts/seed_question_bank.py` for demo environments |
+| ARCHITECTURE.md update | Reflect PostgreSQL + question bank (currently describes CSV) |
+
+See [plan.md](plan.md) Stage 8 and [task.md](task.md) for the full backlog. Email/certificate delivery for the skills report is explicitly out of scope.
 
 ## License
 

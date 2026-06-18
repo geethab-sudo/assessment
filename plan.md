@@ -112,14 +112,16 @@ The first milestone — **persist questions in the database** — is implemented
 | Timed attempts keyed by employee    | `AssessmentAttempt`, `attempt_service.py`                               |
 
 
-### 3.5 Not done yet (everything after Stage 0)
+### 3.5 Remaining work (as of Stages 0–7 complete)
 
-- Admin UI: question source toggle, availability preview, bank browser
-- Generation pipeline: actually **using** `find_bank_questions` / hybrid fill
-- Client UI: “Help me improve” and the three improvement flows
-- Cross-assessment employee analytics (mode-specific: last 3 vs full history)
-- Dedicated tests for question bank service
-- Admin UI for bank stats
+**Shipped:** Stages **0–7** — question bank persistence, admin recycle/hybrid, bank browser, employee profile + stats report (core 4B), and all three “Help me improve” flows (weak areas, new areas, step-up difficulty).
+
+**Optional / partial (not blocking “done”):**
+
+- **Stage 4B polish** — report API is shippable; some ambitious layout items from §4B below are enhancements only (see **4B optional polish**).
+- **Stage 8** — employee auth, bank retirement, bulk seed script, `ARCHITECTURE.md` update (see §Stage 8).
+
+**Explicitly out of scope (for now):** email / certificate delivery (`POST …/employee-report/send`).
 
 ### 3.6 Difficulty labels (fixed in Stage 1)
 
@@ -442,7 +444,7 @@ Rich, print-ready report for managers or employees: languages evaluated (Python,
 | UI | `EmployeeReportPage.jsx` — ~900px max-width, print-friendly |
 | Charts | Recharts or Chart.js; score ring SVG; ≤4 chart types |
 | Export | `@media print` + Download PDF (`window.print()` or html2pdf.js / WeasyPrint server-side) |
-| Email (future) | `POST /admin/employee-report/send` with PDF blob |
+| Email | **Out of scope** — `POST /admin/employee-report/send` sketched only; use print/PDF in-app |
 
 **Visual polish**
 
@@ -461,11 +463,27 @@ Rich, print-ready report for managers or employees: languages evaluated (Python,
 
 **Exit criteria (4B):** Admin or employee opens report for a user with history; sees hero, language cards, trend chart, topic table; exports a clean PDF.
 
-**Agent handoff:** “Depends on 4A aggregations; new report endpoint + page + print CSS.”
+**Status:** Core 4B (**4a–4d**) is **done** — acceptance criteria above are met.
+
+#### 4B optional polish (enhancements — not blocking “done”)
+
+Some items in the layout sketch above were described ambitiously. The report is shippable without them; treat as a follow-up polish pass, not a missing stage.
+
+| Item | API | UI | Notes |
+|------|-----|-----|-------|
+| Topic heatmap (language × topic) | derived from `languages[].topics` | wired | Client-side grid; no dedicated API field |
+| Cumulative correct/wrong stacked chart | `cumulative_progress` | wired | |
+| Radar chart (latest vs rolling average) | `radar_topics` | wired | |
+| QR code in footer | — | — | Deferred — not in scope |
+| Email report / certificate send | `POST …/send` sketched | — | **Out of scope** — do not schedule until product asks |
+
+**Agent handoff (polish only):** “Wire `cumulative_progress` + `radar_topics` in `EmployeeReportPage`; add heatmap if product wants it. No email send.”
+
+**Agent handoff (core 4B):** “Depends on 4A aggregations; new report endpoint + page + print CSS.” ✅
 
 ---
 
-### Stage 5 — Client: “Help me improve” shell + weak areas
+### Stage 5 — Client: “Help me improve” shell + weak areas ✅
 
 **Goal:** Button on `/client` → wizard step 1 → **Improve my weak areas**.
 
@@ -496,7 +514,7 @@ Rich, print-ready report for managers or employees: languages evaluated (Python,
 
 ---
 
-### Stage 6 — Client: explore new areas
+### Stage 6 — Client: explore new areas ✅
 
 **Goal:** Second wizard option — topics user hasn’t tried; **bank-only**.
 
@@ -515,7 +533,7 @@ Rich, print-ready report for managers or employees: languages evaluated (Python,
 
 ---
 
-### Stage 7 — Client: improve difficulty
+### Stage 7 — Client: improve difficulty ✅
 
 **Goal:** Third wizard option — same topics, harder difficulty; **bank-only**.
 
@@ -537,10 +555,13 @@ Rich, print-ready report for managers or employees: languages evaluated (Python,
 
 | Item                                       | Notes                                                              |
 | ------------------------------------------ | ------------------------------------------------------------------ |
+| **4B report polish**                       | Heatmap, cumulative stacked chart, radar UI — see **4B optional polish** |
 | Employee login                             | `employee_id` today is self-declared; later tie to SSO/users table |
 | Question retirement                        | Admin retires high-wrong or low-discrimination items               |
 | Seeding bank from `seed_sample_catalog.py` | Bulk import script for demo environments                           |
 | ARCHITECTURE.md update                     | Still describes CSV; should reflect PostgreSQL + bank              |
+
+**Not scheduled:** email / PDF certificate delivery (`POST /admin/employee-report/send` or similar).
 
 
 ---
@@ -639,9 +660,11 @@ if len(rows) == 0: no assessment created — explain why
 ## 10. Suggested agent execution order
 
 ```text
-Stage 0 ✅ → Stage 1 → Stage 2 → Stage 3 (parallel ok after 1)
-                              ↘
-Stage 4 → Stage 5 → Stage 6 → Stage 7
+Stage 0 ✅ → Stage 1 ✅ → Stage 2 ✅ → Stage 3 ✅ (parallel ok after 1)
+                                    ↘
+Stage 4 ✅ → Stage 5 ✅ → Stage 6 ✅ → Stage 7 ✅
+         ↘
+         4B optional polish (heatmap, cumulative, radar UI) — anytime after 4B core
 ```
 
-Stages **3** (admin bank UI) and **4** (employee profile) can run in parallel after Stage 1. Stages **5–7** depend on Stage **1** + **4** (not Stage 2 — client flows are bank-only).
+Stages **0–7** are complete. **4B optional polish** and **Stage 8** are enhancements / backlog, not blockers for “done.”

@@ -187,7 +187,7 @@
 - [x] **A. Executive summary (hero)**
 - [x] **B. Languages evaluated**
 - [x] **C. Topics covered (per language)** — trend arrows; sparkline data in API
-- [x] **D. Progress over time (plots)** — line chart + cumulative data in API
+- [~] **D. Progress over time (plots)** — score trend, cumulative stacked chart, and radar chart in UI
 - [x] **E. Question-type analytics** — donut
 - [x] **F. Mastery & repetition**
 - [x] **G. Strengths & focus areas (narrative)**
@@ -217,9 +217,22 @@
 
 **Acceptance (4B):** Admin or employee opens report for a user with history; sees hero, language cards, trend chart, topic table; can print/export PDF.
 
+### 4B optional polish (enhancements — not blocking “done”)
+
+> Core 4B meets acceptance above. Items below are follow-up UI/visual work, not missing stages.
+
+| Item | API | UI |
+|------|-----|-----|
+| Topic heatmap (language × topic) | — | [x] |
+| Cumulative correct/wrong stacked chart | [x] `cumulative_progress` | [x] |
+| Radar chart (latest vs rolling average) | [x] `radar_topics` | [x] |
+| QR code in report footer | — | [ ] (deferred) |
+
+**Out of scope (do not schedule):** email / certificate delivery (`POST …/employee-report/send`).
+
 ---
 
-## Stage 5 — Client: “Help me improve” + weak areas
+## Stage 5 — Client: “Help me improve” + weak areas ✅
 
 > **Goal:** `/client` button → weak areas flow → **bank-only** assessment (no LLM, no admin review).  
 > **Depends on:** Stage 1 (mastered exclusion), Stage 4  
@@ -259,7 +272,7 @@
 
 ---
 
-## Stage 6 — Client: explore new areas
+## Stage 6 — Client: explore new areas ✅
 
 > **Goal:** Second improvement option — unseen topics; **bank-only**.  
 > **Depends on:** Stage 5 (wizard shell), Stage 4
@@ -280,7 +293,7 @@
 
 ---
 
-## Stage 7 — Client: improve difficulty
+## Stage 7 — Client: improve difficulty ✅
 
 > **Goal:** Third option — harder questions on familiar topics; **bank-only**.  
 > **Depends on:** Stage 5–6 pattern, Stage 1, Stage 4
@@ -303,10 +316,21 @@
 
 ## Stage 8 — Future backlog (not scheduled)
 
+### 4B report polish (optional)
+
+- [x] Topic heatmap (language × topic) — `EmployeeReportPage`
+- [x] Wire `cumulative_progress` → stacked correct/wrong chart in `EmployeeReportPage`
+- [x] Wire `radar_topics` → radar chart in `EmployeeReportPage`
+- [ ] Optional QR code in report footer (deferred)
+
+### Platform / ops
+
 - [ ] Employee authentication (replace self-declared `employee_id`)
 - [ ] Admin retire/archive bank question
 - [ ] `scripts/seed_question_bank.py` — bulk demo questions from catalog
 - [ ] Update [ARCHITECTURE.md](ARCHITECTURE.md) — PostgreSQL + question bank (currently describes CSV)
+
+**Explicitly out of scope:** email / PDF certificate send (`POST …/employee-report/send`).
 
 ---
 
@@ -334,7 +358,8 @@
 | Let admin recycle questions (bank + LLM + review) | **2** |
 | Show bank analytics in admin | **3** |
 | Build improvement API foundation | **4A** |
-| Build shippable employee stats report | **4B** |
-| Add Help me improve button | **5** then **6**–**7** |
+| Build shippable employee stats report | **4B** (core done) |
+| Polish report charts (cumulative, radar, heatmap) | **4B optional** or **8** |
+| Add Help me improve button | **5** then **6**–**7** (done) |
 
 Copy the stage block + **Acceptance** line into the agent prompt as scope boundary.

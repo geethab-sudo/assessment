@@ -3180,6 +3180,345 @@ button.primary {
   gap: 1.25rem;
 }
 
+.emp-report-grid-col {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.emp-report-mastery-inline h3 {
+  margin: 0.25rem 0 0.35rem;
+  font-size: 1rem;
+}
+
+.emp-report-mastery-inline p {
+  margin: 0.15rem 0;
+  font-size: 0.9rem;
+}
+
+.emp-report-heatmap-wrap {
+  margin-top: 0.35rem;
+  overflow-x: auto;
+}
+
+.emp-report-heatmap {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.emp-report-heatmap th,
+.emp-report-heatmap td {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 0.35rem 0.45rem;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.emp-report-heatmap-corner,
+.emp-report-heatmap-row-head {
+  text-align: left;
+  font-weight: 600;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.emp-report-heatmap-row-head {
+  max-width: 11rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.emp-report-heatmap-col-head {
+  font-weight: 600;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.emp-report-heatmap-lang-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  margin-right: 0.25rem;
+  vertical-align: middle;
+}
+
+.emp-report-heatmap-cell {
+  font-weight: 600;
+  min-width: 2.75rem;
+}
+
+.emp-report-heatmap-legend {
+  margin: 0.5rem 0 0;
+}
+
+.emp-report-radar-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.emp-report-radar {
+  width: 100%;
+  max-width: 240px;
+  height: auto;
+  display: block;
+  flex-shrink: 0;
+}
+
+.emp-report-radar-aside {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.emp-report-radar-key-heading {
+  margin: 0 0 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted, #64748b);
+}
+
+.emp-report-radar-key {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.65rem;
+}
+
+.emp-report-radar-key-row {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  margin-bottom: 0.45rem;
+}
+
+.emp-report-radar-key-letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+  font-weight: 700;
+  font-size: 0.72rem;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.emp-report-radar-key-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.emp-report-radar-key-topic {
+  font-size: 0.85rem;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.emp-report-radar-key-stats {
+  line-height: 1.3;
+}
+
+.emp-report-radar-symbol-bg {
+  fill: rgba(37, 99, 235, 0.12);
+  stroke: rgba(37, 99, 235, 0.35);
+  stroke-width: 1;
+}
+
+.emp-report-radar-symbol {
+  font-size: 10px;
+  font-weight: 700;
+  fill: #1d4ed8;
+  font-family: inherit;
+}
+
+.emp-report-radar-scale-label {
+  font-size: 8px;
+  fill: var(--muted, #94a3b8);
+  font-family: inherit;
+}
+
+.emp-report-radar-series-legend {
+  margin-top: 0.25rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.emp-report-stacked-legend {
+  list-style: none;
+  padding: 0;
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+}
+
+.emp-report-stacked-legend li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.3rem;
+}
+
+.emp-report-chart-block h3 {
+  margin-top: 0;
+}
+
+.emp-report-chart-block--expandable {
+  cursor: pointer;
+  border-radius: 10px;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+  outline: none;
+}
+
+.emp-report-chart-block--expandable:hover,
+.emp-report-chart-block--expandable:focus-visible {
+  background: rgba(37, 99, 235, 0.04);
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.18);
+}
+
+.emp-report-chart-block--in-grid {
+  margin: 0;
+}
+
+.emp-report-grid-heatmap-col {
+  min-width: 0;
+}
+
+.emp-report-chart-expand-hint {
+  margin: 0.5rem 0 0;
+  opacity: 0.85;
+}
+
+.emp-report-chart-canvas--expanded .emp-report-line-chart {
+  max-width: none;
+}
+
+.emp-report-line-chart-wrap--expanded .emp-report-line-chart {
+  max-width: none;
+  width: 100%;
+}
+
+.emp-report-heatmap-wrap--expanded .emp-report-heatmap {
+  font-size: 0.92rem;
+}
+
+.emp-report-heatmap-wrap--expanded .emp-report-heatmap-row-head {
+  max-width: none;
+}
+
+.emp-report-radar-wrap--expanded .emp-report-radar {
+  max-width: 400px;
+}
+
+.emp-report-donut-wrap--expanded {
+  justify-content: center;
+  align-items: flex-start;
+  width: 100%;
+  gap: 1.25rem;
+  padding: 0.25rem 0;
+}
+
+.emp-report-donut-wrap--expanded .emp-report-donut-chart {
+  width: 168px;
+  height: 168px;
+  max-width: 100%;
+  flex-shrink: 0;
+}
+
+.emp-report-donut-wrap--expanded .emp-report-donut-legend {
+  font-size: 0.95rem;
+}
+
+.emp-report-chart-insight {
+  margin: 0.5rem 0 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--text, #1e293b);
+  font-style: italic;
+}
+
+.emp-report-chart-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+}
+
+.emp-report-chart-lightbox-backdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: rgba(15, 23, 42, 0.55);
+  cursor: pointer;
+}
+
+.emp-report-chart-lightbox-panel {
+  position: relative;
+  z-index: 1;
+  width: min(920px, 100%);
+  max-height: min(90vh, 900px);
+  overflow: auto;
+  background: var(--card-bg, #fff);
+  border-radius: 14px;
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.28);
+  padding: 1.1rem 1.25rem 1.35rem;
+}
+
+.emp-report-chart-lightbox-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.emp-report-chart-lightbox-header h3 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.emp-report-chart-lightbox-close {
+  border: none;
+  background: rgba(0, 0, 0, 0.06);
+  color: inherit;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 8px;
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.emp-report-chart-lightbox-close:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.emp-report-chart-lightbox-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  overflow: visible;
+}
+
+.emp-report-chart-lightbox-body .emp-report-chart-canvas--expanded {
+  overflow: visible;
+  display: flex;
+  justify-content: center;
+}
+
 .emp-report-lang-cards {
   display: flex;
   flex-direction: column;
@@ -3228,21 +3567,39 @@ button.primary {
 }
 
 .emp-report-line-chart-axis {
-  font-size: 10px;
   fill: var(--muted, #64748b);
   font-family: inherit;
 }
 
 .emp-report-line-chart-axis--x {
-  font-size: 9px;
+  /* font size set via SVG fontSize attribute for proper scaling */
 }
 
 .emp-report-line-chart-axis--tilted {
-  font-size: 8px;
+  /* font size set via SVG fontSize attribute */
 }
 
 .emp-report-line-chart-hint {
   margin: 0.35rem 0 0;
+}
+
+.emp-report-chart-axis-title {
+  font-weight: 600;
+  fill: var(--muted, #64748b);
+  font-family: inherit;
+}
+
+.emp-report-chart-axis-title--y {
+  /* font size set via SVG fontSize attribute */
+}
+
+.emp-report-chart-lead {
+  margin: -0.15rem 0 0.5rem;
+}
+
+.emp-report-chart-caption {
+  margin: 0.35rem 0 0;
+  line-height: 1.4;
 }
 
 .emp-report-donut-wrap {
@@ -3398,6 +3755,17 @@ button.primary {
     break-inside: avoid;
     box-shadow: none;
     border: 1px solid #ccc;
+  }
+
+  .emp-report-chart-expand-hint,
+  .emp-report-chart-lightbox {
+    display: none !important;
+  }
+
+  .emp-report-chart-block--expandable {
+    cursor: default;
+    background: transparent;
+    box-shadow: none;
   }
 
   body {
