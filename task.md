@@ -287,15 +287,15 @@
 
 ### Backend
 
-- [ ] `POST /client/improvement/difficulty`
-- [ ] Profile `scope=full_history` → `recommended_difficulty_by_topic`
-- [ ] **`question_source=bank_only`** at stepped difficulty — no LLM
-- [ ] Exclude mastered questions; handle “all mastered at this level” per topic
+- [x] `POST /client/improvement/difficulty`
+- [x] Profile `scope=full_history` → `recommended_difficulty_by_topic`
+- [x] **`question_source=bank_only`** at stepped difficulty — no LLM
+- [x] Exclude mastered questions; handle “all mastered at this level” per topic
 
 ### Frontend
 
-- [ ] Wire **Improve difficulty** option
-- [ ] Explain stepped level using full-history performance; show shortage / all-mastered messages
+- [x] Wire **Improve difficulty** option
+- [x] Explain stepped level using full-history performance; show shortage / all-mastered messages
 
 **Acceptance:** User receives harder **bank** questions where available; “all mastered at intermediate” messaged clearly.
 

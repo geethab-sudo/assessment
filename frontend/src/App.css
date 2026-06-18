@@ -3501,6 +3501,23 @@ button.primary {
   border-radius: 4px;
 }
 
+.improve-topic-row--step-up td:first-child {
+  font-weight: 600;
+}
+
+.improve-step-up-badge {
+  display: inline-block;
+  margin-left: 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #1d4ed8;
+  background: rgba(37, 99, 235, 0.12);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+
 .improve-availability {
   margin: 1rem 0 0;
   padding: 0.65rem 0.85rem;

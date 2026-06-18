@@ -26,6 +26,7 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/client/my-report": {"get"},
     "/client/improvement/weak-areas": {"post"},
     "/client/improvement/new-areas": {"post"},
+    "/client/improvement/difficulty": {"post"},
     "/submit-assessment": {"post"},
     "/submit-notebook-assessment": {"post"},
     "/admin/assessments": {"get"},
@@ -177,6 +178,7 @@ class TestOpenAPISchema(unittest.TestCase):
             "/client/my-report": {"get"},
             "/client/improvement/weak-areas": {"post"},
             "/client/improvement/new-areas": {"post"},
+            "/client/improvement/difficulty": {"post"},
             "/submit-assessment": {"post"},
             "/submit-notebook-assessment": {"post"},
         }

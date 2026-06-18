@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
+  createDifficultyImprovementAssessment,
   createNewAreasAssessment,
   createWeakAreasAssessment,
   fetchEmployeeProfile,
@@ -9,9 +10,13 @@ import {
 
 const WEAK_THRESHOLD = 70;
 const NEW_AREAS_TOPIC_LIMIT = 5;
+const STEP_UP_TOPIC_LIMIT = 5;
 
-function topicRowClass(percent, isWeak) {
+const DIFFICULTY_RANK = { beginner: 1, intermediate: 2, advanced: 3 };
+
+function topicRowClass(percent, isWeak, isStepUp) {
   if (isWeak) return "improve-topic-row improve-topic-row--weak";
+  if (isStepUp) return "improve-topic-row improve-topic-row--step-up";
   return "improve-topic-row";
 }
 
@@ -27,8 +32,18 @@ function formatAvailabilityMessage(text) {
 }
 
 function parsePathParam(value) {
-  if (value === "weak" || value === "new") return value;
+  if (value === "weak" || value === "new" || value === "difficulty") return value;
   return null;
+}
+
+function profileScopeForPath(path) {
+  return path === "weak" ? "last_3" : "full_history";
+}
+
+function isStepUpReady(topic, recommendedByTopic) {
+  const last = (topic.last_difficulty || "beginner").toLowerCase();
+  const target = (recommendedByTopic[topic.topic_name] || last).toLowerCase();
+  return (DIFFICULTY_RANK[target] || 1) > (DIFFICULTY_RANK[last] || 1);
 }
 
 export default function ImprovementPage() {
@@ -55,7 +70,6 @@ export default function ImprovementPage() {
 
   const languageLocked = evaluatedLanguages.length === 1;
   const hasEvaluatedLanguages = evaluatedLanguages.length > 0;
-  const profileScope = selectedPath === "new" ? "full_history" : "last_3";
 
   useEffect(() => {
     setEmployeeId(employeeIdParam);
@@ -121,7 +135,7 @@ export default function ImprovementPage() {
   const loadProfile = useCallback(async () => {
     const eid = employeeId.trim();
     const lang = languageCode.trim();
-    const scope = selectedPath === "new" ? "full_history" : "last_3";
+    const scope = profileScopeForPath(selectedPath);
 
     if (!eid) {
       setProfileError("Enter your employee ID to continue.");
@@ -162,7 +176,9 @@ export default function ImprovementPage() {
 
   useEffect(() => {
     if (
-      (selectedPath === "weak" || selectedPath === "new") &&
+      (selectedPath === "weak" ||
+        selectedPath === "new" ||
+        selectedPath === "difficulty") &&
       employeeId.trim() &&
       languageCode.trim()
     ) {
@@ -173,6 +189,18 @@ export default function ImprovementPage() {
   const weakTopicSet = useMemo(() => {
     return new Set(profile?.weakest_topics || []);
   }, [profile]);
+
+  const recommendedByTopic = profile?.recommended_difficulty_by_topic || {};
+
+  const stepUpTopics = useMemo(() => {
+    return (profile?.topic_performance || []).filter((topic) =>
+      isStepUpReady(topic, recommendedByTopic)
+    );
+  }, [profile, recommendedByTopic]);
+
+  const stepUpTopicSet = useMemo(() => {
+    return new Set(stepUpTopics.map((t) => t.topic_name));
+  }, [stepUpTopics]);
 
   const unexploredTopics = profile?.unexplored_topic_names || [];
 
@@ -214,17 +242,25 @@ export default function ImprovementPage() {
     setCreateError(null);
     setCreateResult(null);
     try {
-      const data =
-        selectedPath === "new"
-          ? await createNewAreasAssessment({
-              employeeId: eid,
-              languageCode: lang,
-              topicsCount: NEW_AREAS_TOPIC_LIMIT,
-            })
-          : await createWeakAreasAssessment({
-              employeeId: eid,
-              languageCode: lang,
-            });
+      let data;
+      if (selectedPath === "new") {
+        data = await createNewAreasAssessment({
+          employeeId: eid,
+          languageCode: lang,
+          topicsCount: NEW_AREAS_TOPIC_LIMIT,
+        });
+      } else if (selectedPath === "difficulty") {
+        data = await createDifficultyImprovementAssessment({
+          employeeId: eid,
+          languageCode: lang,
+          topicsCount: STEP_UP_TOPIC_LIMIT,
+        });
+      } else {
+        data = await createWeakAreasAssessment({
+          employeeId: eid,
+          languageCode: lang,
+        });
+      }
       setCreateResult(data);
       if (data.assessment_id) {
         navigate("/client", {
@@ -243,6 +279,9 @@ export default function ImprovementPage() {
 
   const canStartNew =
     profile?.assessments_analyzed > 0 && unexploredTopics.length > 0;
+
+  const canStartDifficulty =
+    profile?.assessments_analyzed > 0 && stepUpTopics.length > 0;
 
   const langLabel =
     evaluatedLanguages.find((l) => l.code === languageCode)?.label || languageCode;
@@ -355,10 +394,18 @@ export default function ImprovementPage() {
                 Try catalog topics you have not been assessed on yet (full history).
               </p>
             </button>
-            <div className="improve-option improve-option--disabled" aria-disabled="true">
+            <button
+              type="button"
+              className="improve-option improve-option--active"
+              onClick={() => handleSelectPath("difficulty")}
+              disabled={!employeeId.trim() || !languageCode.trim()}
+            >
               <h3>Step up difficulty</h3>
-              <p className="muted">Coming in a future update.</p>
-            </div>
+              <p className="muted">
+                Harder bank questions on familiar topics when your scores qualify (≥75%
+                beginner, ≥80% intermediate).
+              </p>
+            </button>
           </div>
         </section>
       )}
@@ -423,7 +470,8 @@ export default function ImprovementPage() {
                         key={topic.topic_name}
                         className={topicRowClass(
                           topic.average_percent,
-                          weakTopicSet.has(topic.topic_name)
+                          weakTopicSet.has(topic.topic_name),
+                          false
                         )}
                       >
                         <td>
@@ -556,6 +604,136 @@ export default function ImprovementPage() {
                   }
                 >
                   {creating ? "Creating…" : "Start practice on new topics"}
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+      )}
+
+      {selectedPath === "difficulty" && (
+        <section className="card">
+          <div className="improve-section-header">
+            <h2>Step up difficulty</h2>
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => {
+                setSelectedPath(null);
+                setProfile(null);
+                setPath(null);
+              }}
+            >
+              ← All paths
+            </button>
+          </div>
+
+          {(profileLoading || languagesLoading) && (
+            <p className="muted">Loading your full assessment history…</p>
+          )}
+          {profileError && <p className="error">{profileError}</p>}
+
+          {profile && !profileLoading && (
+            <>
+              <p className="muted small-print">
+                Based on your full history in {langLabel}, topics where you scored well enough
+                qualify for harder bank questions at the next level. We select up to{" "}
+                {STEP_UP_TOPIC_LIMIT} topics, strongest performers first.
+              </p>
+
+              {stepUpTopics.length > 0 ? (
+                <div className="improve-topic-summary improve-topic-summary--step-up">
+                  <p className="improve-topic-summary-lead">
+                    Ready to step up ({stepUpTopics.length} topic
+                    {stepUpTopics.length === 1 ? "" : "s"}):
+                  </p>
+                  <ul className="improve-weak-topic-list">
+                    {stepUpTopics.map((t) => (
+                      <li key={t.topic_name}>
+                        {t.topic_name} — {t.last_difficulty || "beginner"} →{" "}
+                        {recommendedByTopic[t.topic_name]}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <p className="muted">
+                  No topics are ready for a harder level yet. Score at least 75% on beginner
+                  topics (or 80% on intermediate) to unlock step-up practice.
+                </p>
+              )}
+
+              <div className="table-wrap">
+                <table className="data-table emp-report-topic-table">
+                  <thead>
+                    <tr>
+                      <th>Topic</th>
+                      <th>Avg %</th>
+                      <th>Last level</th>
+                      <th>Recommended</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(profile.topic_performance || []).map((topic) => (
+                      <tr
+                        key={topic.topic_name}
+                        className={topicRowClass(
+                          topic.average_percent,
+                          false,
+                          stepUpTopicSet.has(topic.topic_name)
+                        )}
+                      >
+                        <td>
+                          {topic.topic_name}
+                          {stepUpTopicSet.has(topic.topic_name) && (
+                            <span className="improve-step-up-badge"> step-up</span>
+                          )}
+                        </td>
+                        <td>{Math.round(topic.average_percent)}%</td>
+                        <td>{topic.last_difficulty || "—"}</td>
+                        <td>{recommendedByTopic[topic.topic_name] || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {createResult?.selected_topics?.length > 0 && (
+                <div className="improve-topic-summary">
+                  <p className="improve-topic-summary-lead">Selected for this practice run:</p>
+                  <ul className="improve-weak-topic-list">
+                    {createResult.selected_topics.map((t) => (
+                      <li key={t}>
+                        {t}
+                        {createResult.target_difficulty_by_topic?.[t]
+                          ? ` (${createResult.target_difficulty_by_topic[t]})`
+                          : ""}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {createResult?.availability_message && !createResult.assessment_id && (
+                <p className="improve-availability" role="status">
+                  {formatAvailabilityMessage(createResult.availability_message)}
+                </p>
+              )}
+
+              {createError && <p className="error">{createError}</p>}
+
+              <div className="improve-actions">
+                <button
+                  type="button"
+                  onClick={handleStartPractice}
+                  disabled={
+                    creating ||
+                    !employeeId.trim() ||
+                    !languageCode.trim() ||
+                    !canStartDifficulty
+                  }
+                >
+                  {creating ? "Creating…" : "Start harder practice assessment"}
                 </button>
               </div>
             </>

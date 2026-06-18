@@ -22,6 +22,9 @@ DEFAULT_QUESTIONS_REQUESTED = 15
 MIN_QUESTIONS_REQUESTED = 1
 MAX_QUESTIONS_REQUESTED = 50
 DEFAULT_NEW_AREAS_TOPIC_COUNT = 5
+DEFAULT_STEP_UP_TOPIC_COUNT = 5
+
+_DIFFICULTY_RANK = {"beginner": 1, "intermediate": 2, "advanced": 3}
 
 _TYPE_ORDER = ("mcq", "coding", "subjective")
 
@@ -35,6 +38,10 @@ MSG_NO_WEAK_TOPICS = (
 MSG_NO_UNEXPLORED = (
     "You have already explored all catalog topics for this language. "
     "Try weak areas or step up difficulty when available."
+)
+MSG_NO_STEP_UP = (
+    "No topics are ready for a harder level yet. Score at least **75%** on beginner "
+    "topics (or **80%** on intermediate) to unlock step-up practice."
 )
 MSG_NO_BANK_FOR_TOPICS = (
     "We could not find practice questions in the bank for the selected topics at the "
@@ -128,6 +135,60 @@ def _new_areas_topic_summary(selected_topics: list[str]) -> str:
         "Based on your full assessment history, we selected topics you have not tried yet: "
         f"{names}."
     )
+
+
+def _difficulty_step_up_topic_summary(
+    selected_topics: list[str],
+    target_difficulty_by_topic: dict[str, str],
+) -> str:
+    if not selected_topics:
+        return ""
+    parts = []
+    for topic in selected_topics:
+        level = target_difficulty_by_topic.get(topic, "intermediate")
+        parts.append(f"**{topic}** ({level})")
+    return (
+        "Based on your full assessment history, practice at the next difficulty level on: "
+        + ", ".join(parts)
+        + "."
+    )
+
+
+def _normalize_difficulty(level: str | None) -> str:
+    d = (level or "beginner").strip().lower()
+    if d not in _DIFFICULTY_RANK:
+        return "beginner"
+    return d
+
+
+def _select_step_up_topics(
+    topic_performance: list[dict[str, Any]],
+    recommended_by_topic: dict[str, str],
+    *,
+    limit: int,
+) -> tuple[list[str], dict[str, str]]:
+    """
+    Topics where recommended difficulty is strictly higher than last assessed level.
+
+    Strongest performers (highest average %) are preferred when limiting topic count.
+    """
+    candidates: list[tuple[float, str, str]] = []
+    for item in topic_performance:
+        topic = item.get("topic_name") or ""
+        if not topic:
+            continue
+        last = _normalize_difficulty(item.get("last_difficulty"))
+        target = _normalize_difficulty(recommended_by_topic.get(topic, last))
+        if _DIFFICULTY_RANK[target] > _DIFFICULTY_RANK[last]:
+            candidates.append((float(item.get("average_percent") or 0), topic, target))
+
+    candidates.sort(key=lambda row: (-row[0], row[1].casefold()))
+    selected: list[str] = []
+    targets: dict[str, str] = {}
+    for _avg, topic, target in candidates[:limit]:
+        selected.append(topic)
+        targets[topic] = target
+    return selected, targets
 
 
 def _all_mastered_message(
@@ -391,6 +452,93 @@ def create_new_areas_assessment(
         for topic in selected
     }
 
+    rows, _shortage = _build_bank_only_rows(per_topic_config, difficulty_map, eid)
+    delivered = len(rows)
+    base_response["questions_delivered"] = delivered
+
+    if delivered == 0:
+        if _topics_have_bank_questions(selected, difficulty_map):
+            base_response["availability_message"] = _all_mastered_message(
+                selected, difficulty_map
+            )
+        else:
+            base_response["availability_message"] = MSG_NO_BANK_FOR_TOPICS
+        return base_response
+
+    if delivered < requested:
+        base_response["availability_message"] = MSG_SHORTAGE_TEMPLATE.format(
+            requested=requested,
+            delivered=delivered,
+        )
+
+    language_label = _resolve_language_label(lang)
+    assessment_id = _persist_bank_only_assessment(
+        rows,
+        topic_names=selected,
+        per_topic_config=per_topic_config,
+        language_code=lang,
+        language_label=language_label,
+    )
+    base_response["assessment_id"] = assessment_id
+    return base_response
+
+
+def create_difficulty_improvement_assessment(
+    employee_id: str,
+    language_code: str,
+    *,
+    questions_requested: int | None = None,
+    topics_count: int | None = None,
+) -> dict[str, Any]:
+    """
+    Build a bank-only practice assessment at stepped-up difficulty on familiar topics.
+
+    Uses full-history ``recommended_difficulty_by_topic``; never calls the LLM.
+    """
+    eid = (employee_id or "").strip()
+    if not eid:
+        raise ValueError("employee_id is required")
+
+    lang = (language_code or "").strip()
+    if not lang:
+        raise ValueError("language_code is required")
+
+    requested = _clamp_questions_requested(questions_requested)
+    k = topics_count if topics_count is not None else DEFAULT_STEP_UP_TOPIC_COUNT
+    k = max(1, min(10, int(k)))
+
+    profile = employee_profile_service.get_employee_profile(
+        eid,
+        language_code=lang,
+        scope="full_history",
+    )
+
+    base_response = _improvement_base_response(eid, lang, requested)
+    base_response["selected_topics"] = []
+    base_response["target_difficulty_by_topic"] = {}
+
+    if profile["assessments_analyzed"] == 0:
+        base_response["availability_message"] = MSG_NO_HISTORY
+        return base_response
+
+    recommended = dict(profile.get("recommended_difficulty_by_topic") or {})
+    selected, difficulty_map = _select_step_up_topics(
+        profile.get("topic_performance") or [],
+        recommended,
+        limit=k,
+    )
+    base_response["selected_topics"] = selected
+    base_response["target_difficulty_by_topic"] = difficulty_map
+
+    if not selected:
+        base_response["availability_message"] = MSG_NO_STEP_UP
+        return base_response
+
+    base_response["topic_summary"] = _difficulty_step_up_topic_summary(
+        selected, difficulty_map
+    )
+
+    per_topic_config = _allocate_per_topic_config(selected, requested)
     rows, _shortage = _build_bank_only_rows(per_topic_config, difficulty_map, eid)
     delivered = len(rows)
     base_response["questions_delivered"] = delivered

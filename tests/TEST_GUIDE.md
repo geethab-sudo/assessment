@@ -114,6 +114,7 @@ python -m pytest tests/test_notebook_plan_service.py -v
 | Employee skills report | `test_employee_report_service.py` |
 | Help me improve — weak areas | `test_improvement_assessment_service.py` |
 | Help me improve — new areas | `test_improvement_assessment_service.py` |
+| Help me improve — step up difficulty | `test_improvement_assessment_service.py` |
 | Admin JWT auth | `test_auth_api.py` |
 | Rate limits & headers | `test_security.py` |
 | OpenAPI documentation | `test_openapi.py` |

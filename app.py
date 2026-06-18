@@ -46,6 +46,8 @@ from schemas.auth import ClientLoginResponse, LoginBody, LoginResponse
 from schemas.catalog import LanguagesResponse
 from schemas.common import ErrorDetail, HealthResponse, ValidationErrorItem, ValidationErrorResponse
 from schemas.improvement import (
+    DifficultyImprovementRequest,
+    DifficultyImprovementResponse,
     EmployeeProfileResponse,
     EmployeeReportResponse,
     NewAreasImprovementRequest,
@@ -558,6 +560,35 @@ def post_client_improvement_new_areas(
             topics_count=body.topics_count,
         )
         return NewAreasImprovementResponse.model_validate(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post(
+    "/client/improvement/difficulty",
+    tags=["client"],
+    summary="Create bank-only practice assessment at stepped-up difficulty",
+    response_model=DifficultyImprovementResponse,
+    responses={
+        200: {"description": "Practice assessment created or availability explanation returned."},
+        400: ERROR_400,
+        500: ERROR_500,
+    },
+)
+def post_client_improvement_difficulty(
+    body: DifficultyImprovementRequest,
+) -> DifficultyImprovementResponse:
+    """Bank-only step-up difficulty practice — never calls the LLM."""
+    try:
+        data = improvement_assessment_service.create_difficulty_improvement_assessment(
+            body.employee_id.strip(),
+            body.language_code.strip(),
+            questions_requested=body.questions_requested,
+            topics_count=body.topics_count,
+        )
+        return DifficultyImprovementResponse.model_validate(data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
