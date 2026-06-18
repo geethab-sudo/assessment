@@ -6,8 +6,10 @@ Powers future “Help me improve” flows and the employee report UI.
 
 from __future__ import annotations
 
+import json
 import re
 from collections import defaultdict
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
@@ -27,6 +29,15 @@ SCORE_CORRECT_THRESHOLD = 70.0
 REPORT_VERSION = "1.0"
 
 _TIER_TOPIC_RE = re.compile(r"^Tier\s*(\d+)", re.IGNORECASE)
+
+_TIER1_PRESETS_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "frontend"
+    / "src"
+    / "data"
+    / "tier1EvaluationPresets.json"
+)
+_preset_exploration_pipeline_cache: list[tuple[str, list[str]]] | None = None
 
 # Common assessment labels → catalog ``languages.code`` (seed uses ``py`` for Python).
 _LANGUAGE_CODE_ALIASES: dict[str, str] = {
@@ -109,23 +120,85 @@ def _sort_unexplored_topic_names(names: list[str]) -> list[str]:
     return sorted(names, key=lambda n: (_topic_tier_number(n), n.casefold()))
 
 
+def _preset_exploration_pipeline() -> list[tuple[str, list[str]]]:
+    """
+    Tier 1 preset topic order for new-area recommendations.
+
+    Intermediate preset gaps first, then Advanced — before generic Tier 1 / Tier 2.
+    """
+    global _preset_exploration_pipeline_cache
+    if _preset_exploration_pipeline_cache is not None:
+        return _preset_exploration_pipeline_cache
+
+    pipeline: list[tuple[str, list[str]]] = []
+    try:
+        data = json.loads(_TIER1_PRESETS_PATH.read_text(encoding="utf-8"))
+    except OSError:
+        _preset_exploration_pipeline_cache = pipeline
+        return pipeline
+
+    presets_by_name = {
+        (p.get("name") or "").strip(): p for p in data.get("presets") or []
+    }
+    for preset_name in ("Intermediate", "Advanced"):
+        preset = presets_by_name.get(preset_name)
+        if not preset:
+            continue
+        topics: list[str] = []
+        for row in preset.get("topics") or []:
+            topic = (row.get("topic_name") or "").strip()
+            if topic:
+                topics.append(topic)
+        if topics:
+            pipeline.append((preset_name, topics))
+
+    _preset_exploration_pipeline_cache = pipeline
+    return pipeline
+
+
 def _pick_unexplored_for_recommendations(
     unexplored: list[str],
     *,
     limit: int = 3,
 ) -> list[str]:
-    """Prefer higher tiers (e.g. Tier 2) when suggesting areas to explore."""
-    sorted_names = _sort_unexplored_topic_names(unexplored)
-    by_tier: dict[int, list[str]] = defaultdict(list)
-    for name in sorted_names:
-        by_tier[_topic_tier_number(name)].append(name)
+    """
+    Learning-path order for new practice topics.
 
+    1. Intermediate preset topics not yet attempted
+    2. Advanced preset topics not yet attempted
+    3. Remaining Tier 1 catalog topics
+    4. Tier 2+ topics last
+    """
+    if not unexplored or limit <= 0:
+        return []
+
+    unexplored_set = set(unexplored)
     picked: list[str] = []
-    for tier in sorted(by_tier.keys(), reverse=True):
-        for name in by_tier[tier]:
+    seen: set[str] = set()
+
+    def add(name: str) -> None:
+        if name in unexplored_set and name not in seen and len(picked) < limit:
+            picked.append(name)
+            seen.add(name)
+
+    for _preset_label, topic_names in _preset_exploration_pipeline():
+        for name in topic_names:
+            add(name)
             if len(picked) >= limit:
                 return picked
-            picked.append(name)
+
+    for name in _sort_unexplored_topic_names(unexplored):
+        if _topic_tier_number(name) == 1:
+            add(name)
+            if len(picked) >= limit:
+                return picked
+
+    for name in _sort_unexplored_topic_names(unexplored):
+        if _topic_tier_number(name) >= 2:
+            add(name)
+            if len(picked) >= limit:
+                return picked
+
     return picked
 
 
@@ -301,12 +374,15 @@ def _load_assessment_records(
             if tname not in topic_diff and diff:
                 topic_diff[tname] = diff
 
-        duration = _assessment_duration_seconds(
-            aid,
-            eid,
-            submitted_at=str(row.get("submitted_at") or report.get("submitted_at") or ""),
-            earliest_timestamp=str(row.get("earliest_timestamp") or ""),
-        )
+        is_timed = bool(meta.get("is_timed"))
+        duration = 0
+        if is_timed:
+            duration = _assessment_duration_seconds(
+                aid,
+                eid,
+                submitted_at=str(row.get("submitted_at") or report.get("submitted_at") or ""),
+                earliest_timestamp=str(row.get("earliest_timestamp") or ""),
+            )
 
         records.append(
             {
@@ -318,6 +394,7 @@ def _load_assessment_records(
                 "report": report,
                 "difficulty_by_question": diff_by_qid,
                 "topic_difficulty": topic_diff,
+                "is_timed": is_timed,
                 "duration_seconds": duration,
                 "display_name": _parse_participant_name(report["participant"]["user_id"]),
             }
@@ -524,6 +601,7 @@ def get_employee_profile(
         "scope": scope,
         "assessments_analyzed": len(records),
         "language_code": language_code,
+        "assessed_level": assessed_level_from_records(all_records),
         "topic_performance": topic_performance,
         "explored_topic_names": explored,
         "unexplored_topic_names": unexplored,
@@ -759,18 +837,21 @@ def get_employee_report(
 
     all_scores: list[float] = []
     total_time = 0
+    timed_count = 0
     display_name = ""
     for rec in records:
         report = rec["report"]
         if not display_name:
             display_name = rec.get("display_name") or ""
-        total_time += int(rec.get("duration_seconds") or 0)
+        if rec.get("is_timed"):
+            total_time += int(rec.get("duration_seconds") or 0)
+            timed_count += 1
         for q in report.get("questions") or []:
             all_scores.append(float(q.get("score") or 0))
 
     overall = round(sum(all_scores) / len(all_scores), 2) if all_scores else 0.0
     assessments_n = len(records)
-    avg_time = int(total_time / assessments_n) if assessments_n else 0
+    avg_time = int(total_time / timed_count) if timed_count else 0
 
     topic_performance, _ = _merge_topic_performance(records)
     unexplored = _unexplored_topic_names(records, language_code=language_code)

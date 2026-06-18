@@ -1,4 +1,9 @@
-"""Unit tests for employee stats report (Stage 4B)."""
+"""Employee skills report (``get_employee_report`` Stage 4B).
+
+Tests the shippable report payload: summary stats, chronological score
+timeline, time-on-platform rollups, and per-language mastery counts.
+See TEST_GUIDE.md § Employee analytics.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,8 @@ from unittest.mock import patch
 from services.employee_profile_service import get_employee_report
 
 
-def _fake_record(aid: str, submitted_at: str, score: float) -> dict:
+def _fake_record(aid: str, submitted_at: str, score: float, *, is_timed: bool = True) -> dict:
+    """Minimal assessment record for report aggregation tests."""
     return {
         "assessment_id": aid,
         "submitted_at": submitted_at,
@@ -16,6 +22,7 @@ def _fake_record(aid: str, submitted_at: str, score: float) -> dict:
         "language_label": "Python",
         "overall_score": score,
         "duration_seconds": 1200,
+        "is_timed": is_timed,
         "display_name": "Luis",
         "topic_difficulty": {"OOP": "beginner"},
         "report": {
@@ -43,6 +50,8 @@ def _fake_record(aid: str, submitted_at: str, score: float) -> dict:
 @patch("services.employee_profile_service.get_employee_mastered_bank_ids")
 @patch("services.employee_profile_service._load_assessment_records")
 class TestGetEmployeeReport(unittest.TestCase):
+    """Report shape and aggregations with mocked DB mastery helpers."""
+
     def test_empty_employee(
         self,
         mock_load: unittest.mock.MagicMock,
@@ -50,6 +59,7 @@ class TestGetEmployeeReport(unittest.TestCase):
         mock_by_topic: unittest.mock.MagicMock,
         mock_needs: unittest.mock.MagicMock,
     ) -> None:
+        """No submissions → zero counts but valid employee_id in response."""
         mock_load.return_value = []
         mock_mastered.return_value = set()
         mock_by_topic.return_value = {}
@@ -68,6 +78,7 @@ class TestGetEmployeeReport(unittest.TestCase):
         mock_by_topic: unittest.mock.MagicMock,
         mock_needs: unittest.mock.MagicMock,
     ) -> None:
+        """score_timeline is oldest-first regardless of load order."""
         mock_load.return_value = [
             _fake_record("A2", "2026-02-01T00:00:00+00:00", 80.0),
             _fake_record("A1", "2026-01-01T00:00:00+00:00", 60.0),
@@ -90,6 +101,7 @@ class TestGetEmployeeReport(unittest.TestCase):
         mock_by_topic: unittest.mock.MagicMock,
         mock_needs: unittest.mock.MagicMock,
     ) -> None:
+        """Total and average duration sum timed assessment duration_seconds only."""
         mock_load.return_value = [
             _fake_record("A1", "2026-01-01T00:00:00+00:00", 70.0),
             _fake_record("A2", "2026-02-01T00:00:00+00:00", 80.0),
@@ -111,6 +123,7 @@ class TestGetEmployeeReport(unittest.TestCase):
         mock_by_topic: unittest.mock.MagicMock,
         mock_needs: unittest.mock.MagicMock,
     ) -> None:
+        """languages[] and mastery counts reflect DB helper rollups."""
         rec = _fake_record("A1", "2026-01-01T00:00:00+00:00", 75.0)
         mock_load.return_value = [rec]
         mock_mastered.return_value = set()

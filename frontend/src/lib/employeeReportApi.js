@@ -59,3 +59,24 @@ export async function createWeakAreasAssessment({
     }),
   });
 }
+
+/**
+ * @param {{ employeeId: string, languageCode: string, questionsRequested?: number, topicsCount?: number }} opts
+ */
+export async function createNewAreasAssessment({
+  employeeId,
+  languageCode,
+  questionsRequested = 15,
+  topicsCount = 5,
+}) {
+  return apiFetch("/client/improvement/new-areas", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      employee_id: employeeId.trim(),
+      language_code: languageCode.trim(),
+      questions_requested: questionsRequested,
+      topics_count: topicsCount,
+    }),
+  });
+}

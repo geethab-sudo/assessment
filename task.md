@@ -266,15 +266,15 @@
 
 ### Backend
 
-- [ ] `POST /client/improvement/new-areas`
-- [ ] Profile `scope=full_history` → `unexplored_topic_names`; select top K topics
-- [ ] **`question_source=bank_only`** — no LLM
-- [ ] Exclude **mastered** bank IDs; same requested/delivered/messaging as Stage 5
+- [x] `POST /client/improvement/new-areas`
+- [x] Profile `scope=full_history` → `unexplored_topic_names`; select top K topics
+- [x] **`question_source=bank_only`** — no LLM
+- [x] Exclude **mastered** bank IDs; same requested/delivered/messaging as Stage 5
 
 ### Frontend
 
-- [ ] Wire **Explore new areas** option in improvement wizard
-- [ ] Copy: topics not yet assessed (full history); shortage / all-mastered messages
+- [x] Wire **Explore new areas** option in improvement wizard
+- [x] Copy: topics not yet assessed (full history); shortage / all-mastered messages
 
 **Acceptance:** User gets bank-only assessment on new topics, or clear message when bank cannot supply questions.
 

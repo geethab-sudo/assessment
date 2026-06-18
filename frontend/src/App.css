@@ -3205,10 +3205,44 @@ button.primary {
   gap: 1.25rem;
 }
 
+.emp-report-line-chart-wrap {
+  width: 100%;
+  max-width: 420px;
+}
+
 .emp-report-line-chart {
   width: 100%;
-  max-width: 400px;
+  max-width: 420px;
   height: auto;
+  display: block;
+}
+
+.emp-report-line-chart-grid {
+  stroke: rgba(0, 0, 0, 0.08);
+  stroke-width: 1;
+}
+
+.emp-report-line-chart-axis-line {
+  stroke: rgba(0, 0, 0, 0.18);
+  stroke-width: 1;
+}
+
+.emp-report-line-chart-axis {
+  font-size: 10px;
+  fill: var(--muted, #64748b);
+  font-family: inherit;
+}
+
+.emp-report-line-chart-axis--x {
+  font-size: 9px;
+}
+
+.emp-report-line-chart-axis--tilted {
+  font-size: 8px;
+}
+
+.emp-report-line-chart-hint {
+  margin: 0.35rem 0 0;
 }
 
 .emp-report-donut-wrap {
@@ -3421,6 +3455,11 @@ button.primary {
   border-radius: 6px;
   background: rgba(37, 99, 235, 0.06);
   border-left: 3px solid var(--accent, #2563eb);
+}
+
+.improve-topic-summary--new {
+  background: rgba(5, 150, 105, 0.06);
+  border-left-color: #059669;
 }
 
 .improve-topic-summary-lead {

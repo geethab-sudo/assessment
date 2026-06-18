@@ -48,6 +48,8 @@ from schemas.common import ErrorDetail, HealthResponse, ValidationErrorItem, Val
 from schemas.improvement import (
     EmployeeProfileResponse,
     EmployeeReportResponse,
+    NewAreasImprovementRequest,
+    NewAreasImprovementResponse,
     WeakAreasImprovementRequest,
     WeakAreasImprovementResponse,
 )
@@ -527,6 +529,35 @@ def post_client_improvement_weak_areas(
             questions_requested=body.questions_requested,
         )
         return WeakAreasImprovementResponse.model_validate(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post(
+    "/client/improvement/new-areas",
+    tags=["client"],
+    summary="Create bank-only practice assessment on unexplored topics",
+    response_model=NewAreasImprovementResponse,
+    responses={
+        200: {"description": "Practice assessment created or availability explanation returned."},
+        400: ERROR_400,
+        500: ERROR_500,
+    },
+)
+def post_client_improvement_new_areas(
+    body: NewAreasImprovementRequest,
+) -> NewAreasImprovementResponse:
+    """Bank-only new-areas practice — never calls the LLM."""
+    try:
+        data = improvement_assessment_service.create_new_areas_assessment(
+            body.employee_id.strip(),
+            body.language_code.strip(),
+            questions_requested=body.questions_requested,
+            topics_count=body.topics_count,
+        )
+        return NewAreasImprovementResponse.model_validate(data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

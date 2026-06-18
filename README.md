@@ -490,6 +490,7 @@ assessment/
 | `GET /client/employee-profile?employee_id=&scope=` | Public | Topic performance profile for improvement flows |
 | `GET /client/my-report?employee_id=&period=` | Public | Shippable skills progress report (JSON) |
 | `POST /client/improvement/weak-areas` | Public | Bank-only practice assessment on weak topics (last 3 assessments) |
+| `POST /client/improvement/new-areas` | Public | Bank-only practice on unexplored catalog topics (full history) |
 | `GET /assessment/{id}?employee_id=…` | Public* | Questions, `topic_modality`, `notebook_expected`, `timer` |
 | `GET /assessment/{id}/report?employee_id=…` | Public* | Feedback report JSON (MCQ + Pyodide coding; no Jupyter) |
 | `POST /submit-assessment` | Public* | Grade in-browser answers (`employee_id` for timed) |

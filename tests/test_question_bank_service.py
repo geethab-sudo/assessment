@@ -1,4 +1,9 @@
-"""Unit tests for question_bank_service (Stage 1)."""
+"""Question bank service (``services.question_bank_service`` Stage 1).
+
+Difficulty normalization, tier inference, bank upsert/backfill, mastery
+detection, find_bank_questions filtering, stats, and employee mastery tables.
+See TEST_GUIDE.md § Question bank.
+"""
 
 from __future__ import annotations
 
@@ -24,22 +29,30 @@ from services.question_bank_service import (
 
 
 class TestNormalizeBankLevel(unittest.TestCase):
+    """Map admin/LLM difficulty labels to canonical beginner|intermediate|advanced."""
+
     def test_admin_levels(self) -> None:
         self.assertEqual(normalize_bank_level("Beginner"), "beginner")
         self.assertEqual(normalize_bank_level("intermediate"), "intermediate")
         self.assertEqual(normalize_bank_level("Advanced"), "advanced")
 
     def test_llm_legacy_labels(self) -> None:
+        """Legacy easy/medium/hard from LLM map to the three bank levels."""
+
         self.assertEqual(normalize_bank_level("easy"), "beginner")
         self.assertEqual(normalize_bank_level("medium"), "intermediate")
         self.assertEqual(normalize_bank_level("hard"), "advanced")
 
     def test_invalid_raises(self) -> None:
+        """Unknown difficulty strings raise ValueError."""
+
         with self.assertRaises(ValueError):
             normalize_bank_level("expert")
 
 
 class TestInferBankLevelFromTopic(unittest.TestCase):
+    """Derive bank level from Tier N topic name prefix or explicit override."""
+
     def test_tier_prefixes(self) -> None:
         self.assertEqual(
             infer_bank_level_from_topic(
@@ -59,6 +72,8 @@ class TestInferBankLevelFromTopic(unittest.TestCase):
         )
 
     def test_explicit_difficulty_wins(self) -> None:
+        """When difficulty is provided explicitly, it overrides tier inference."""
+
         self.assertEqual(
             infer_bank_level_from_topic("Tier 1 - X", explicit_difficulty="advanced"),
             "advanced",
@@ -66,6 +81,8 @@ class TestInferBankLevelFromTopic(unittest.TestCase):
 
 
 class TestBackfillQuestionBankFromAssessmentQuestions(unittest.TestCase):
+    """Link legacy assessment_questions rows to new question_bank entries."""
+
     def test_links_legacy_rows_using_topic_and_inferred_level(self) -> None:
         assessment = SimpleNamespace(
             topic_names=["Tier 1 - Topic A"],
@@ -116,6 +133,8 @@ class TestBackfillQuestionBankFromAssessmentQuestions(unittest.TestCase):
 
 
 class TestSubmissionIndicatesMastered(unittest.TestCase):
+    """Whether a single submission counts as mastering a bank question."""
+
     def test_mcq_correct(self) -> None:
         self.assertTrue(
             _submission_indicates_mastered("mcq", "Answer A", "answer a", "0")
@@ -138,6 +157,8 @@ class TestSubmissionIndicatesMastered(unittest.TestCase):
 
 
 class TestAddQuestionsToBank(unittest.TestCase):
+    """Upsert by content hash; duplicate content increments times_used."""
+
     def test_upsert_increments_times_used(self) -> None:
         stored: dict[str, SimpleNamespace] = {}
         session = MagicMock()
@@ -184,6 +205,8 @@ class TestAddQuestionsToBank(unittest.TestCase):
 
 
 class TestRecordAndStats(unittest.TestCase):
+    """Outcome recording and aggregate bank statistics."""
+
     def test_outcome_invokes_atomic_update(self) -> None:
         session = MagicMock()
 
@@ -227,6 +250,8 @@ class TestRecordAndStats(unittest.TestCase):
 
 
 class TestFindBankQuestions(unittest.TestCase):
+    """Query bank with topic/difficulty filters and shortage reporting."""
+
     def test_filters_topic_and_difficulty(self) -> None:
         q1 = SimpleNamespace(
             id=1,
@@ -261,6 +286,8 @@ class TestFindBankQuestions(unittest.TestCase):
 
 
 class TestGetEmployeeMasteredBankIds(unittest.TestCase):
+    """Mastery table lookup for excluding already-mastered questions."""
+
     def test_reads_from_mastery_table(self) -> None:
         session = MagicMock()
         session.scalars.return_value.all.return_value = [10, 20, 20]
@@ -291,6 +318,8 @@ class TestGetEmployeeMasteredBankIds(unittest.TestCase):
 
 
 class TestRecordEmployeeMastery(unittest.TestCase):
+    """Insert employee_question_mastery rows idempotently."""
+
     def test_inserts_new_mastery_row(self) -> None:
         session = MagicMock()
         session.scalar.return_value = None
@@ -323,6 +352,8 @@ class TestRecordEmployeeMastery(unittest.TestCase):
 
 
 class TestBackfillEmployeeMastery(unittest.TestCase):
+    """Historical submission scan → mastery rows for correct answers only."""
+
     def test_backfill_inserts_correct_submissions_only(self) -> None:
         sub_wrong = SimpleNamespace(
             user_id="E1001 | Alice",
@@ -368,7 +399,10 @@ class TestBackfillEmployeeMastery(unittest.TestCase):
 
 
 class TestGetBankAvailability(unittest.TestCase):
+    """Admin availability counts with mastered-question exclusion per employee."""
+
     def test_shortage_with_mastered_exclusion(self) -> None:
+        """Mastered bank IDs reduce available count and increase shortage."""
         candidates = [
             SimpleNamespace(id=1),
             SimpleNamespace(id=2),

@@ -21,6 +21,7 @@ from services.notebook_plan_service import (
 DEFAULT_QUESTIONS_REQUESTED = 15
 MIN_QUESTIONS_REQUESTED = 1
 MAX_QUESTIONS_REQUESTED = 50
+DEFAULT_NEW_AREAS_TOPIC_COUNT = 5
 
 _TYPE_ORDER = ("mcq", "coding", "subjective")
 
@@ -31,10 +32,73 @@ MSG_NO_WEAK_TOPICS = (
     "No topics scored below 70% in your last 3 assessments. "
     "View your full report or try exploring new areas when available."
 )
+MSG_NO_UNEXPLORED = (
+    "You have already explored all catalog topics for this language. "
+    "Try weak areas or step up difficulty when available."
+)
+MSG_NO_BANK_FOR_TOPICS = (
+    "We could not find practice questions in the bank for the selected topics at the "
+    "appropriate difficulty. Try again later or choose another improvement path."
+)
 MSG_SHORTAGE_TEMPLATE = (
     "You asked for **{requested}** questions, but based on availability there are only "
     "**{delivered}** valid questions for you in our question bank."
 )
+
+
+def _difficulty_for_new_area_topic(topic: str, assessed_level: str) -> str:
+    """Tier 2+ use topic-inferred bank level; Tier 1 follows the employee's assessed tier."""
+    from services.employee_profile_service import _topic_tier_number
+
+    if _topic_tier_number(topic) >= 2:
+        return question_bank_service.infer_bank_level_from_topic(topic)
+    level = (assessed_level or "beginner").strip().lower()
+    if level not in ("beginner", "intermediate", "advanced"):
+        level = "beginner"
+    return level
+
+
+def _topics_have_bank_questions(
+    topics: list[str],
+    difficulty_by_topic: dict[str, str],
+) -> bool:
+    """True if the bank has at least one question for any topic (ignoring mastery)."""
+    for topic in topics:
+        level = difficulty_by_topic.get(topic, "beginner")
+        found, _ = question_bank_service.find_bank_questions(
+            [topic],
+            level,
+            1,
+            exclude_employee_id=None,
+        )
+        if found:
+            return True
+    return False
+
+
+def _clamp_questions_requested(questions_requested: int | None) -> int:
+    requested = (
+        questions_requested
+        if questions_requested is not None
+        else DEFAULT_QUESTIONS_REQUESTED
+    )
+    return max(MIN_QUESTIONS_REQUESTED, min(MAX_QUESTIONS_REQUESTED, int(requested)))
+
+
+def _improvement_base_response(
+    eid: str,
+    lang: str,
+    requested: int,
+) -> dict[str, Any]:
+    return {
+        "employee_id": eid,
+        "language_code": lang,
+        "questions_requested": requested,
+        "questions_delivered": 0,
+        "assessment_id": None,
+        "availability_message": None,
+        "topic_summary": None,
+    }
 
 
 def _resolve_language_label(language_code: str) -> str:
@@ -53,6 +117,16 @@ def _weak_areas_topic_summary(weakest_topics: list[str]) -> str:
     names = ", ".join(f"**{t}**" for t in weakest_topics)
     return (
         f"Based on your last 3 assessments, we recommend extra practice on: {names}."
+    )
+
+
+def _new_areas_topic_summary(selected_topics: list[str]) -> str:
+    if not selected_topics:
+        return ""
+    names = ", ".join(f"**{t}**" for t in selected_topics)
+    return (
+        "Based on your full assessment history, we selected topics you have not tried yet: "
+        f"{names}."
     )
 
 
@@ -204,15 +278,7 @@ def create_weak_areas_assessment(
     if not lang:
         raise ValueError("language_code is required")
 
-    requested = (
-        questions_requested
-        if questions_requested is not None
-        else DEFAULT_QUESTIONS_REQUESTED
-    )
-    requested = max(
-        MIN_QUESTIONS_REQUESTED,
-        min(MAX_QUESTIONS_REQUESTED, int(requested)),
-    )
+    requested = _clamp_questions_requested(questions_requested)
 
     profile = employee_profile_service.get_employee_profile(
         eid,
@@ -220,16 +286,8 @@ def create_weak_areas_assessment(
         scope="last_3",
     )
 
-    base_response: dict[str, Any] = {
-        "employee_id": eid,
-        "language_code": lang,
-        "questions_requested": requested,
-        "questions_delivered": 0,
-        "assessment_id": None,
-        "availability_message": None,
-        "topic_summary": None,
-        "weak_topics": [],
-    }
+    base_response = _improvement_base_response(eid, lang, requested)
+    base_response["weak_topics"] = []
 
     if profile["assessments_analyzed"] == 0:
         base_response["availability_message"] = MSG_NO_HISTORY
@@ -270,6 +328,92 @@ def create_weak_areas_assessment(
     assessment_id = _persist_bank_only_assessment(
         rows,
         topic_names=weakest,
+        per_topic_config=per_topic_config,
+        language_code=lang,
+        language_label=language_label,
+    )
+    base_response["assessment_id"] = assessment_id
+    return base_response
+
+
+def create_new_areas_assessment(
+    employee_id: str,
+    language_code: str,
+    *,
+    questions_requested: int | None = None,
+    topics_count: int | None = None,
+) -> dict[str, Any]:
+    """
+    Build a bank-only practice assessment on unexplored catalog topics (full history).
+
+    Never calls the LLM. Mastered questions are excluded for the employee.
+    """
+    from services.employee_profile_service import _pick_unexplored_for_recommendations
+
+    eid = (employee_id or "").strip()
+    if not eid:
+        raise ValueError("employee_id is required")
+
+    lang = (language_code or "").strip()
+    if not lang:
+        raise ValueError("language_code is required")
+
+    requested = _clamp_questions_requested(questions_requested)
+    k = topics_count if topics_count is not None else DEFAULT_NEW_AREAS_TOPIC_COUNT
+    k = max(1, min(10, int(k)))
+
+    profile = employee_profile_service.get_employee_profile(
+        eid,
+        language_code=lang,
+        scope="full_history",
+    )
+
+    base_response = _improvement_base_response(eid, lang, requested)
+    base_response["selected_topics"] = []
+
+    if profile["assessments_analyzed"] == 0:
+        base_response["availability_message"] = MSG_NO_HISTORY
+        return base_response
+
+    unexplored = list(profile.get("unexplored_topic_names") or [])
+    if not unexplored:
+        base_response["availability_message"] = MSG_NO_UNEXPLORED
+        return base_response
+
+    selected = _pick_unexplored_for_recommendations(unexplored, limit=k)
+    base_response["selected_topics"] = selected
+    base_response["topic_summary"] = _new_areas_topic_summary(selected)
+
+    assessed_level = str(profile.get("assessed_level") or "beginner")
+    per_topic_config = _allocate_per_topic_config(selected, requested)
+    difficulty_map = {
+        topic: _difficulty_for_new_area_topic(topic, assessed_level)
+        for topic in selected
+    }
+
+    rows, _shortage = _build_bank_only_rows(per_topic_config, difficulty_map, eid)
+    delivered = len(rows)
+    base_response["questions_delivered"] = delivered
+
+    if delivered == 0:
+        if _topics_have_bank_questions(selected, difficulty_map):
+            base_response["availability_message"] = _all_mastered_message(
+                selected, difficulty_map
+            )
+        else:
+            base_response["availability_message"] = MSG_NO_BANK_FOR_TOPICS
+        return base_response
+
+    if delivered < requested:
+        base_response["availability_message"] = MSG_SHORTAGE_TEMPLATE.format(
+            requested=requested,
+            delivered=delivered,
+        )
+
+    language_label = _resolve_language_label(lang)
+    assessment_id = _persist_bank_only_assessment(
+        rows,
+        topic_names=selected,
         per_topic_config=per_topic_config,
         language_code=lang,
         language_label=language_label,

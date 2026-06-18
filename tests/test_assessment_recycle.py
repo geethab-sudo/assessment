@@ -1,4 +1,9 @@
-"""Unit tests for hybrid bank + LLM assessment row building (Stage 2)."""
+"""Hybrid bank + LLM row building (``services.assessment_service`` Stage 2).
+
+Tests ``_build_assessment_rows`` for admin **recycle_then_generate** (pull from
+bank first, LLM fills gaps) vs **generate_new** (LLM only). No database required.
+See TEST_GUIDE.md § Assessment generation and delivery.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +14,10 @@ from services.assessment_service import _build_assessment_rows
 
 
 class TestBuildAssessmentRowsRecycle(unittest.TestCase):
+    """Question source modes and shortage statistics."""
+
     def test_recycle_then_generate_mixes_bank_and_llm(self) -> None:
+        """Bank supplies partial MCQs; LLM fills coding shortage; stats reflect both."""
         bank_mcqs = [
             {
                 "bank_question_id": 101,
@@ -91,6 +99,7 @@ class TestBuildAssessmentRowsRecycle(unittest.TestCase):
         self.assertEqual(bank_ids, {101, 102, None})
 
     def test_generate_new_uses_llm_only(self) -> None:
+        """generate_new bypasses the bank and delegates entirely to per-topic LLM."""
         with patch(
             "services.assessment_service._generate_rows_per_topic",
             return_value=[{"question_id": "1", "type": "mcq", "question": "Q"}],

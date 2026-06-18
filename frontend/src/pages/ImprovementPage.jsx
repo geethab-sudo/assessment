@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
+  createNewAreasAssessment,
   createWeakAreasAssessment,
   fetchEmployeeProfile,
   fetchEmployeeReport,
 } from "../lib/employeeReportApi.js";
 
 const WEAK_THRESHOLD = 70;
+const NEW_AREAS_TOPIC_LIMIT = 5;
 
-function topicRowClass(percent) {
-  if (percent < WEAK_THRESHOLD) return "improve-topic-row improve-topic-row--weak";
+function topicRowClass(percent, isWeak) {
+  if (isWeak) return "improve-topic-row improve-topic-row--weak";
   return "improve-topic-row";
 }
 
@@ -24,6 +26,11 @@ function formatAvailabilityMessage(text) {
   });
 }
 
+function parsePathParam(value) {
+  if (value === "weak" || value === "new") return value;
+  return null;
+}
+
 export default function ImprovementPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -34,9 +41,7 @@ export default function ImprovementPage() {
   const [languageCode, setLanguageCode] = useState(languageParam);
   const [evaluatedLanguages, setEvaluatedLanguages] = useState([]);
   const [languagesLoading, setLanguagesLoading] = useState(false);
-  const [selectedPath, setSelectedPath] = useState(
-    searchParams.get("path") === "weak" ? "weak" : null
-  );
+  const [selectedPath, setSelectedPath] = useState(parsePathParam(searchParams.get("path")));
 
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
@@ -50,10 +55,15 @@ export default function ImprovementPage() {
 
   const languageLocked = evaluatedLanguages.length === 1;
   const hasEvaluatedLanguages = evaluatedLanguages.length > 0;
+  const profileScope = selectedPath === "new" ? "full_history" : "last_3";
 
   useEffect(() => {
     setEmployeeId(employeeIdParam);
   }, [employeeIdParam]);
+
+  useEffect(() => {
+    setSelectedPath(parsePathParam(searchParams.get("path")));
+  }, [searchParams]);
 
   useEffect(() => {
     const eid = employeeIdParam.trim();
@@ -111,6 +121,8 @@ export default function ImprovementPage() {
   const loadProfile = useCallback(async () => {
     const eid = employeeId.trim();
     const lang = languageCode.trim();
+    const scope = selectedPath === "new" ? "full_history" : "last_3";
+
     if (!eid) {
       setProfileError("Enter your employee ID to continue.");
       setProfile(null);
@@ -122,7 +134,7 @@ export default function ImprovementPage() {
       return;
     }
 
-    const fetchKey = `${eid}:${lang}`;
+    const fetchKey = `${eid}:${lang}:${scope}`;
     profileFetchKey.current = fetchKey;
     setProfileLoading(true);
     setProfileError(null);
@@ -132,7 +144,7 @@ export default function ImprovementPage() {
     try {
       const data = await fetchEmployeeProfile({
         employeeId: eid,
-        scope: "last_3",
+        scope,
         languageCode: lang,
       });
       if (profileFetchKey.current !== fetchKey) return;
@@ -146,10 +158,14 @@ export default function ImprovementPage() {
         setProfileLoading(false);
       }
     }
-  }, [employeeId, languageCode]);
+  }, [employeeId, languageCode, selectedPath]);
 
   useEffect(() => {
-    if (selectedPath === "weak" && employeeId.trim() && languageCode.trim()) {
+    if (
+      (selectedPath === "weak" || selectedPath === "new") &&
+      employeeId.trim() &&
+      languageCode.trim()
+    ) {
       loadProfile();
     }
   }, [selectedPath, employeeId, languageCode, loadProfile]);
@@ -158,15 +174,23 @@ export default function ImprovementPage() {
     return new Set(profile?.weakest_topics || []);
   }, [profile]);
 
-  const handleSelectWeakAreas = () => {
-    setSelectedPath("weak");
-    setCreateResult(null);
-    setCreateError(null);
+  const unexploredTopics = profile?.unexplored_topic_names || [];
+
+  const setPath = (path) => {
     const next = new URLSearchParams(searchParams);
-    next.set("path", "weak");
+    if (path) next.set("path", path);
+    else next.delete("path");
     if (employeeId.trim()) next.set("employee_id", employeeId.trim());
     if (languageCode.trim()) next.set("language_code", languageCode.trim());
     setSearchParams(next, { replace: true });
+  };
+
+  const handleSelectPath = (path) => {
+    setSelectedPath(path);
+    setProfile(null);
+    setCreateResult(null);
+    setCreateError(null);
+    setPath(path);
   };
 
   const handleLanguageChange = (code) => {
@@ -190,10 +214,17 @@ export default function ImprovementPage() {
     setCreateError(null);
     setCreateResult(null);
     try {
-      const data = await createWeakAreasAssessment({
-        employeeId: eid,
-        languageCode: lang,
-      });
+      const data =
+        selectedPath === "new"
+          ? await createNewAreasAssessment({
+              employeeId: eid,
+              languageCode: lang,
+              topicsCount: NEW_AREAS_TOPIC_LIMIT,
+            })
+          : await createWeakAreasAssessment({
+              employeeId: eid,
+              languageCode: lang,
+            });
       setCreateResult(data);
       if (data.assessment_id) {
         navigate("/client", {
@@ -206,6 +237,15 @@ export default function ImprovementPage() {
       setCreating(false);
     }
   };
+
+  const canStartWeak =
+    profile?.assessments_analyzed > 0 && (profile?.weakest_topics?.length || 0) > 0;
+
+  const canStartNew =
+    profile?.assessments_analyzed > 0 && unexploredTopics.length > 0;
+
+  const langLabel =
+    evaluatedLanguages.find((l) => l.code === languageCode)?.label || languageCode;
 
   return (
     <div className="page improve-page">
@@ -296,7 +336,7 @@ export default function ImprovementPage() {
             <button
               type="button"
               className="improve-option improve-option--active"
-              onClick={handleSelectWeakAreas}
+              onClick={() => handleSelectPath("weak")}
               disabled={!employeeId.trim() || !languageCode.trim()}
             >
               <h3>Improve my weak areas</h3>
@@ -304,10 +344,17 @@ export default function ImprovementPage() {
                 Extra practice on topics below {WEAK_THRESHOLD}% in your last 3 assessments.
               </p>
             </button>
-            <div className="improve-option improve-option--disabled" aria-disabled="true">
+            <button
+              type="button"
+              className="improve-option improve-option--active"
+              onClick={() => handleSelectPath("new")}
+              disabled={!employeeId.trim() || !languageCode.trim()}
+            >
               <h3>Explore new areas</h3>
-              <p className="muted">Coming in a future update.</p>
-            </div>
+              <p className="muted">
+                Try catalog topics you have not been assessed on yet (full history).
+              </p>
+            </button>
             <div className="improve-option improve-option--disabled" aria-disabled="true">
               <h3>Step up difficulty</h3>
               <p className="muted">Coming in a future update.</p>
@@ -326,9 +373,7 @@ export default function ImprovementPage() {
               onClick={() => {
                 setSelectedPath(null);
                 setProfile(null);
-                const next = new URLSearchParams(searchParams);
-                next.delete("path");
-                setSearchParams(next, { replace: true });
+                setPath(null);
               }}
             >
               ← All paths
@@ -344,10 +389,8 @@ export default function ImprovementPage() {
             <>
               <p className="muted small-print">
                 Analyzing {profile.assessments_analyzed} recent assessment
-                {profile.assessments_analyzed === 1 ? "" : "s"} for{" "}
-                {evaluatedLanguages.find((l) => l.code === languageCode)?.label ||
-                  languageCode}
-                . Weak topics are below {WEAK_THRESHOLD}% average.
+                {profile.assessments_analyzed === 1 ? "" : "s"} for {langLabel}. Weak topics
+                are below {WEAK_THRESHOLD}% average.
               </p>
 
               {profile.weakest_topics?.length > 0 && (
@@ -378,7 +421,10 @@ export default function ImprovementPage() {
                     {(profile.topic_performance || []).map((topic) => (
                       <tr
                         key={topic.topic_name}
-                        className={topicRowClass(topic.average_percent)}
+                        className={topicRowClass(
+                          topic.average_percent,
+                          weakTopicSet.has(topic.topic_name)
+                        )}
                       >
                         <td>
                           {topic.topic_name}
@@ -421,14 +467,95 @@ export default function ImprovementPage() {
                   type="button"
                   onClick={handleStartPractice}
                   disabled={
-                    creating ||
-                    !employeeId.trim() ||
-                    !languageCode.trim() ||
-                    profile.assessments_analyzed === 0 ||
-                    !profile.weakest_topics?.length
+                    creating || !employeeId.trim() || !languageCode.trim() || !canStartWeak
                   }
                 >
                   {creating ? "Creating…" : "Start practice assessment"}
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+      )}
+
+      {selectedPath === "new" && (
+        <section className="card">
+          <div className="improve-section-header">
+            <h2>Explore new areas</h2>
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => {
+                setSelectedPath(null);
+                setProfile(null);
+                setPath(null);
+              }}
+            >
+              ← All paths
+            </button>
+          </div>
+
+          {(profileLoading || languagesLoading) && (
+            <p className="muted">Loading your assessment history…</p>
+          )}
+          {profileError && <p className="error">{profileError}</p>}
+
+          {profile && !profileLoading && (
+            <>
+              <p className="muted small-print">
+                Based on your full history in {langLabel}, these catalog topics have not
+                appeared in any of your {profile.assessments_analyzed} assessment
+                {profile.assessments_analyzed === 1 ? "" : "s"}. Practice pulls up to{" "}
+                {NEW_AREAS_TOPIC_LIMIT} topics in learning-path order: Intermediate preset
+                gaps first, then Advanced, then Tier 2 topics.
+              </p>
+
+              {unexploredTopics.length > 0 ? (
+                <div className="improve-topic-summary improve-topic-summary--new">
+                  <p className="improve-topic-summary-lead">
+                    Topics you have not tried yet ({unexploredTopics.length} in catalog):
+                  </p>
+                  <ul className="improve-weak-topic-list">
+                    {unexploredTopics.map((t) => (
+                      <li key={t}>{t}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <p className="muted">
+                  You have explored all catalog topics for this language. Try weak areas or
+                  step up difficulty when available.
+                </p>
+              )}
+
+              {createResult?.selected_topics?.length > 0 && (
+                <div className="improve-topic-summary">
+                  <p className="improve-topic-summary-lead">Selected for this practice run:</p>
+                  <ul className="improve-weak-topic-list">
+                    {createResult.selected_topics.map((t) => (
+                      <li key={t}>{t}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {createResult?.availability_message && !createResult.assessment_id && (
+                <p className="improve-availability" role="status">
+                  {formatAvailabilityMessage(createResult.availability_message)}
+                </p>
+              )}
+
+              {createError && <p className="error">{createError}</p>}
+
+              <div className="improve-actions">
+                <button
+                  type="button"
+                  onClick={handleStartPractice}
+                  disabled={
+                    creating || !employeeId.trim() || !languageCode.trim() || !canStartNew
+                  }
+                >
+                  {creating ? "Creating…" : "Start practice on new topics"}
                 </button>
               </div>
             </>

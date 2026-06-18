@@ -114,6 +114,29 @@ class WeakAreasImprovementResponse(BaseModel):
     weak_topics: list[str] = Field(default_factory=list)
 
 
+class NewAreasImprovementRequest(BaseModel):
+    employee_id: str = Field(..., min_length=1, max_length=64)
+    language_code: str = Field(..., min_length=1, max_length=32)
+    questions_requested: int = Field(default=15, ge=1, le=50)
+    topics_count: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description="How many unexplored topics to include (higher tiers preferred).",
+    )
+
+
+class NewAreasImprovementResponse(BaseModel):
+    employee_id: str
+    language_code: str
+    questions_requested: int
+    questions_delivered: int
+    assessment_id: str | None = None
+    availability_message: str | None = None
+    topic_summary: str | None = None
+    selected_topics: list[str] = Field(default_factory=list)
+
+
 class EmployeeReportResponse(BaseModel):
     title: str = "Skills Progress Report"
     report_version: str = "1.0"

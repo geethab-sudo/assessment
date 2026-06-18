@@ -98,48 +98,119 @@ function LineChart({ points }) {
   if (!points?.length) {
     return <p className="muted small-print">No score history yet.</p>;
   }
-  if (points.length === 1) {
-    const p = points[0];
-    return (
-      <div className="emp-report-line-chart-single">
-        <p className="muted small-print">
+
+  const width = 400;
+  const height = 196;
+  const padLeft = 44;
+  const padRight = 16;
+  const padTop = 14;
+  const padBottom = 48;
+  const chartW = width - padLeft - padRight;
+  const chartH = height - padTop - padBottom;
+  const yTicks = [0, 25, 50, 75, 100];
+  const n = points.length;
+
+  const coords = points.map((p, i) => {
+    const x =
+      padLeft + (n === 1 ? chartW / 2 : (i / Math.max(n - 1, 1)) * chartW);
+    const percent = Math.min(100, Math.max(0, Number(p.percent) || 0));
+    const y = padTop + chartH - (percent / 100) * chartH;
+    return { x, y, percent, index: i + 1, assessment_id: p.assessment_id };
+  });
+
+  const poly =
+    n > 1 ? coords.map((c) => `${c.x},${c.y}`).join(" ") : null;
+  const denseXLabels = n > 5;
+
+  return (
+    <div className="emp-report-line-chart-wrap">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="emp-report-line-chart"
+        role="img"
+        aria-label="Score trend across assessments"
+      >
+        {yTicks.map((tick) => {
+          const y = padTop + chartH - (tick / 100) * chartH;
+          return (
+            <g key={tick}>
+              <line
+                x1={padLeft}
+                y1={y}
+                x2={width - padRight}
+                y2={y}
+                className="emp-report-line-chart-grid"
+              />
+              <text
+                x={padLeft - 8}
+                y={y + 4}
+                textAnchor="end"
+                className="emp-report-line-chart-axis"
+              >
+                {tick}
+              </text>
+            </g>
+          );
+        })}
+
+        <line
+          x1={padLeft}
+          y1={padTop}
+          x2={padLeft}
+          y2={padTop + chartH}
+          className="emp-report-line-chart-axis-line"
+        />
+        <line
+          x1={padLeft}
+          y1={padTop + chartH}
+          x2={width - padRight}
+          y2={padTop + chartH}
+          className="emp-report-line-chart-axis-line"
+        />
+
+        {poly && (
+          <polyline
+            fill="none"
+            stroke="var(--emp-report-accent, #2563eb)"
+            strokeWidth="2.5"
+            points={poly}
+          />
+        )}
+
+        {coords.map((c) => (
+          <g key={c.assessment_id || c.index}>
+            <circle
+              cx={c.x}
+              cy={c.y}
+              r="4.5"
+              fill="var(--emp-report-accent, #2563eb)"
+            >
+              <title>{`Assessment ${c.index}: ${Math.round(c.percent)}%`}</title>
+            </circle>
+            <text
+              x={c.x}
+              y={height - (denseXLabels ? 6 : 10)}
+              textAnchor={denseXLabels ? "end" : "middle"}
+              className={`emp-report-line-chart-axis emp-report-line-chart-axis--x${
+                denseXLabels ? " emp-report-line-chart-axis--tilted" : ""
+              }`}
+              transform={
+                denseXLabels
+                  ? `rotate(-32, ${c.x}, ${height - 6})`
+                  : undefined
+              }
+            >
+              Assessment {c.index}
+            </text>
+          </g>
+        ))}
+      </svg>
+      {n === 1 && (
+        <p className="muted small-print emp-report-line-chart-hint">
           One assessment so far — complete more to see a trend line.
         </p>
-        <p>
-          <strong>{Math.round(p.percent)}%</strong>
-          <span className="muted"> · {p.assessment_id}</span>
-        </p>
-      </div>
-    );
-  }
-  const width = 360;
-  const height = 140;
-  const pad = 24;
-  const xs = points.map((_, i) => i);
-  const ys = points.map((p) => p.percent);
-  const minY = Math.min(...ys, 0);
-  const maxY = Math.max(...ys, 100);
-  const spanY = maxY - minY || 1;
-  const coords = points.map((p, i) => {
-    const x = pad + (i / Math.max(points.length - 1, 1)) * (width - pad * 2);
-    const y = height - pad - ((p.percent - minY) / spanY) * (height - pad * 2);
-    return { x, y, ...p };
-  });
-  const poly = coords.map((c) => `${c.x},${c.y}`).join(" ");
-  return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="emp-report-line-chart" role="img">
-      <polyline
-        fill="none"
-        stroke="var(--emp-report-accent, #2563eb)"
-        strokeWidth="2.5"
-        points={poly}
-      />
-      {coords.map((c) => (
-        <circle key={c.assessment_id} cx={c.x} cy={c.y} r="4" fill="#2563eb">
-          <title>{`${c.assessment_id}: ${c.percent}%`}</title>
-        </circle>
-      ))}
-    </svg>
+      )}
+    </div>
   );
 }
 
@@ -358,13 +429,16 @@ export default function EmployeeReportPage({ mode = "client" }) {
                 </div>
                 <div>
                   <strong>{formatDuration(report.summary.total_time_seconds)}</strong>
-                  <span className="muted">Time on platform</span>
+                  <span className="muted">Time on platform*</span>
                 </div>
                 <div>
                   <strong>{formatDuration(report.summary.avg_assessment_time_seconds)}</strong>
-                  <span className="muted">Avg / assessment</span>
+                  <span className="muted">Avg / assessment*</span>
                 </div>
               </div>
+              <p className="muted small-print emp-report-time-note">
+                * Time on platform reflects timed assessments only.
+              </p>
               <p className="emp-report-proficiency">
                 Progress at <strong>{report.summary.assessed_level_label || "Beginner"}</strong>{" "}
                 level: <strong>{report.summary.proficiency_label}</strong>
