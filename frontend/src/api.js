@@ -99,3 +99,42 @@ export async function apiFetch(path, options = {}) {
   }
   return data;
 }
+
+/**
+ * POST/GET that returns a binary file (e.g. certificate JPEG).
+ * @returns {{ blob: Blob, filename: string }}
+ */
+export async function apiFetchBlob(path, options = {}) {
+  const { authRole, ...rest } = options;
+  const headers = { ...rest.headers };
+  if (!(rest.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (authRole === "admin") {
+    const t = getAdminToken();
+    if (!t) throw new Error("Not signed in. Please sign in again.");
+    headers.Authorization = `Bearer ${t}`;
+  } else if (authRole === "client") {
+    const t = getClientToken();
+    if (!t) throw new Error("Not signed in. Please sign in again.");
+    headers.Authorization = `Bearer ${t}`;
+  }
+
+  const url = `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+  const res = await fetch(url, { ...rest, headers });
+  if (!res.ok) {
+    const text = await res.text();
+    let detail = text;
+    try {
+      detail = JSON.parse(text)?.detail ?? text;
+    } catch {
+      /* keep text */
+    }
+    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get("Content-Disposition") || "";
+  const match = /filename="([^"]+)"/.exec(cd);
+  const filename = match?.[1] || "download";
+  return { blob, filename };
+}

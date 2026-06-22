@@ -234,6 +234,10 @@ class SubmitAssessmentResponse(BaseModel):
     feedback: str = Field(..., description="Newline-separated per-question feedback.")
     questions_graded: int
     question_results: list[QuestionResult]
+    certificate_offer: dict[str, Any] | None = Field(
+        None,
+        description="Present when the participant qualifies for a Tier 1 certificate after submit.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={

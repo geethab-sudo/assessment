@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import { apiFetchBlob } from "../api";
 import { fetchEmployeeReport } from "../lib/employeeReportApi.js";
+
+const CERT_LEVELS = [
+  { value: "beginner", label: "Beginner" },
+  { value: "intermediate", label: "Intermediate" },
+  { value: "advanced", label: "Advanced" },
+];
 
 function formatDate(iso) {
   if (!iso) return "—";
@@ -13,6 +20,12 @@ function formatDate(iso) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatCertLevel(level) {
+  if (!level) return "—";
+  const s = String(level).trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function formatDuration(totalSeconds) {
@@ -840,6 +853,12 @@ export default function EmployeeReportPage({ mode = "client" }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [expandedChartId, setExpandedChartId] = useState(null);
+  const [certDisplayName, setCertDisplayName] = useState("");
+  const [certLevel, setCertLevel] = useState("beginner");
+  const [certLanguageCode, setCertLanguageCode] = useState("py");
+  const [certGenerating, setCertGenerating] = useState(false);
+  const [certError, setCertError] = useState(null);
+  const [certMessage, setCertMessage] = useState(null);
 
   useEffect(() => {
     if (routeEmployeeId?.trim()) {
@@ -883,6 +902,28 @@ export default function EmployeeReportPage({ mode = "client" }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (mode !== "admin" || !report) return;
+    setCertDisplayName(report.display_name || "");
+    const lv = (report.summary?.assessed_level_label || "beginner").trim().toLowerCase();
+    setCertLevel(["beginner", "intermediate", "advanced"].includes(lv) ? lv : "beginner");
+    const firstLang = (report.languages || [])[0];
+    if (firstLang?.language_code) {
+      setCertLanguageCode(firstLang.language_code);
+    }
+  }, [mode, report]);
+
+  const certLanguageOptions = useMemo(() => {
+    const langs = (report?.languages || [])
+      .filter((l) => l.language_code)
+      .map((l) => ({
+        code: l.language_code,
+        label: l.language_label || l.language_code,
+      }));
+    if (langs.length > 0) return langs;
+    return [{ code: "py", label: "Python" }];
+  }, [report?.languages]);
+
   const hasData = (report?.summary?.assessments_completed ?? 0) > 0;
 
   const languageColors = useMemo(() => {
@@ -897,6 +938,50 @@ export default function EmployeeReportPage({ mode = "client" }) {
   function handlePrint() {
     window.print();
   }
+
+  const handleIssueCertificate = useCallback(async () => {
+    const eid = employeeIdInput.trim();
+    const name = certDisplayName.trim();
+    if (!eid) {
+      setCertError("Employee ID is required.");
+      return;
+    }
+    if (!name) {
+      setCertError("Enter the name to print on the certificate.");
+      return;
+    }
+    setCertGenerating(true);
+    setCertError(null);
+    setCertMessage(null);
+    try {
+      const langOption =
+        certLanguageOptions.find((l) => l.code === certLanguageCode) ||
+        certLanguageOptions[0];
+      const { blob, filename } = await apiFetchBlob("/admin/certificate/issue", {
+        method: "POST",
+        authRole: "admin",
+        body: JSON.stringify({
+          employee_id: eid,
+          display_name: name,
+          level: certLevel,
+          language_code: langOption?.code || certLanguageCode,
+          language_label: langOption?.label || null,
+        }),
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+      setCertMessage(`Certificate downloaded (${filename}).`);
+      await loadReport();
+    } catch (e) {
+      setCertError(e.message);
+    } finally {
+      setCertGenerating(false);
+    }
+  }, [employeeIdInput, certDisplayName, certLevel, certLanguageCode, certLanguageOptions, loadReport]);
 
   return (
     <div className={`page emp-report-page emp-report-page--${mode}`}>
@@ -955,6 +1040,109 @@ export default function EmployeeReportPage({ mode = "client" }) {
         <div className="error no-print" role="alert">
           {error}
         </div>
+      )}
+
+      {mode === "admin" && employeeIdInput.trim() && (
+        <section className="card emp-report-cert-issue no-print" aria-labelledby="emp-report-cert-issue-title">
+          <h2 id="emp-report-cert-issue-title">Issue certificate</h2>
+          <p className="muted small-print emp-report-cert-issue-lead">
+            Manually generate a Tier 1 completion certificate for this employee (no score
+            requirement).
+          </p>
+          <div className="emp-report-cert-issue-form">
+            <label>
+              Name on certificate
+              <input
+                type="text"
+                value={certDisplayName}
+                onChange={(e) => setCertDisplayName(e.target.value)}
+                placeholder="Full name"
+                maxLength={256}
+              />
+            </label>
+            <label>
+              Level
+              <select
+                value={certLevel}
+                onChange={(e) => setCertLevel(e.target.value)}
+              >
+                {CERT_LEVELS.map(({ value, label }) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Language
+              <select
+                value={certLanguageCode}
+                onChange={(e) => setCertLanguageCode(e.target.value)}
+              >
+                {certLanguageOptions.map(({ code, label }) => (
+                  <option key={code} value={code}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="primary"
+              onClick={handleIssueCertificate}
+              disabled={certGenerating || !certDisplayName.trim()}
+            >
+              {certGenerating ? "Generating…" : "Generate certificate"}
+            </button>
+          </div>
+          {certError && (
+            <div className="error" role="alert">
+              {certError}
+            </div>
+          )}
+          {certMessage && (
+            <p className="muted" role="status">
+              {certMessage}
+            </p>
+          )}
+        </section>
+      )}
+
+      {report?.certificates_earned?.length > 0 && (
+        <section className="card emp-report-certificates-earned no-print" aria-labelledby="emp-report-certs-title">
+          <h2 id="emp-report-certs-title">Certificates earned</h2>
+          <p className="muted small-print emp-report-certificates-earned-lead">
+            Recorded in the system when a certificate is generated (participant or admin).
+          </p>
+          <div className="emp-report-certificates-table-wrap">
+            <table className="data-table emp-report-certificates-table">
+              <thead>
+                <tr>
+                  <th scope="col">Language</th>
+                  <th scope="col">Level</th>
+                  <th scope="col">Name on certificate</th>
+                  <th scope="col">Score</th>
+                  <th scope="col">Issued</th>
+                  <th scope="col">By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.certificates_earned.map((cert) => (
+                  <tr key={cert.id}>
+                    <td>{cert.language_label || cert.language_code || "—"}</td>
+                    <td>{formatCertLevel(cert.level)}</td>
+                    <td>{cert.display_name}</td>
+                    <td>
+                      {cert.score != null ? `${Math.round(cert.score * 100)}%` : "—"}
+                    </td>
+                    <td>{formatDate(cert.issued_at)}</td>
+                    <td>{cert.issued_by === "admin" ? "Admin" : "Participant"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
 
       {report && !hasData && (

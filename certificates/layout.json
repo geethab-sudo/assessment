@@ -1,0 +1,87 @@
+{
+  "canvas": {
+    "width": 793,
+    "height": 613
+  },
+  "signature_file": "signature.png",
+  "date_format": "%B %d, %Y",
+  "excluded_templates": [
+    "Professional-tier2.jpg"
+  ],
+  "level_template": {
+    "beginner": "Begineer.jpg",
+    "intermediate": "Intermediate.jpg",
+    "advanced": "Advanced.jpg"
+  },
+  "templates": {
+    "Begineer.jpg": {
+      "display_name": {
+        "x_ratio": 0.4926,
+        "y_ratio": 0.5118,
+        "anchor": "center",
+        "size": 34,
+        "color": "#1a1a1a"
+      },
+      "issue_date": {
+        "x_ratio": 0.157,
+        "y_ratio": 0.8384,
+        "anchor": "left",
+        "size": 14,
+        "color": "#333333"
+      },
+      "signature": {
+        "x_ratio": 0.8587,
+        "y_ratio": 0.8502,
+        "anchor": "center",
+        "max_width_ratio": 0.14,
+        "max_height_ratio": 0.06
+      }
+    },
+    "Intermediate.jpg": {
+      "display_name": {
+        "x_ratio": 0.4754,
+        "y_ratio": 0.4721,
+        "anchor": "center",
+        "size": 34,
+        "color": "#1a1a1a"
+      },
+      "issue_date": {
+        "x_ratio": 0.2008,
+        "y_ratio": 0.7952,
+        "anchor": "left",
+        "size": 14,
+        "color": "#ffffff"
+      },
+      "signature": {
+        "x_ratio": 0.7176,
+        "y_ratio": 0.7927,
+        "anchor": "center",
+        "max_width_ratio": 0.14,
+        "max_height_ratio": 0.06
+      }
+    },
+    "Advanced.jpg": {
+      "display_name": {
+        "x_ratio": 0.4964,
+        "y_ratio": 0.4635,
+        "anchor": "center",
+        "size": 34,
+        "color": "#1a1a1a"
+      },
+      "issue_date": {
+        "x_ratio": 0.1742,
+        "y_ratio": 0.6929,
+        "anchor": "left",
+        "size": 14,
+        "color": "#333333"
+      },
+      "signature": {
+        "x_ratio": 0.8225,
+        "y_ratio": 0.6833,
+        "anchor": "center",
+        "max_width_ratio": 0.14,
+        "max_height_ratio": 0.06
+      }
+    }
+  }
+}

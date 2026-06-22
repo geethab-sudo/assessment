@@ -113,6 +113,7 @@ export default function AdminPage() {
   const [allowPyodidePaste, setAllowPyodidePaste] = useState(false);
   const [includeSampleTestCases, setIncludeSampleTestCases] = useState(false);
   const [includeBeginnerCodingHints, setIncludeBeginnerCodingHints] = useState(false);
+  const [certificateEnabled, setCertificateEnabled] = useState(false);
   const [durationMinutes, setDurationMinutes] = useState(45);
   const [notebookGraceMinutes, setNotebookGraceMinutes] = useState(5);
 
@@ -259,6 +260,7 @@ export default function AdminPage() {
       setSelectedPresetName(null);
       setShowDistributionEditor(false);
       setPresetMissingTopics([]);
+      setCertificateEnabled(false);
       return;
     }
     setAllocationMode("per-topic");
@@ -536,6 +538,7 @@ export default function AdminPage() {
         allow_pyodide_paste: allowPyodidePaste,
         include_sample_test_cases: includeSampleTestCases,
         include_beginner_coding_hints: includeBeginnerCodingHints,
+        certificate_enabled: usePresetTier1 && certificateEnabled,
         question_source: questionSource,
         ...(targetEmployeeId.trim()
           ? { target_employee_id: targetEmployeeId.trim() }
@@ -839,6 +842,30 @@ export default function AdminPage() {
                       ))}
                     </ul>
                   </div>
+                )}
+
+                {selectedPresetName && (
+                  <label className="preset-tier1-toggle tier1-certificate-toggle">
+                    <input
+                      type="checkbox"
+                      checked={certificateEnabled}
+                      onChange={(e) => setCertificateEnabled(e.target.checked)}
+                    />
+                    <span>
+                      <strong>
+                        Include Certificate Achievement at the end of this assessment
+                      </strong>
+                      <span
+                        className="muted small-print"
+                        style={{ display: "block", marginTop: "0.25rem", lineHeight: 1.5 }}
+                      >
+                        Certificate level is set automatically from the{" "}
+                        <strong>{selectedPresetName}</strong> tier you selected. Participants who
+                        score above 85% can download a completion certificate with their name when
+                        they finish.
+                      </span>
+                    </span>
+                  </label>
                 )}
 
                 {showDistributionEditor && selectedPresetName && (

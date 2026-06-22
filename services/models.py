@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy import (
     Boolean,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -193,6 +194,12 @@ class Assessment(Base):
         nullable=False,
         server_default=text("false"),
     )
+    certificate_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )
+    certificate_level: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     questions: Mapped[list["AssessmentQuestion"]] = relationship(
         "AssessmentQuestion",
@@ -231,6 +238,23 @@ class AssessmentAttempt(Base):
     __table_args__ = (
         UniqueConstraint("assessment_id", "employee_id", name="uq_assessment_attempt_employee"),
     )
+
+
+class CertificateIssued(Base):
+    """Audit row when a participant or admin generates a Tier 1 certificate."""
+
+    __tablename__ = "certificates_issued"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    employee_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    display_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    level: Mapped[str] = mapped_column(String(32), nullable=False)
+    language_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    language_label: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    assessment_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    issued_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    issued_by: Mapped[str] = mapped_column(String(64), nullable=False, server_default=text("'auto'"))
 
 
 class AssessmentQuestion(Base):

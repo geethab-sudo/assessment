@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { apiFetch } from "../api";
+import { apiFetch, apiFetchBlob } from "../api";
 import SimpleCodeEditor from "../components/SimpleCodeEditor.jsx";
 import QuestionStem from "../components/QuestionStem.jsx";
 import PythonRunPanel from "../components/PythonRunPanel.jsx";
@@ -73,6 +73,9 @@ export default function ClientPage() {
   const [reportData, setReportData] = useState(null);
   const [reportError, setReportError] = useState(null);
   const [unansweredWarning, setUnansweredWarning] = useState(null);
+  const [certificateName, setCertificateName] = useState("");
+  const [certificateGenerating, setCertificateGenerating] = useState(false);
+  const [certificateDismissed, setCertificateDismissed] = useState(false);
   const autoSubmitLock = useRef(false);
   const graceNotebookSubmitLock = useRef(false);
   const lastGraceSubmittedFile = useRef(null);
@@ -299,6 +302,10 @@ export default function ClientPage() {
           body: JSON.stringify(payload),
         });
         setResult(inBrowserData);
+        if (inBrowserData.certificate_offer) {
+          setCertificateDismissed(false);
+          setCertificateName(participantName.trim());
+        }
         if (auto) setTimeExpiredBanner(true);
 
         if (isMixed && notebookFile) {
@@ -472,6 +479,40 @@ export default function ClientPage() {
     setUnansweredWarning(null);
     if (pending) handleSubmit(pending.opts);
   }, [unansweredWarning, handleSubmit]);
+
+  const handleGenerateCertificate = useCallback(async () => {
+    const name = certificateName.trim();
+    if (!name || !assessment?.assessment_id || !employeeId.trim()) {
+      setError("Enter the name you want on your certificate.");
+      return;
+    }
+    setCertificateGenerating(true);
+    setError(null);
+    try {
+      const { blob, filename } = await apiFetchBlob("/client/certificate/generate", {
+        method: "POST",
+        body: JSON.stringify({
+          assessment_id: assessment.assessment_id,
+          employee_id: employeeId.trim(),
+          display_name: name,
+        }),
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+      setCertificateDismissed(true);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCertificateGenerating(false);
+    }
+  }, [assessment?.assessment_id, certificateName, employeeId]);
+
+  const showCertificateModal =
+    Boolean(result?.certificate_offer) && !certificateDismissed;
 
   return (
     <div className={`page page--wide${showFixedTimer ? " page--timed-assessment" : ""}`}>
@@ -906,6 +947,60 @@ export default function ClientPage() {
             </p>
           )}
         </section>
+      )}
+
+      {showCertificateModal && (
+        <div className="certificate-modal-backdrop" role="presentation">
+          <section
+            className="card certificate-modal"
+            role="dialog"
+            aria-labelledby="certificate-modal-title"
+            aria-modal="true"
+          >
+            <h2 id="certificate-modal-title">You earned a certificate!</h2>
+            <p>
+              Your grade is{" "}
+              <strong>{Math.round((Number(result.score) || 0) * 100)}%</strong>.
+            </p>
+            <p>
+              You earned your certificate for{" "}
+              <strong>
+                {result.certificate_offer.language_label}{" "}
+                {result.certificate_offer.level}
+              </strong>
+              !
+            </p>
+            <label className="certificate-modal-field">
+              <span className="review-field-label">Name on certificate</span>
+              <input
+                type="text"
+                className="review-field-input"
+                value={certificateName}
+                onChange={(e) => setCertificateName(e.target.value)}
+                maxLength={256}
+                autoFocus
+              />
+            </label>
+            <div className="certificate-modal-actions">
+              <button
+                type="button"
+                className="primary"
+                onClick={handleGenerateCertificate}
+                disabled={certificateGenerating || !certificateName.trim()}
+              >
+                {certificateGenerating ? "Generating…" : "Generate certificate"}
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setCertificateDismissed(true)}
+                disabled={certificateGenerating}
+              >
+                Skip
+              </button>
+            </div>
+          </section>
+        </div>
       )}
 
       {result && (

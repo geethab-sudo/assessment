@@ -809,6 +809,10 @@ body {
   text-align: left;
 }
 
+.tier1-certificate-toggle {
+  margin-top: 1rem;
+}
+
 .tier1-preset-panel__title {
   margin: 0 0 0.75rem;
   font-size: 1rem;
@@ -3474,6 +3478,28 @@ button.primary {
   padding: 1.1rem 1.25rem 1.35rem;
 }
 
+.emp-report-chart-lightbox-panel--certificate {
+  width: min(1120px, 96vw);
+  max-height: 94vh;
+}
+
+.cert-layout-lightbox-body {
+  align-items: center;
+}
+
+.cert-layout-lightbox-img {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(15, 23, 42, 0.12);
+}
+
+.cert-layout-preview-hint {
+  margin: 0.75rem 0 0;
+}
+
 .emp-report-chart-lightbox-header {
   display: flex;
   align-items: center;
@@ -4002,5 +4028,271 @@ button.primary {
 .result-score-percent {
   display: block;
   margin-top: 0.35rem;
+}
+
+/* Stage 10 — certificate success modal */
+.certificate-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.certificate-modal {
+  width: min(100%, 28rem);
+  margin: 0;
+}
+
+.certificate-modal-field {
+  display: block;
+  margin: 1rem 0;
+}
+
+.certificate-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+/* Admin — manual certificate issue on employee report */
+.emp-report-cert-issue {
+  margin-bottom: 1rem;
+}
+
+.emp-report-cert-issue h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+}
+
+.emp-report-cert-issue-lead {
+  margin: 0 0 0.85rem;
+}
+
+.emp-report-cert-issue-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1rem;
+}
+
+.emp-report-cert-issue-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  min-width: min(100%, 14rem);
+}
+
+.emp-report-cert-issue-form input,
+.emp-report-cert-issue-form select {
+  font-weight: 400;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.emp-report-cert-issue .error {
+  margin: 0.65rem 0 0;
+}
+
+.emp-report-cert-issue > .muted {
+  margin: 0.65rem 0 0;
+}
+
+.emp-report-certificates-earned {
+  margin-bottom: 1rem;
+}
+
+.emp-report-certificates-earned h2 {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+}
+
+.emp-report-certificates-earned-lead {
+  margin: 0 0 0.75rem;
+}
+
+.emp-report-certificates-table-wrap {
+  overflow-x: auto;
+}
+
+.emp-report-certificates-table {
+  min-width: 36rem;
+}
+
+/* Certificate layout calibration (admin) */
+.cert-layout-page {
+  max-width: min(1280px, 94vw);
+}
+
+.cert-layout-page .cert-layout-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(220px, 320px);
+  grid-template-areas:
+    "canvas canvas"
+    "sidebar editor";
+  gap: 1rem;
+  align-items: start;
+}
+
+.cert-layout-canvas-card {
+  grid-area: canvas;
+}
+
+.cert-layout-sidebar {
+  grid-area: sidebar;
+}
+
+.cert-layout-editor {
+  grid-area: editor;
+}
+
+@media (max-width: 900px) {
+  .cert-layout-page .cert-layout-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "canvas"
+      "sidebar"
+      "editor";
+  }
+}
+
+.cert-layout-sidebar-title {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+}
+
+.cert-layout-template-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.cert-layout-template-btn {
+  width: 100%;
+  text-align: left;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: #fff;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.cert-layout-template-btn--active {
+  border-color: var(--brand-orange, #e85d04);
+  box-shadow: 0 0 0 1px var(--brand-orange, #e85d04);
+}
+
+.cert-layout-template-name {
+  font-weight: 600;
+  font-size: 0.88rem;
+  word-break: break-all;
+}
+
+.cert-layout-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  width: fit-content;
+}
+
+.cert-layout-badge--ok {
+  background: rgba(34, 197, 94, 0.15);
+  color: #166534;
+}
+
+.cert-layout-badge--warn {
+  background: rgba(234, 179, 8, 0.2);
+  color: #854d0e;
+}
+
+.cert-layout-field-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.cert-layout-field-tab {
+  padding: 0.4rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: #fff;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.cert-layout-field-tab--active {
+  background: var(--brand-orange-soft, #fff4ed);
+  border-color: var(--brand-orange, #e85d04);
+  font-weight: 600;
+}
+
+.cert-layout-click-hint {
+  margin: 0 0 0.65rem;
+}
+
+.cert-layout-canvas-wrap {
+  position: relative;
+  cursor: crosshair;
+  line-height: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.cert-layout-canvas-img {
+  width: 100%;
+  height: auto;
+  display: block;
+  user-select: none;
+}
+
+.cert-layout-marker {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border-radius: 50%;
+  border: 2px solid;
+  background: rgba(255, 255, 255, 0.85);
+  pointer-events: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.cert-layout-marker-label {
+  position: absolute;
+  left: 14px;
+  top: -4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 0 4px;
+  border-radius: 3px;
+}
+
+.cert-layout-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.cert-layout-preview {
+  margin-top: 1rem;
 }
 

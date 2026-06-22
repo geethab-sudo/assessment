@@ -94,6 +94,10 @@ class GenerateAssessmentBody(BaseModel):
         False,
         description="When true, beginner coding questions may include a short hint (never the full answer).",
     )
+    certificate_enabled: bool = Field(
+        False,
+        description="When true, participants who score >85% may receive a Tier 1 certificate.",
+    )
 
     @field_validator("target_employee_id", mode="before")
     @classmethod
@@ -471,6 +475,7 @@ class ConfirmAssessmentBody(BaseModel):
     duration_minutes: int | None = Field(default=None, ge=1)
     notebook_grace_minutes: int | None = Field(default=None, ge=0)
     allow_pyodide_paste: bool = False
+    certificate_enabled: bool = False
 
     @field_validator("level")
     @classmethod

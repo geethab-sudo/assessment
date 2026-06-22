@@ -586,6 +586,8 @@ def confirm_assessment(
     duration_minutes: int | None = None,
     notebook_grace_minutes: int | None = None,
     allow_pyodide_paste: bool = False,
+    certificate_enabled: bool = False,
+    certificate_level: str | None = None,
 ) -> dict[str, Any]:
     """Persist an admin-reviewed (and possibly edited) question list to the DB.
 
@@ -660,6 +662,8 @@ def confirm_assessment(
     )
     validate_notebook_plan_after_generation(plan)
 
+    cert_level = (certificate_level or level_norm).strip().lower() if certificate_enabled else None
+
     db_service.save_shared_assessment_rows(
         assessment_id,
         rows,
@@ -671,6 +675,8 @@ def confirm_assessment(
         duration_minutes=dur,
         notebook_grace_minutes=grace,
         allow_pyodide_paste=allow_pyodide_paste,
+        certificate_enabled=certificate_enabled,
+        certificate_level=cert_level,
     )
 
     _upsert_to_bank(assessment_id, rows, level.strip().lower(), language_code)
@@ -1112,6 +1118,15 @@ def submit_assessment(
     max_total = round(float(len(scores)), 1)
     avg_unit = round(achieved_total / len(scores), 2) if scores else 0.0
 
+    from services.certificate_service import certificate_offer_from_submit
+
+    cert_offer = certificate_offer_from_submit(
+        certificate_enabled=bool(meta.get("certificate_enabled")),
+        certificate_level=meta.get("certificate_level"),
+        language_label=meta.get("language_label"),
+        score=avg_unit,
+    )
+
     return {
         "assessment_id": assessment_id,
         "user_id": user_id,
@@ -1121,4 +1136,5 @@ def submit_assessment(
         "feedback": "\n".join(feedback_parts),
         "questions_graded": len(scores),
         "question_results": question_results,
+        "certificate_offer": cert_offer,
     }

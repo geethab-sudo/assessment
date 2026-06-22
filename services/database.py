@@ -76,6 +76,7 @@ def init_db() -> None:
     _ensure_topic_coding_editor_language_column(eng)
     _ensure_question_code_snippet_column(eng)
     _ensure_stage9_question_columns(eng)
+    _ensure_certificate_columns(eng)
     _ensure_required_indexes(eng)
     _ensure_question_bank_table(eng)           # must run before FK column below
     _ensure_assessment_question_bank_columns(eng)
@@ -359,6 +360,81 @@ def _ensure_stage9_question_columns(eng) -> None:
                     ) THEN
                         ALTER TABLE question_bank
                         ADD COLUMN coding_hint TEXT NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
+
+
+def _ensure_certificate_columns(eng) -> None:
+    """Stage 10: certificate flags on assessments + certificates_issued audit table."""
+    with eng.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessments'
+                          AND column_name = 'certificate_enabled'
+                    ) THEN
+                        ALTER TABLE assessments
+                        ADD COLUMN certificate_enabled BOOLEAN NOT NULL DEFAULT false;
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'assessments'
+                          AND column_name = 'certificate_level'
+                    ) THEN
+                        ALTER TABLE assessments
+                        ADD COLUMN certificate_level VARCHAR(32) NULL;
+                    END IF;
+                END $$;
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS certificates_issued (
+                    id             SERIAL PRIMARY KEY,
+                    employee_id    VARCHAR(64)  NOT NULL,
+                    display_name   VARCHAR(256) NOT NULL,
+                    level          VARCHAR(32)  NOT NULL,
+                    assessment_id  VARCHAR(36)  NULL,
+                    score          DOUBLE PRECISION NULL,
+                    issued_at      VARCHAR(64)  NOT NULL,
+                    issued_by      VARCHAR(64)  NOT NULL DEFAULT 'auto'
+                );
+                CREATE INDEX IF NOT EXISTS ix_certificates_issued_employee_id
+                    ON certificates_issued (employee_id);
+                CREATE INDEX IF NOT EXISTS ix_certificates_issued_assessment_id
+                    ON certificates_issued (assessment_id);
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'certificates_issued'
+                          AND column_name = 'language_code'
+                    ) THEN
+                        ALTER TABLE certificates_issued
+                        ADD COLUMN language_code VARCHAR(32) NULL;
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'certificates_issued'
+                          AND column_name = 'language_label'
+                    ) THEN
+                        ALTER TABLE certificates_issued
+                        ADD COLUMN language_label VARCHAR(256) NULL;
                     END IF;
                 END $$;
                 """

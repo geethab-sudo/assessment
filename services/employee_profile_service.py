@@ -870,6 +870,10 @@ def get_employee_report(
 
     assessed_level = assessed_level_from_records(records)
 
+    from services.certificate_service import list_employee_certificates
+
+    certificates_earned = list_employee_certificates(eid)
+
     return {
         "title": "Skills Progress Report",
         "report_version": REPORT_VERSION,
@@ -897,4 +901,5 @@ def get_employee_report(
         "insights": insights,
         "radar_topics": _radar_topics(records),
         "cumulative_progress": _cumulative_progress(records),
+        "certificates_earned": certificates_earned,
     }
