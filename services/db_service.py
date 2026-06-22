@@ -342,6 +342,8 @@ def save_shared_assessment_rows(
                     code_snippet=row.get("code_snippet") or None,
                     bank_question_id=row.get("bank_question_id"),
                     difficulty=row.get("difficulty"),
+                    sample_test_cases=row.get("sample_test_cases"),
+                    coding_hint=row.get("coding_hint") or None,
                 )
             )
         session.commit()
@@ -366,6 +368,8 @@ def read_questions_by_assessment(assessment_id: str) -> list[dict[str, Any]]:
                 "code_snippet": r.code_snippet or "",
                 "bank_question_id": r.bank_question_id,
                 "difficulty": r.difficulty or "",
+                "sample_test_cases": r.sample_test_cases or None,
+                "coding_hint": r.coding_hint or "",
             }
             for r in rows
         ]

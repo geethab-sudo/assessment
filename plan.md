@@ -2,7 +2,7 @@
 
 > **Purpose:** Living roadmap for the question-bank, recycling, analytics, and “Help me improve” features.  
 > **Companion file:** [task.md](task.md) — checkbox tasks per stage for agentic implementation.  
-> **Last reviewed:** 2026-06-15
+> **Last reviewed:** 2026-06-19
 
 ---
 
@@ -11,11 +11,11 @@
 Today, every new assessment triggers fresh LLM generation. We want a **reusable question bank** so admins can choose:
 
 
-| Mode                         | Who        | Behavior                                                                                                      |
-| ---------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------- |
-| **Generate new**             | Admin      | LLM creates all questions; each is upserted into the bank; admin reviews before save.                       |
-| **Recycle then generate**    | Admin      | Bank first by topic + difficulty; LLM fills shortfall; **admin review** before participants see anything.   |
-| **Bank only**                | Client     | “Help me improve” pulls **only** from the bank — **no LLM**, no unreviewed questions. Deliver what is available; if shortage, tell the user. |
+| Mode                      | Who    | Behavior                                                                                                                                     |
+| ------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Generate new**          | Admin  | LLM creates all questions; each is upserted into the bank; admin reviews before save.                                                        |
+| **Recycle then generate** | Admin  | Bank first by topic + difficulty; LLM fills shortfall; **admin review** before participants see anything.                                    |
+| **Bank only**             | Client | “Help me improve” pulls **only** from the bank — **no LLM**, no unreviewed questions. Deliver what is available; if shortage, tell the user. |
 
 
 Each bank question should expose:
@@ -23,7 +23,7 @@ Each bank question should expose:
 - `times_used` — how many assessments included it
 - `percent_correct` / `percent_wrong` — derived from `times_correct` and `times_wrong` after participants submit
 
-Participants already identify with **`employee_id`** (plus name). That ID is the anchor for:
+Participants already identify with `**employee_id`** (plus name). That ID is the anchor for:
 
 - Excluding **mastered** questions (answered correctly) when building personalized assessments — **not** every question ever seen
 - Aggregating performance across assessments
@@ -33,18 +33,20 @@ Participants already identify with **`employee_id`** (plus name). That ID is the
 
 When selecting bank questions for a participant, **do not exclude questions merely because the employee has seen them before**. Exclude only questions they have **answered correctly** (mastered):
 
-| Type | “Correct” / mastered |
-|------|----------------------|
-| **MCQ** | Answer matches stored `correct_answer` (case-insensitive), same as submit grading |
-| **Coding** (and subjective) | Score **≥ 70 / 100** on that submission |
+
+| Type                        | “Correct” / mastered                                                              |
+| --------------------------- | --------------------------------------------------------------------------------- |
+| **MCQ**                     | Answer matches stored `correct_answer` (case-insensitive), same as submit grading |
+| **Coding** (and subjective) | Score **≥ 70 / 100** on that submission                                           |
+
 
 A participant who got the same coding question wrong three times **may receive it again** — repetition until they learn it is intentional.
 
 **“No more questions”** for a topic + difficulty means: the employee has answered **correctly** every bank question available for that topic and difficulty (nothing left to assign). The UI should say so clearly instead of creating an empty or LLM-filled assessment.
 
-**Implementation:** mastered questions are stored per employee in ``employee_question_mastery`` (``employee_id`` + ``bank_question_id``). Updated on each correct submit; one-time backfill from historical submissions on first deploy.
+**Implementation:** mastered questions are stored per employee in `employee_question_mastery` (`employee_id` + `bank_question_id`). Updated on each correct submit; one-time backfill from historical submissions on first deploy.
 
-On **`/client`**, a **“Help me improve”** entry point will offer three guided paths:
+On `**/client`**, a **“Help me improve”** entry point will offer three guided paths:
 
 1. **Improve my weak areas** — summarize **last 3 assessments only**; build a **bank-only** practice assessment on weakest topics.
 2. **Explore new areas** — use **full history** for explored topics; **bank-only** on catalog topics not yet covered.
@@ -76,20 +78,20 @@ The first milestone — **persist questions in the database** — is implemented
 | SQLAlchemy models                          | `services/models.py` — `QuestionBank`, `AssessmentQuestion.bank_question_id`, `AssessmentQuestion.difficulty` |
 
 
-**`question_bank` columns (relevant):** `content_hash` (dedup), `question_text`, `type`, `options`, `correct_answer`, `code_snippet`, `topic_name`, `language_code`, `difficulty`, `times_used`, `times_correct`, `times_wrong`, `created_at`.
+`**question_bank` columns (relevant):** `content_hash` (dedup), `question_text`, `type`, `options`, `correct_answer`, `code_snippet`, `topic_name`, `language_code`, `difficulty`, `times_used`, `times_correct`, `times_wrong`, `created_at`.
 
 ### 3.2 Services
 
 
-| Capability                      | Location                                                                               | Wired?                            |
-| ------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------- |
-| Upsert on generate/confirm      | `question_bank_service.add_questions_to_bank` via `assessment_service._upsert_to_bank` | ✅                                 |
-| Link assessment rows → bank     | `question_bank_service.link_assessment_questions_to_bank`                              | ✅                                 |
-| Record correct/wrong on submit  | `question_bank_service.record_question_outcome` in `submit_assessment`                 | ✅                                 |
-| Browse bank + % stats           | `question_bank_service.get_bank_stats`                                                 | ✅ API only                        |
-| Availability check              | `question_bank_service.get_bank_availability`                                          | ✅ API only                        |
-| Find reusable questions         | `question_bank_service.find_bank_questions`                                            | ⚠️ **Implemented but not called** |
-| Employee mastered-question exclusion | `employee_question_mastery` table + `get_employee_mastered_bank_ids` | ✅ Stage 1 |
+| Capability                           | Location                                                                               | Wired?                            |
+| ------------------------------------ | -------------------------------------------------------------------------------------- | --------------------------------- |
+| Upsert on generate/confirm           | `question_bank_service.add_questions_to_bank` via `assessment_service._upsert_to_bank` | ✅                                 |
+| Link assessment rows → bank          | `question_bank_service.link_assessment_questions_to_bank`                              | ✅                                 |
+| Record correct/wrong on submit       | `question_bank_service.record_question_outcome` in `submit_assessment`                 | ✅                                 |
+| Browse bank + % stats                | `question_bank_service.get_bank_stats`                                                 | ✅ API only                        |
+| Availability check                   | `question_bank_service.get_bank_availability`                                          | ✅ API only                        |
+| Find reusable questions              | `question_bank_service.find_bank_questions`                                            | ⚠️ **Implemented but not called** |
+| Employee mastered-question exclusion | `employee_question_mastery` table + `get_employee_mastered_bank_ids`                   | ✅ Stage 1                         |
 
 
 ### 3.3 API (admin)
@@ -116,16 +118,19 @@ The first milestone — **persist questions in the database** — is implemented
 
 **Shipped:** Stages **0–7** — question bank persistence, admin recycle/hybrid, bank browser, employee profile + stats report (core 4B), and all three “Help me improve” flows (weak areas, new areas, step-up difficulty).
 
+**Next (Phase 2):** Stages **9–10** — coding-question quality, sample test cases, decimal scoring, beginner hints, Tier 1 certificates — see §Stage 9–10.
+
 **Optional / partial (not blocking “done”):**
 
 - **Stage 4B polish** — report API is shippable; some ambitious layout items from §4B below are enhancements only (see **4B optional polish**).
 - **Stage 8** — employee auth, bank retirement, bulk seed script, `ARCHITECTURE.md` update (see §Stage 8).
+- **Stage 10 optional** — LinkedIn certificate sharing (backlog after certificate v1).
 
-**Explicitly out of scope (for now):** email / certificate delivery (`POST …/employee-report/send`).
+**Explicitly out of scope (for now):** email delivery (`POST …/employee-report/send`).
 
 ### 3.6 Difficulty labels (fixed in Stage 1)
 
-Bank and `assessment_questions.difficulty` store admin **`level`** values: `beginner` | `intermediate` | `advanced`. Legacy `easy`/`medium`/`hard` rows are backfilled on startup via `_backfill_question_bank_difficulty_labels` in `database.py`.
+Bank and `assessment_questions.difficulty` store admin `**level`** values: `beginner` | `intermediate` | `advanced`. Legacy `easy`/`medium`/`hard` rows are backfilled on startup via `_backfill_question_bank_difficulty_labels` in `database.py`.
 
 ---
 
@@ -238,8 +243,8 @@ target_employee_id: str | null   # optional; exclude bank questions this employe
 **Backend (`assessment_service`):**
 
 1. When `question_source == "recycle_then_generate"`, for each topic + type + count in `per_topic_config` (or global counts):
-   - Call `find_bank_questions` for that slice.
-   - If shortage > 0 → generate only the shortage for that topic/type (always — no error for shortfall).
+  - Call `find_bank_questions` for that slice.
+  - If shortage > 0 → generate only the shortage for that topic/type (always — no error for shortfall).
 2. Mark recycled rows with existing `bank_question_id` when saving.
 3. Response metadata:
 
@@ -307,10 +312,12 @@ target_employee_id: str | null   # optional; exclude bank questions this employe
 
 **Inputs:** `employee_id`, optional `language_code`, `scope: "last_3" | "full_history"`
 
-| Scope | Used by | Meaning |
-|-------|---------|---------|
-| `last_3` | Weak areas | Only the **last 3 distinct submitted assessments** (by timestamp) |
-| `full_history` | New areas, Improve difficulty | **All** completed assessments for this employee |
+
+| Scope          | Used by                       | Meaning                                                           |
+| -------------- | ----------------------------- | ----------------------------------------------------------------- |
+| `last_3`       | Weak areas                    | Only the **last 3 distinct submitted assessments** (by timestamp) |
+| `full_history` | New areas, Improve difficulty | **All** completed assessments for this employee                   |
+
 
 **Outputs (shape varies slightly by scope):**
 
@@ -359,12 +366,14 @@ Rich, print-ready report for managers or employees: languages evaluated (Python,
 
 **Report identity**
 
-| Field | Example |
-|-------|---------|
-| Title | **Skills Progress Report** |
-| Subject | `employee_id` + display name |
-| Period | “All time” or “Last 90 days” (toggle) |
-| Generated | timestamp + report version |
+
+| Field     | Example                               |
+| --------- | ------------------------------------- |
+| Title     | **Skills Progress Report**            |
+| Subject   | `employee_id` + display name          |
+| Period    | “All time” or “Last 90 days” (toggle) |
+| Generated | timestamp + report version            |
+
 
 **Page layout (print-ready)**
 
@@ -384,16 +393,18 @@ Rich, print-ready report for managers or employees: languages evaluated (Python,
 
 **Sections**
 
-| Section | Content |
-|---------|---------|
-| **A. Executive summary** | Proficiency index (0–100); assessments completed; questions answered; % correct overall; **time on platform** (sum `submitted_at − started_at`; avg per assessment); language badges with mini scores |
-| **B. Languages evaluated** | Per `language_code`: topics covered / catalog size, question count, % correct, proficiency (Beginner / Intermediate / Advanced) |
-| **C. Topics covered** | Per `(language, topic)`: attempted / mastered, % correct, last difficulty, trend vs previous attempt, sparkline (last 5 scores); optional heatmap topic × difficulty |
-| **D. Progress over time** | Line: score % over time; stacked area: cumulative correct vs wrong; radar: latest vs 3-assessment average |
-| **E. Question-type analytics** | Donut/bars: MCQ / coding / subjective — count, % correct |
-| **F. Mastery & repetition** | Mastered count; needs-practice (seen 2+ times, not mastered) |
-| **G. Strengths & focus** | Auto bullets: strengths (≥80%, ≥5 Qs); focus areas (`scope=last_3`); unexplored topics; one-line recommendation each |
-| **H. Footer / CTA** | Weak-areas practice link; optional QR; platform-only disclaimer |
+
+| Section                        | Content                                                                                                                                                                                               |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A. Executive summary**       | Proficiency index (0–100); assessments completed; questions answered; % correct overall; **time on platform** (sum `submitted_at − started_at`; avg per assessment); language badges with mini scores |
+| **B. Languages evaluated**     | Per `language_code`: topics covered / catalog size, question count, % correct, proficiency (Beginner / Intermediate / Advanced)                                                                       |
+| **C. Topics covered**          | Per `(language, topic)`: attempted / mastered, % correct, last difficulty, trend vs previous attempt, sparkline (last 5 scores); optional heatmap topic × difficulty                                  |
+| **D. Progress over time**      | Line: score % over time; stacked area: cumulative correct vs wrong; radar: latest vs 3-assessment average                                                                                             |
+| **E. Question-type analytics** | Donut/bars: MCQ / coding / subjective — count, % correct                                                                                                                                              |
+| **F. Mastery & repetition**    | Mastered count; needs-practice (seen 2+ times, not mastered)                                                                                                                                          |
+| **G. Strengths & focus**       | Auto bullets: strengths (≥80%, ≥5 Qs); focus areas (`scope=last_3`); unexplored topics; one-line recommendation each                                                                                  |
+| **H. Footer / CTA**            | Weak-areas practice link; optional QR; platform-only disclaimer                                                                                                                                       |
+
 
 **Data model (`get_employee_report`)**
 
@@ -438,13 +449,15 @@ Rich, print-ready report for managers or employees: languages evaluated (Python,
 
 **Rendering & delivery**
 
-| Layer | Approach |
-|-------|----------|
-| Routes | `/admin/employee-report/:employee_id` (admin); `/client/my-report` (self-service) |
-| UI | `EmployeeReportPage.jsx` — ~900px max-width, print-friendly |
-| Charts | Recharts or Chart.js; score ring SVG; ≤4 chart types |
-| Export | `@media print` + Download PDF (`window.print()` or html2pdf.js / WeasyPrint server-side) |
-| Email | **Out of scope** — `POST /admin/employee-report/send` sketched only; use print/PDF in-app |
+
+| Layer  | Approach                                                                                  |
+| ------ | ----------------------------------------------------------------------------------------- |
+| Routes | `/admin/employee-report/:employee_id` (admin); `/client/my-report` (self-service)         |
+| UI     | `EmployeeReportPage.jsx` — ~900px max-width, print-friendly                               |
+| Charts | Recharts or Chart.js; score ring SVG; ≤4 chart types                                      |
+| Export | `@media print` + Download PDF (`window.print()` or html2pdf.js / WeasyPrint server-side)  |
+| Email  | **Out of scope** — `POST /admin/employee-report/send` sketched only; use print/PDF in-app |
+
 
 **Visual polish**
 
@@ -454,12 +467,14 @@ Rich, print-ready report for managers or employees: languages evaluated (Python,
 
 **Implementation phases**
 
-| Phase | Deliverable |
-|-------|-------------|
-| **4a** | `get_employee_profile()` — API only |
+
+| Phase  | Deliverable                                                                |
+| ------ | -------------------------------------------------------------------------- |
+| **4a** | `get_employee_profile()` — API only                                        |
 | **4b** | `get_employee_report()` — richer aggregation + timeline + time-on-platform |
-| **4c** | `EmployeeReportPage` — screen view with charts |
-| **4d** | Print/PDF stylesheet + Download PDF button |
+| **4c** | `EmployeeReportPage` — screen view with charts                             |
+| **4d** | Print/PDF stylesheet + Download PDF button                                 |
+
 
 **Exit criteria (4B):** Admin or employee opens report for a user with history; sees hero, language cards, trend chart, topic table; exports a clean PDF.
 
@@ -469,13 +484,15 @@ Rich, print-ready report for managers or employees: languages evaluated (Python,
 
 Some items in the layout sketch above were described ambitiously. The report is shippable without them; treat as a follow-up polish pass, not a missing stage.
 
-| Item | API | UI | Notes |
-|------|-----|-----|-------|
-| Topic heatmap (language × topic) | derived from `languages[].topics` | wired | Client-side grid; no dedicated API field |
-| Cumulative correct/wrong stacked chart | `cumulative_progress` | wired | |
-| Radar chart (latest vs rolling average) | `radar_topics` | wired | |
-| QR code in footer | — | — | Deferred — not in scope |
-| Email report / certificate send | `POST …/send` sketched | — | **Out of scope** — do not schedule until product asks |
+
+| Item                                    | API                               | UI    | Notes                                                 |
+| --------------------------------------- | --------------------------------- | ----- | ----------------------------------------------------- |
+| Topic heatmap (language × topic)        | derived from `languages[].topics` | wired | Client-side grid; no dedicated API field              |
+| Cumulative correct/wrong stacked chart  | `cumulative_progress`             | wired |                                                       |
+| Radar chart (latest vs rolling average) | `radar_topics`                    | wired |                                                       |
+| QR code in footer                       | —                                 | —     | Deferred — not in scope                               |
+| Email report / certificate send         | `POST …/send` sketched            | —     | **Out of scope** — do not schedule until product asks |
+
 
 **Agent handoff (polish only):** “Wire `cumulative_progress` + `radar_topics` in `EmployeeReportPage`; add heatmap if product wants it. No email send.”
 
@@ -498,7 +515,7 @@ Some items in the layout sketch above were described ambitiously. The report is 
 - `POST /client/improvement/weak-areas`
 - Body: `employee_id`, `language_code`, optional `questions_requested` (target count)
 - Profile `scope=last_3` → `weakest_topics` → `per_topic_config`
-- **`question_source = bank_only`** — call `find_bank_questions` only; **never** call LLM
+- `**question_source = bank_only`** — call `find_bank_questions` only; **never** call LLM
 - `exclude_employee_id` → exclude **mastered** bank IDs only
 - Response includes `questions_requested`, `questions_delivered`, `availability_message` when `delivered < requested`
 - If `questions_delivered == 0` → do not create assessment; return friendly message (e.g. mastered everything available for those topics, or bank empty)
@@ -521,7 +538,7 @@ Some items in the layout sketch above were described ambitiously. The report is 
 **Backend:** `POST /client/improvement/new-areas`
 
 - Profile `scope=full_history` → `unexplored_topic_names`; pick top K (e.g. 3–5).
-- **`question_source = bank_only`** — no LLM
+- `**question_source = bank_only`** — no LLM
 - Exclude employee’s **mastered** bank IDs
 - Same `questions_requested` / `questions_delivered` / availability messaging as Stage 5
 
@@ -540,7 +557,7 @@ Some items in the layout sketch above were described ambitiously. The report is 
 **Backend:** `POST /client/improvement/difficulty`
 
 - Profile `scope=full_history` → `recommended_difficulty_by_topic` per explored topic.
-- **`question_source = bank_only`** at the stepped difficulty — no LLM
+- `**question_source = bank_only`** at the stepped difficulty — no LLM
 - Exclude **mastered** questions at that difficulty
 - If user has **mastered all** bank questions at the next difficulty for a topic → message: nothing left at this level (or suggest admin-generated content later)
 
@@ -550,19 +567,174 @@ Some items in the layout sketch above were described ambitiously. The report is 
 
 ---
 
-### Stage 8 — Future (out of scope for initial tasks)
+## Phase 2 — Assessment quality, scoring UX & certificates (Stages 9–10)
+
+> **Goal:** Self-contained Pyodide-friendly coding questions, optional sample I/O and beginner hints, **0.0–1.0** score display, and Tier 1 preset certificates when score **> 85%**.  
+> **Tasks:** [task.md](task.md) §Stage 9–10.
+
+### Stage 9 — Coding question quality, test cases, hints & decimal scoring
+
+#### 9A — Self-contained coding questions (no external files)
+
+**Problem:** Generated coding tasks sometimes ask students to read files (e.g. `text.txt`) that do not exist in the Pyodide terminal, so they cannot verify their solution.
+
+**Rule:** Every coding question must be **fully runnable in the in-browser terminal** with no external file dependencies.
+
+**LLM instruction changes** (generation prompt / `docs/assessment-generation.md`):
+
+- **Never** ask the candidate to read, write, or depend on external files (`text.txt`, CSV on disk, paths outside the editor, etc.).
+- Prefer exercises where the student **implements a function or class** and validates with inline inputs, or writes a short script whose output is observable in the terminal.
+- Grading must work from submitted code alone — no filesystem the participant cannot access.
+
+**Admin review:** Reject or edit questions that reference external files.
+
+**Exit criteria:** New Tier 1 assessments contain no file-dependent coding prompts; students can self-test every coding item in Pyodide.
+
+---
+
+#### 9B — Sample test cases (coding, function/class only)
+
+**Goal:** Give candidates a **small predefined set** of input → expected output examples so they can sanity-check function/class solutions — without publishing every edge case.
+
+
+| Rule                                               | Detail                                                                                                               |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **Scope**                                          | **Coding questions only**, when the task is to **implement a function or class** (not open-ended scripts).           |
+| **Admin opt-in**                                   | Checkbox on `AdminPage.jsx`: **Include test cases in some coding questions** — **default off**.                      |
+| **Partial coverage**                               | 1-2 representative examples, e.g. *For input `XYZ`, expect output `ABC`*. **Do not** include all test cases.         |
+| **Student note (mandatory when test cases shown)** | *These examples help you validate your solution; make sure you also consider edge cases beyond the examples shown.*  |
+| **Per-question optional**                          | Even with checkbox on, omit test cases when the prompt is not function/class shaped; admin may add/remove in review. |
+
+
+**Data model:**
+
+```json
+{
+  "sample_test_cases": [
+    { "input": "[1, 2, 3]", "expected_output": "6", "label": "basic sum" }
+  ]
+}
+```
+
+**Admin review (`AdminReviewPage.jsx`):** Each test case in a **code-snippet panel** (monospace, formatted) — editable, add/remove rows. Forces admin to verify examples are real, not LLM hallucination.
+
+**Participant UI:** Read-only formatted block below question text. Samples are for **self-validation** only; final grading remains LLM/existing grader (no auto-run harness in v1).
+
+**Exit criteria:** Checkbox on → function coding items show formatted examples in client + editable snippets in review; checkbox off → unchanged behavior.
+
+---
+
+#### 9C — Decimal scoring display (0.0–1.0)
+
+**Goal:** Clearer per-question and total scores after the test.
+
+
+| Context              | Format                                                                                   |
+| -------------------- | ---------------------------------------------------------------------------------------- |
+| **Per question**     | **0.0 – 1.0** (one decimal), e.g. `0.7 / 1.0` — not `70 / 100`.                          |
+| **Assessment total** | **Achieved X.X out of Y.Y** plus optional percentage, e.g. `8.7 / 10.0 (87%)`.           |
+| **Internal API/DB**  | May keep 0–100 for thresholds (mastery ≥ 70, certificate > 85); UI converts for display. |
+
+
+**Files:** `ClientPage.jsx` results, submit response schemas, employee report if per-question scores appear.
+
+**Exit criteria:** Post-submit shows decimal per-question scores and achieved/total; certificate threshold (≥ 0.85) unchanged.
+
+---
+
+#### 9D — Beginner coding hints (optional)
+
+
+| Rule                          | Detail                                                                                                                                                                                             |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Admin opt-in**              | Checkbox: **Include hints for beginner coding questions** — **default off**.                                                                                                                       |
+| **Scope**                     | **Beginner** + **coding** only.                                                                                                                                                                    |
+| **Format**                    | Append: `hint: <short hint>`                                                                                                                                                                       |
+| **LLM constraint (critical)** | Hints must **NEVER** give the full answer, complete algorithm, or copy-paste solution. Only a nudge — concept, syntax, or one small step. Repeat this constraint prominently in the system prompt. |
+| **Admin review**              | Editable hint field; optional warning if hint looks like a full solution.                                                                                                                          |
+
+
+**Exit criteria:** Checkbox on → beginner coding items show editable hint in review and `hint: …` for participants; intermediate/advanced never get auto-hints.
+
+**Stage 9 order:** `9A` → `9B` + `9D` (parallel) → `9C`. **Blocks:** Stage 10 (certificate popup uses post-submit score display).
+
+---
+
+### Stage 10 — Tier 1 certificates & admin grant
+
+**Goal:** Issue a certificate when a participant scores **> 85%** on a **Tier 1 preset** at **beginner**, **intermediate**, or **advanced** — plus manual admin issuance.
+
+#### Assets (`certificates/`)
+
+
+| Template                    | Level                                     |
+| --------------------------- | ----------------------------------------- |
+| Beginner Tier 1 diploma     | `beginner`                                |
+| Intermediate Tier 1 diploma | `intermediate`                            |
+| Advanced Tier 1 diploma     | `advanced`                                |
+| `Professional-tier2.jpg`    | **Excluded in v1** — Tier 2 not wired yet |
+
+
+Overlay **participant name** on template (server-side Pillow/canvas or client export).
+
+#### Admin: certificate on preset
+
+**Checkbox on Tier 1 preset flow:** **Enable certificate on completion** — **default off**.
+
+- On → `certificate_enabled: true`, `certificate_level` from preset difficulty.
+- Off → normal assessment, no certificate modal.
+
+#### Participant: success modal
+
+**When:** Submit complete, certificate enabled, Tier 1 preset, score **> 85%**.
+
+```text
+Your grade is {grade}%.
+
+You earned your certificate for Python {level}!
+
+What name would you like on your certificate?
+[ name input ]  [ Generate certificate ]  [ Skip ]
+```
+
+Persist: `employee_id`, name on certificate, level, `assessment_id`, score, `issued_at`.
+
+#### Admin: manual grant (performance page)
+
+On admin employee performance / report view:
+
+- **Generate certificate** → pick **level** + **name on certificate**
+- For participants who earned it under special conditions without the modal flow.
+
+**API:** `POST /admin/certificate/issue` — `employee_id`, `level`, `display_name`, optional `assessment_id`.
+
+**Exit criteria:** Enabled preset + > 85% → modal → downloadable certificate; admin manual grant works; disabled preset → no certificate flow.
+
+---
+
+### Stage 10 optional — LinkedIn sharing (future backlog)
+
+**Not v1.** After download, optional **Share on LinkedIn?** button:
+
+- LinkedIn “Add license/certification” deep link or OAuth share with verification URL.
+- Requires product/legal review; implement after core certificate generation is stable.
+
+---
+
+### Stage 8 — Future backlog (platform / ops)
 
 
 | Item                                       | Notes                                                              |
 | ------------------------------------------ | ------------------------------------------------------------------ |
-| **4B report polish**                       | Heatmap, cumulative stacked chart, radar UI — see **4B optional polish** |
+| **4B report polish**                       | QR code deferred — see **4B optional polish**                      |
 | Employee login                             | `employee_id` today is self-declared; later tie to SSO/users table |
 | Question retirement                        | Admin retires high-wrong or low-discrimination items               |
 | Seeding bank from `seed_sample_catalog.py` | Bulk import script for demo environments                           |
 | ARCHITECTURE.md update                     | Still describes CSV; should reflect PostgreSQL + bank              |
+| **LinkedIn certificate share**             | Stage 10 optional — after certificate v1                           |
 
-**Not scheduled:** email / PDF certificate delivery (`POST /admin/employee-report/send` or similar).
 
+**Not scheduled:** email delivery (`POST /admin/employee-report/send`).
 
 ---
 
@@ -627,6 +799,14 @@ if len(rows) == 0: no assessment created — explain why
 
 > Based on your full assessment history, …
 
+**Coding question — sample test cases footer:**
+
+> These examples help you validate your solution; make sure you also consider edge cases beyond the examples shown.
+
+**Certificate success modal:**
+
+> Your grade is **{grade}%**. You earned your certificate for Python **{level}**! What name would you like on your certificate?
+
 ---
 
 ## 8. Testing strategy
@@ -639,6 +819,11 @@ if len(rows) == 0: no assessment created — explain why
 | 4A    | `tests/test_employee_profile_service.py` — rollup, unexplored topics      |
 | 4B    | `tests/test_employee_report_service.py` — timeline, time-on-platform      |
 | 5–7   | API integration tests + manual QA on `/client`                            |
+| 9A    | Prompt/regression: no file-read coding questions in generated preview     |
+| 9B    | Schema + review UI: `sample_test_cases` round-trip                        |
+| 9C    | Submit response: decimal display mapping from stored scores               |
+| 9D    | Generation: beginner hints present only when flag on; never full solution |
+| 10    | Certificate issue: threshold, modal, admin grant, audit row               |
 
 
 ---
@@ -646,13 +831,13 @@ if len(rows) == 0: no assessment created — explain why
 ## 9. Related docs
 
 
-| File                                                           | Topic                                         |
-| -------------------------------------------------------------- | --------------------------------------------- |
-| [task.md](task.md)                                             | Checkbox tasks per stage                      |
-| [README.md](README.md)                                         | Runbook, API table                            |
-| [docs/assessment-generation.md](docs/assessment-generation.md) | Per-topic allocation                          |
-| [docs/tier1-presets.md](docs/tier1-presets.md)                 | Preset combos (good test fixture for recycle) |
-| [Plan.md](Plan.md) / [Task.md](Task.md)                        | Separate Tier 1 preset feature (complete)     |
+| File                                                           | Topic                                             |
+| -------------------------------------------------------------- | ------------------------------------------------- |
+| [task.md](task.md)                                             | Checkbox tasks per stage                          |
+| [README.md](README.md)                                         | Runbook, API table                                |
+| [docs/assessment-generation.md](docs/assessment-generation.md) | Per-topic allocation + LLM constraints (Stage 9A) |
+| [docs/tier1-presets.md](docs/tier1-presets.md)                 | Preset combos (good test fixture for recycle)     |
+| [Plan.md](Plan.md) / [Task.md](Task.md)                        | Separate Tier 1 preset feature (complete)         |
 
 
 ---
@@ -665,6 +850,9 @@ Stage 0 ✅ → Stage 1 ✅ → Stage 2 ✅ → Stage 3 ✅ (parallel ok after 1
 Stage 4 ✅ → Stage 5 ✅ → Stage 6 ✅ → Stage 7 ✅
          ↘
          4B optional polish (heatmap, cumulative, radar UI) — anytime after 4B core
+
+Phase 2 (next):
+Stage 9A → Stage 9B + 9D (parallel) → Stage 9C → Stage 10 → Stage 10 optional (LinkedIn)
 ```
 
-Stages **0–7** are complete. **4B optional polish** and **Stage 8** are enhancements / backlog, not blockers for “done.”
+Stages **0–7** are complete. **Phase 2 (9–10)** is the active roadmap. **4B optional polish** and **Stage 8** remain enhancements / backlog.

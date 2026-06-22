@@ -44,6 +44,7 @@ LEVEL_TO_DIFFICULTY = {
 }
 
 SCORE_CORRECT_THRESHOLD = 70.0
+SCORE_UNIT = 100.0
 
 _TYPE_ORDER = ("mcq", "coding", "subjective")
 
@@ -53,6 +54,25 @@ _SHELL_CODING_HINT = (
     "or PowerShell on Windows, e.g. `python -m venv .venv` and `.venv\\Scripts\\Activate.ps1`). "
     "Do not ask participants to write Python scripts for venv setup unless the task explicitly requires it."
 )
+
+_FILE_IO_CODING_HINT = (
+    "\n\nCoding questions for this File I/O topic MUST exercise Python file handling "
+    "(open(), read/write, context managers with `with`). "
+    "Ask the candidate to write a Python script that reads from and/or writes to a "
+    ".txt, .csv, or .json file. Use a concrete filename in the prompt (e.g. `scores.csv`, "
+    "`log.txt`, `config.json`) and state clearly that the file is NOT attached or "
+    "pre-created — the student writes code assuming that filename and creates/reads it "
+    "in the in-browser terminal. Include variety: some tasks write line-by-line "
+    "(e.g. loop + write), others write a whole chunk at once (e.g. `write()` or `json.dump`). "
+    "Some tasks should read existing content the script itself created first. "
+    "Do NOT ask about unrelated topics (APIs, OOP design, unrelated algorithms). "
+    "Stay focused on file I/O and context managers."
+)
+
+
+def _is_file_io_topic(topic_name: str) -> bool:
+    n = (topic_name or "").lower()
+    return "file i/o" in n or "file io" in n
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +130,33 @@ def _is_answer_correct(
     return score >= SCORE_CORRECT_THRESHOLD
 
 
+def _score_to_unit(score: float) -> float:
+    """Convert internal 0–100 LLM grade to 0.0–1.0 display scale."""
+    return round(max(0.0, min(1.0, float(score) / SCORE_UNIT)), 1)
+
+
+def _gen_kwargs(
+    level: str,
+    *,
+    include_sample_test_cases: bool = False,
+    include_beginner_coding_hints: bool = False,
+) -> dict[str, Any]:
+    return {
+        "admin_level": level.strip().lower(),
+        "include_sample_test_cases": include_sample_test_cases,
+        "include_beginner_coding_hints": include_beginner_coding_hints,
+    }
+
+
+def _attach_stage9_fields(row: dict[str, Any], source: dict[str, Any]) -> None:
+    cases = source.get("sample_test_cases")
+    if cases:
+        row["sample_test_cases"] = cases
+    hint = source.get("coding_hint")
+    if hint:
+        row["coding_hint"] = str(hint).strip()
+
+
 def _types_and_counts_from_rows(
     rows: list[dict[str, Any]],
 ) -> tuple[list[str], dict[str, int]]:
@@ -125,7 +172,7 @@ def _types_and_counts_from_rows(
 
 def _row_from_question(q: dict[str, Any], question_id: Any, topic_name: str) -> dict[str, Any]:
     """Normalise a single LLM question dict into a DB-ready row dict."""
-    return {
+    row: dict[str, Any] = {
         "question_id": str(question_id),
         "question": q["question"],
         "type": q["type"],
@@ -134,13 +181,15 @@ def _row_from_question(q: dict[str, Any], question_id: Any, topic_name: str) -> 
         "topic_name": topic_name,
         "code_snippet": q.get("code_snippet") or "",
     }
+    _attach_stage9_fields(row, q)
+    return row
 
 
 def _row_from_bank_item(
     bank_item: dict[str, Any], question_id: int, level: str
 ) -> dict[str, Any]:
     """Map a bank pull into an assessment row dict (already linked to bank)."""
-    return {
+    row: dict[str, Any] = {
         "question_id": str(question_id),
         "question": bank_item["question"],
         "type": bank_item["type"],
@@ -151,6 +200,8 @@ def _row_from_bank_item(
         "bank_question_id": bank_item["bank_question_id"],
         "difficulty": level.strip().lower(),
     }
+    _attach_stage9_fields(row, bank_item)
+    return row
 
 
 def _generate_rows_for_topic_type(
@@ -161,6 +212,8 @@ def _generate_rows_for_topic_type(
     qtype: str,
     count: int,
     start_id: int,
+    *,
+    gen_kwargs: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """LLM-generate ``count`` questions of one type for a single catalog topic."""
     if count <= 0:
@@ -171,6 +224,7 @@ def _generate_rows_for_topic_type(
         [qtype],
         questions_per_type={qtype: count},
         assessment_id=f"{assessment_id}-{tname[:24]}-{qtype}",
+        **(gen_kwargs or {}),
     )
     rows: list[dict[str, Any]] = []
     qid = start_id
@@ -192,6 +246,7 @@ def _build_assessment_rows(
     *,
     question_source: str = "generate_new",
     target_employee_id: str | None = None,
+    gen_kwargs: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """
     Build assessment question rows (bank + LLM hybrid or LLM-only).
@@ -215,10 +270,16 @@ def _build_assessment_rows(
                 difficulty,
                 types,
                 effective_per_topic,
+                gen_kwargs=gen_kwargs,
             )
         else:
             rows = _generate_rows_legacy(
-                assessment_id, topic, difficulty, types, questions_per_type
+                assessment_id,
+                topic,
+                difficulty,
+                types,
+                questions_per_type,
+                gen_kwargs=gen_kwargs,
             )
         return rows, {
             "bank_sourced_count": 0,
@@ -270,6 +331,7 @@ def _build_assessment_rows(
                     qtype,
                     shortage,
                     global_q_id,
+                    gen_kwargs=gen_kwargs,
                 )
                 rows.extend(generated)
                 global_q_id += len(generated)
@@ -287,16 +349,6 @@ def _generation_stats_fields(stats: dict[str, Any]) -> dict[str, Any]:
         "bank_sourced_count": int(stats.get("bank_sourced_count", 0)),
         "llm_generated_count": int(stats.get("llm_generated_count", 0)),
         "shortage_messages": list(stats.get("shortage_messages") or []),
-    }
-    """Normalise a single LLM question dict into a DB-ready row dict."""
-    return {
-        "question_id": str(question_id),
-        "question": q["question"],
-        "type": q["type"],
-        "options": _options_for_csv(q.get("options") or []),
-        "correct_answer": q.get("answer", ""),
-        "topic_name": topic_name,
-        "code_snippet": q.get("code_snippet") or "",
     }
 
 
@@ -337,6 +389,10 @@ def _build_per_topic_strings(topic_names: list[str]) -> dict[str, str]:
             cel = (row.coding_editor_language or "").strip().lower()
             if cel in ("shell", "powershell"):
                 text += _SHELL_CODING_HINT
+            elif _is_file_io_topic(tname):
+                text += _FILE_IO_CODING_HINT
+        elif _is_file_io_topic(tname):
+            text += _FILE_IO_CODING_HINT
         result[tname] = text
     return result
 
@@ -352,6 +408,8 @@ def _generate_rows_per_topic(
     difficulty: str,
     types: list[str],
     effective_per_topic: dict[str, dict[str, int]],
+    *,
+    gen_kwargs: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """One LLM call per topic so questions are tagged with their topic_name."""
     rows: list[dict[str, Any]] = []
@@ -368,6 +426,7 @@ def _generate_rows_per_topic(
             t_types,
             questions_per_type=t_counts,
             assessment_id=f"{assessment_id}-{tname[:32]}",
+            **(gen_kwargs or {}),
         )
         for q in t_questions:
             rows.append(_row_from_question(q, global_q_id, tname))
@@ -381,6 +440,8 @@ def _generate_rows_legacy(
     difficulty: str,
     types: list[str],
     questions_per_type: dict[str, int],
+    *,
+    gen_kwargs: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Single LLM call for custom-topic or no-catalog-topic generations."""
     if set(types) != set(questions_per_type.keys()):
@@ -391,6 +452,7 @@ def _generate_rows_legacy(
         types,
         questions_per_type=questions_per_type,
         assessment_id=assessment_id,
+        **(gen_kwargs or {}),
     )
     return [
         _row_from_question(q, q.get("id"), "")
@@ -430,6 +492,8 @@ def preview_questions(
     per_topic_config: dict[str, dict[str, int]] | None = None,
     question_source: str = "generate_new",
     target_employee_id: str | None = None,
+    include_sample_test_cases: bool = False,
+    include_beginner_coding_hints: bool = False,
 ) -> dict[str, Any]:
     """Generate questions via LLM and return them for admin review — nothing is written to the DB.
 
@@ -465,6 +529,11 @@ def preview_questions(
         effective_per_topic,
         question_source=question_source,
         target_employee_id=target_employee_id,
+        gen_kwargs=_gen_kwargs(
+            level,
+            include_sample_test_cases=include_sample_test_cases,
+            include_beginner_coding_hints=include_beginner_coding_hints,
+        ),
     )
 
     routing_flag = _compute_routing_flag(catalog_topic_names)
@@ -485,6 +554,10 @@ def preview_questions(
         }
         if r.get("bank_question_id") is not None:
             item["bank_question_id"] = r["bank_question_id"]
+        if r.get("sample_test_cases"):
+            item["sample_test_cases"] = r["sample_test_cases"]
+        if r.get("coding_hint"):
+            item["coding_hint"] = r["coding_hint"]
         questions_for_review.append(item)
 
     return {
@@ -560,6 +633,14 @@ def confirm_assessment(
         if bid is not None:
             row["bank_question_id"] = int(bid)
             row["difficulty"] = level_norm
+        if q.get("sample_test_cases"):
+            from services.llm_service import _normalize_sample_test_cases
+            cases = _normalize_sample_test_cases(q["sample_test_cases"])
+            if cases:
+                row["sample_test_cases"] = cases
+        hint = q.get("coding_hint")
+        if hint:
+            row["coding_hint"] = str(hint).strip()
         rows.append(row)
 
     bank_sourced = sum(1 for r in rows if r.get("bank_question_id") is not None)
@@ -635,6 +716,8 @@ def create_assessment(
     question_source: str = "generate_new",
     target_employee_id: str | None = None,
     allow_pyodide_paste: bool = False,
+    include_sample_test_cases: bool = False,
+    include_beginner_coding_hints: bool = False,
 ) -> dict[str, Any]:
     """Generate questions via LLM and persist (shared assessment in PostgreSQL)."""
     difficulty = LEVEL_TO_DIFFICULTY.get(level.strip().lower())
@@ -671,6 +754,11 @@ def create_assessment(
         effective_per_topic,
         question_source=question_source,
         target_employee_id=target_employee_id,
+        gen_kwargs=_gen_kwargs(
+            level,
+            include_sample_test_cases=include_sample_test_cases,
+            include_beginner_coding_hints=include_beginner_coding_hints,
+        ),
     )
 
     # Routing flag computed here once — passed to db_service (no re-computation there)
@@ -891,6 +979,12 @@ def _build_questions_for_user(
         }
         if code_snippet:
             item["code"] = code_snippet
+        cases = r.get("sample_test_cases")
+        if cases:
+            item["sample_test_cases"] = cases
+        hint = (r.get("coding_hint") or "").strip()
+        if hint:
+            item["coding_hint"] = hint
         questions_out.append(item)
     return questions_out
 
@@ -984,11 +1078,12 @@ def submit_assessment(
         sc = float(result["score"])
         fb = result["feedback"]
         correct = _is_answer_correct(qtype, user_text, str(row.get("correct_answer") or ""), sc)
+        sc_unit = _score_to_unit(sc)
         scores.append(sc)
         feedback_parts.append(f"Q{qid}: {fb}")
         question_results.append({
                 "question_id": qid,
-                "score": round(sc, 2),
+                "score": sc_unit,
                 "feedback": fb,
                 "correct": correct,
         })
@@ -1012,10 +1107,17 @@ def submit_assessment(
     if meta.get("is_timed") and eid:
         attempt_service.mark_attempt_submitted(assessment_id, eid)
 
+    unit_scores = [_score_to_unit(s) for s in scores]
+    achieved_total = round(sum(unit_scores), 1)
+    max_total = round(float(len(scores)), 1)
+    avg_unit = round(achieved_total / len(scores), 2) if scores else 0.0
+
     return {
         "assessment_id": assessment_id,
         "user_id": user_id,
-        "score": round(sum(scores) / len(scores), 2),
+        "score": avg_unit,
+        "achieved_total": achieved_total,
+        "max_total": max_total,
         "feedback": "\n".join(feedback_parts),
         "questions_graded": len(scores),
         "question_results": question_results,

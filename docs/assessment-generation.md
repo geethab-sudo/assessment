@@ -89,3 +89,21 @@ Implementation: `services/notebook_plan_service.py` (`resolve_question_modality`
 ```
 
 `POST /generate-assessment` accepts `topic_names`, optional `per_topic_config`, `is_timed`, `duration_minutes`, `notebook_grace_minutes`.
+
+## Coding question constraints (Stage 9)
+
+Coding items must run in the **Pyodide** in-browser terminal:
+
+- **Default (most topics):** Do not require reading pre-existing files the student did not create. Prefer function/class tasks with inline validation, or scripts with observable print output.
+- **File I/O topics** (catalog name contains “File I/O”): Coding questions **must** exercise `open()`, read/write, and `with` context managers. Use a concrete filename (`.txt`, `.csv`, or `.json`), state that the file is **not attached**, and ask the student to create/read it in the terminal. Mix line-by-line writes and whole-chunk writes.
+
+Optional generation flags on `POST /admin/preview-questions` (both default **off**):
+
+| Flag | Effect |
+|------|--------|
+| `include_sample_test_cases` | Some function/class coding questions include 2–4 sample input → output pairs for self-validation (not exhaustive). |
+| `include_beginner_coding_hints` | Beginner coding questions may include a short `coding_hint` — never the full solution. |
+
+Stored on `assessment_questions` / `question_bank`: `sample_test_cases` (JSONB), `coding_hint` (text).
+
+Submit responses expose scores on a **0.0–1.0** scale per question plus `achieved_total` / `max_total`; internal grading still uses 0–100 for mastery (≥ 70) thresholds.

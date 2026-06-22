@@ -17,6 +17,30 @@ import UnansweredSubmitAlert from "../components/UnansweredSubmitAlert.jsx";
 import { usePagination } from "../hooks/usePagination.js";
 import { countUnansweredQuestions } from "../lib/assessmentAnswers.js";
 import { openReportPrintWindow } from "../lib/reportRenderer.js";
+import { formatUnitScore, SAMPLE_TEST_CASES_NOTE } from "../lib/scoreDisplay.js";
+
+function SampleTestCasesPanel({ cases }) {
+  if (!Array.isArray(cases) || cases.length === 0) return null;
+  return (
+    <div className="sample-test-cases" aria-label="Sample test cases">
+      <p className="sample-test-cases-title">Sample test cases</p>
+      {cases.map((tc, i) => (
+        <div key={i} className="sample-test-case">
+          {tc.label ? <span className="sample-test-case-label">{tc.label}</span> : null}
+          <div className="sample-test-case-row">
+            <span className="sample-test-case-key">Input</span>
+            <pre className="sample-test-case-code">{tc.input}</pre>
+          </div>
+          <div className="sample-test-case-row">
+            <span className="sample-test-case-key">Expected output</span>
+            <pre className="sample-test-case-code">{tc.expected_output}</pre>
+          </div>
+        </div>
+      ))}
+      <p className="muted small-print sample-test-cases-note">{SAMPLE_TEST_CASES_NOTE}</p>
+    </div>
+  );
+}
 
 export default function ClientPage() {
   const location = useLocation();
@@ -595,7 +619,7 @@ export default function ClientPage() {
                       {result && qr != null && (
                         <span
                           className={`result-tick ${qr.correct ? "correct" : "wrong"}`}
-                          title={`Score ${qr.score}/100${qr.feedback ? ` — ${qr.feedback}` : ""}`}
+                          title={`Score ${formatUnitScore(qr.score)} / 1.0${qr.feedback ? ` — ${qr.feedback}` : ""}`}
                           role="img"
                           aria-label={qr.correct ? "Correct" : "Incorrect"}
                         >
@@ -609,6 +633,14 @@ export default function ClientPage() {
                       languageCode={assessment?.language_code}
                       protectCodeFromCopy
                     />
+                    {q.type === "coding" && (
+                      <SampleTestCasesPanel cases={q.sample_test_cases} />
+                    )}
+                    {q.type === "coding" && q.coding_hint && (
+                      <p className="coding-hint muted">
+                        <strong>hint:</strong> {q.coding_hint}
+                      </p>
+                    )}
                     {q.type === "mcq" && Array.isArray(q.options) ? (
                       <div className="options" role="group" aria-label={`${displayLabel} choices`}>
                         {q.options.map((opt, idx) => (
@@ -789,7 +821,9 @@ export default function ClientPage() {
                       >
                         <div className="question-feedback-header">
                           <span className="question-feedback-label">Feedback</span>
-                          <span className="question-feedback-score">{qr.score}/100</span>
+                          <span className="question-feedback-score">
+                            {formatUnitScore(qr.score)} / 1.0
+                          </span>
                         </div>
                         {qr.feedback ? (
                           <p className="question-feedback-body">{qr.feedback}</p>
@@ -881,11 +915,22 @@ export default function ClientPage() {
           </h2>
           <div className="result-summary">
             <div className="result-score-block">
-              <span className="result-score-label">Average score</span>
+              <span className="result-score-label">Total score</span>
               <div className="result-score-row">
-                <span className="result-score-value">{result.score}</span>
-                <span className="result-score-suffix">/ 100</span>
+                <span className="result-score-value">
+                  {formatUnitScore(result.achieved_total ?? result.score)}
+                </span>
+                <span className="result-score-suffix">
+                  / {formatUnitScore(result.max_total ?? result.questions_graded)}
+                </span>
               </div>
+              {result.max_total > 0 && (
+                <span className="muted small-print result-score-percent">
+                  Average {formatUnitScore(result.score)} / 1.0
+                  {" "}
+                  ({Math.round((Number(result.score) || 0) * 100)}%)
+                </span>
+              )}
             </div>
             <div className="result-meta">
               <span className="result-meta-label">Questions graded</span>

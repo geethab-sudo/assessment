@@ -9,6 +9,27 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 ALLOWED_TYPES = frozenset({"mcq", "coding", "subjective"})
 
 
+class SampleTestCaseItem(BaseModel):
+    """One input → expected output example for self-validation."""
+
+    input: str = ""
+    expected_output: str = ""
+    label: str | None = None
+
+    @field_validator("input", "expected_output", mode="before")
+    @classmethod
+    def strip_io(cls, v: object) -> str:
+        return str(v).strip() if v is not None else ""
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def strip_label(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s or None
+
+
 class GenerateAssessmentBody(BaseModel):
     """Request body for LLM-powered assessment generation."""
 
@@ -64,6 +85,14 @@ class GenerateAssessmentBody(BaseModel):
         default=None,
         max_length=64,
         description="When recycling, exclude bank questions this employee has already mastered.",
+    )
+    include_sample_test_cases: bool = Field(
+        False,
+        description="When true, some function/class coding questions include sample I/O examples.",
+    )
+    include_beginner_coding_hints: bool = Field(
+        False,
+        description="When true, beginner coding questions may include a short hint (never the full answer).",
     )
 
     @field_validator("target_employee_id", mode="before")
@@ -403,6 +432,8 @@ class ReviewQuestionItem(BaseModel):
     correct_answer: str = ""
     topic_name: str = ""
     bank_question_id: int | None = None
+    sample_test_cases: list[SampleTestCaseItem] = Field(default_factory=list)
+    coding_hint: str | None = None
 
     @field_validator("type")
     @classmethod
@@ -416,6 +447,16 @@ class ReviewQuestionItem(BaseModel):
     @classmethod
     def strip_str(cls, v: object) -> str:
         return v.strip() if isinstance(v, str) else (v or "")
+
+    @field_validator("coding_hint", mode="before")
+    @classmethod
+    def strip_hint(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        s = str(v).strip()
+        if s.lower().startswith("hint:"):
+            s = s[5:].strip()
+        return s or None
 
 
 class ConfirmAssessmentBody(BaseModel):

@@ -459,6 +459,8 @@ def generate_assessment(
             question_source=body.question_source,
             target_employee_id=body.target_employee_id,
             allow_pyodide_paste=body.allow_pyodide_paste,
+            include_sample_test_cases=body.include_sample_test_cases,
+            include_beginner_coding_hints=body.include_beginner_coding_hints,
         )
         response = GenerateAssessmentResponse.model_validate(result)
     except RuntimeError as e:
@@ -502,6 +504,8 @@ def preview_questions(request: Request, body: GenerateAssessmentBody) -> dict:
             per_topic_config=body.per_topic_config or {},
             question_source=body.question_source,
             target_employee_id=body.target_employee_id,
+            include_sample_test_cases=body.include_sample_test_cases,
+            include_beginner_coding_hints=body.include_beginner_coding_hints,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e

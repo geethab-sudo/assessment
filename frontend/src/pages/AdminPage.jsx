@@ -111,6 +111,8 @@ export default function AdminPage() {
 
   const [isTimed, setIsTimed] = useState(false);
   const [allowPyodidePaste, setAllowPyodidePaste] = useState(false);
+  const [includeSampleTestCases, setIncludeSampleTestCases] = useState(false);
+  const [includeBeginnerCodingHints, setIncludeBeginnerCodingHints] = useState(false);
   const [durationMinutes, setDurationMinutes] = useState(45);
   const [notebookGraceMinutes, setNotebookGraceMinutes] = useState(5);
 
@@ -532,6 +534,8 @@ export default function AdminPage() {
             }
           : {}),
         allow_pyodide_paste: allowPyodidePaste,
+        include_sample_test_cases: includeSampleTestCases,
+        include_beginner_coding_hints: includeBeginnerCodingHints,
         question_source: questionSource,
         ...(targetEmployeeId.trim()
           ? { target_employee_id: targetEmployeeId.trim() }
@@ -1313,6 +1317,42 @@ export default function AdminPage() {
           <p className="muted small-print" style={{ margin: "0.5rem 0 0 0", lineHeight: 1.5 }}>
             Off by default. When enabled, participants can paste into the in-browser coding editor
             (Pyodide / shell). MCQ copy blocking is unchanged.
+          </p>
+        </div>
+
+        <div
+          className="stage9-generation-config"
+          style={{
+            marginTop: "1rem",
+            padding: "0.85rem 1.1rem",
+            borderRadius: "10px",
+            border: "1px solid rgba(0,0,0,0.1)",
+            background: "rgba(0,0,0,0.02)",
+          }}
+        >
+          <label className="type-count-tog" style={{ display: "block", marginBottom: "0.65rem" }}>
+            <input
+              type="checkbox"
+              checked={includeSampleTestCases}
+              onChange={(e) => setIncludeSampleTestCases(e.target.checked)}
+            />{" "}
+            <strong>Include test cases in some coding questions</strong>
+          </label>
+          <p className="muted small-print" style={{ margin: "0 0 0.85rem 0", lineHeight: 1.5 }}>
+            Off by default. When enabled, function/class coding items may include a few sample
+            input → output examples for self-validation (not every edge case).
+          </p>
+          <label className="type-count-tog" style={{ display: "block" }}>
+            <input
+              type="checkbox"
+              checked={includeBeginnerCodingHints}
+              onChange={(e) => setIncludeBeginnerCodingHints(e.target.checked)}
+            />{" "}
+            <strong>Include hints for beginner coding questions</strong>
+          </label>
+          <p className="muted small-print" style={{ margin: "0.5rem 0 0 0", lineHeight: 1.5 }}>
+            Off by default. Short nudges only — never the full answer. Applies to beginner level
+            coding questions when generated.
           </p>
         </div>
 

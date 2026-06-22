@@ -3898,3 +3898,109 @@ button.primary {
   margin-top: 1.25rem;
 }
 
+/* Stage 9 — sample test cases & coding hints */
+.sample-test-cases {
+  margin: 0.75rem 0 0;
+  padding: 0.75rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.sample-test-cases-title {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.sample-test-case {
+  margin-bottom: 0.65rem;
+}
+
+.sample-test-case-label {
+  display: inline-block;
+  margin-bottom: 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted, #64748b);
+}
+
+.sample-test-case-row {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  gap: 0.5rem;
+  align-items: start;
+  margin-bottom: 0.35rem;
+}
+
+.sample-test-case-key {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted, #64748b);
+  padding-top: 0.35rem;
+}
+
+.sample-test-case-code {
+  margin: 0;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-family: "Fira Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.sample-test-cases-note {
+  margin: 0.5rem 0 0;
+}
+
+.coding-hint {
+  margin: 0.65rem 0 0;
+  padding: 0.55rem 0.75rem;
+  border-radius: 6px;
+  background: rgba(59, 130, 246, 0.08);
+  border-left: 3px solid #3b82f6;
+  font-size: 0.9rem;
+}
+
+.review-test-cases {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.review-test-cases-hint {
+  margin: 0;
+}
+
+.review-test-case-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.65rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.review-test-case-remove {
+  align-self: flex-start;
+}
+
+.review-external-file-warn {
+  margin: 0;
+  padding: 0.55rem 0.75rem;
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.08);
+  border-left: 3px solid #ef4444;
+  color: #991b1b;
+  font-size: 0.88rem;
+}
+
+.result-score-percent {
+  display: block;
+  margin-top: 0.35rem;
+}
+

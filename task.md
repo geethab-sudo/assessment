@@ -314,6 +314,169 @@
 
 ---
 
+## Stage 9 — Coding quality, test cases, hints & decimal scoring
+
+> **Goal:** Pyodide-safe coding questions, optional sample I/O and beginner hints, 0.0–1.0 score display.  
+> **Depends on:** Stages 0–3 (generation + admin review)  
+> **Blocks:** Stage 10
+
+### 9A — Self-contained coding questions (no external files)
+
+#### LLM / docs
+
+- [x] Update generation prompt + `docs/assessment-generation.md`: **never** require reading/writing external files (`text.txt`, CSV on disk, etc.)
+- [x] Require exercises runnable entirely in Pyodide (function/class + inline validation, or observable print output)
+- [x] Grader evaluates submitted code only — no filesystem the student cannot access
+
+#### Admin review
+
+- [x] Flag or surface questions mentioning external files in `AdminReviewPage.jsx` (optional validator)
+
+#### Tests / QA
+
+- [ ] Regression: preview Tier 1 beginner coding batch — zero file-read prompts
+- [ ] Manual QA: every coding item self-testable in Pyodide terminal
+
+**Acceptance:** No new assessment ships file-dependent coding questions.
+
+---
+
+### 9B — Sample test cases (coding, function/class only)
+
+#### Schema & API
+
+- [x] Add `sample_test_cases: [{ input, expected_output, label? }]` to question/bank/review schemas
+- [x] Add `include_sample_test_cases: bool = false` to `GenerateAssessmentBody` (default **off**)
+- [x] Pass flag through preview → confirm → persisted on `assessment_questions` / bank
+
+#### LLM generation
+
+- [x] When flag on + function/class coding: emit 2–4 representative input → output examples (not exhaustive)
+- [x] Append mandatory student note: *These examples help you validate your solution; make sure you also consider edge cases beyond the examples shown.*
+- [x] When flag off: no sample test cases generated
+
+#### Admin UI
+
+- [x] `AdminPage.jsx`: checkbox **Include test cases in some coding questions** (default off)
+- [x] `AdminReviewPage.jsx`: render each test case in a **code-snippet panel**; add/edit/remove rows
+
+#### Client UI
+
+- [x] `ClientPage.jsx`: read-only formatted sample I/O block below coding questions that have test cases
+
+#### Tests
+
+- [ ] API/schema round-trip for `sample_test_cases`
+- [ ] Flag off → no test cases; flag on → at least one function coding item has cases
+
+**Acceptance:** Admin enables flag → review shows editable snippet blocks → client sees partial I/O examples + edge-case note.
+
+---
+
+### 9C — Decimal scoring display (0.0–1.0)
+
+#### Backend / schema
+
+- [x] Submit response includes `score_decimal` (0.0–1.0) per question and `achieved_total` / `max_total`
+- [x] Keep internal 0–100 if needed for mastery (≥70) and certificate (>85) thresholds
+
+#### Client UI
+
+- [x] Per-question: `0.7 / 1.0` instead of `70 / 100`
+- [x] Post-submit summary: **Achieved X.X out of Y.Y** (+ optional percentage)
+
+#### Tests
+
+- [x] Unit test: score conversion and total aggregation
+
+**Acceptance:** After submit, participant sees decimal per-question scores and achieved/total summary.
+
+---
+
+### 9D — Beginner coding hints (optional)
+
+#### Schema & API
+
+- [x] Add optional `hint: str | null` on coding questions
+- [x] Add `include_beginner_coding_hints: bool = false` to `GenerateAssessmentBody` (default **off**)
+
+#### LLM generation
+
+- [x] When flag on + beginner + coding: append `hint: <text>` at end of question
+- [x] **Critical prompt rule:** hint must NEVER be full answer, complete algorithm, or copy-paste solution — nudge only (repeat in system prompt)
+
+#### Admin UI
+
+- [x] `AdminPage.jsx`: checkbox **Include hints for beginner coding questions** (default off)
+- [x] `AdminReviewPage.jsx`: editable hint field; optional warning if hint looks like full solution
+
+#### Client UI
+
+- [x] Show `hint: …` below beginner coding questions when present
+
+#### Tests
+
+- [ ] Hints only when flag on + beginner + coding; never on intermediate/advanced
+
+**Acceptance:** Flag on → beginner coding has editable hint in review; client sees nudge only, not solution.
+
+---
+
+## Stage 10 — Tier 1 certificates & admin grant
+
+> **Goal:** Certificate when score **> 85%** on Tier 1 preset (beginner/intermediate/advanced).  
+> **Depends on:** Stage 9C (post-submit score display)  
+> **Excludes:** `certificates/Professional-tier2.jpg` in v1
+
+### Assets & rendering
+
+- [ ] Map `certificates/` templates: beginner, intermediate, advanced Tier 1 (exclude Professional-tier2)
+- [ ] `certificate_service.py`: overlay participant name on template → PNG/PDF
+
+### Database
+
+- [ ] `certificates_issued` table: `employee_id`, `display_name`, `level`, `assessment_id?`, `score`, `issued_at`, `issued_by` (auto vs admin)
+
+### Admin — preset checkbox
+
+- [ ] `AdminPage.jsx` (Tier 1 preset): **Enable certificate on completion** (default **off**)
+- [ ] `assessments.certificate_enabled`, `assessments.certificate_level`
+- [ ] Pass through preview → confirm
+
+### Participant — success modal
+
+- [ ] After submit: if certificate enabled + Tier 1 + score > 85% → modal:
+  - *Your grade is {grade}%*
+  - *You earned your certificate for Python {level}!*
+  - Name input → **Generate certificate** / **Skip**
+- [ ] `POST /client/certificate/generate` → download/preview + audit row
+
+### Admin — manual grant
+
+- [ ] On admin employee performance/report page: **Generate certificate**
+- [ ] Prompt: level (beginner | intermediate | advanced) + name on certificate
+- [ ] `POST /admin/certificate/issue`
+
+### Tests
+
+- [ ] Threshold: 85% → no modal; 86% + enabled → modal
+- [ ] Disabled preset → no certificate flow
+- [ ] Admin manual issue creates audit row
+
+**Acceptance:** Enabled Tier 1 preset + >85% → named certificate; admin can grant manually; Tier 2 template not used.
+
+---
+
+## Stage 10 optional — LinkedIn sharing (backlog)
+
+- [ ] **Share on LinkedIn?** button after certificate download (not v1)
+- [ ] Research: OAuth vs deep link to “Add license/certification” + public verification URL
+- [ ] Product/legal review before implementation
+
+**Acceptance:** Documented in plan only until certificate v1 ships.
+
+---
+
 ## Stage 8 — Future backlog (not scheduled)
 
 ### 4B report polish (optional)
@@ -329,8 +492,9 @@
 - [ ] Admin retire/archive bank question
 - [ ] `scripts/seed_question_bank.py` — bulk demo questions from catalog
 - [ ] Update [ARCHITECTURE.md](ARCHITECTURE.md) — PostgreSQL + question bank (currently describes CSV)
+- [ ] **LinkedIn certificate share** — Stage 10 optional (after certificate v1)
 
-**Explicitly out of scope:** email / PDF certificate send (`POST …/employee-report/send`).
+**Explicitly out of scope:** email delivery (`POST …/employee-report/send`).
 
 ---
 
@@ -346,6 +510,11 @@
 8. Client: **Improve difficulty** → verify harder bank questions or “all mastered” message
 9. Client: answer same question wrong twice → it may appear again; answer correctly → it should not reappear for that topic/difficulty
 10. Admin: open question bank page → confirm `times_used` and % stats moved
+11. Admin: generate Tier 1 with test cases + hints checkboxes **off** → confirm no I/O examples or hints
+12. Admin: regenerate with both checkboxes **on** → review snippet panels + hints → confirm
+13. Client: take assessment → verify decimal scores (`0.0–1.0`) and achieved/total after submit
+14. Admin: Tier 1 with certificate enabled → client scores >85% → certificate modal + download
+15. Admin: employee report → manual **Generate certificate** for eligible user
 
 ---
 
@@ -361,5 +530,11 @@
 | Build shippable employee stats report | **4B** (core done) |
 | Polish report charts (cumulative, radar, heatmap) | **4B optional** or **8** |
 | Add Help me improve button | **5** then **6**–**7** (done) |
+| Fix coding questions that need external files | **9A** |
+| Add sample test cases + admin snippet review | **9B** |
+| Show scores as 0.0–1.0 | **9C** |
+| Add optional beginner coding hints | **9D** |
+| Tier 1 certificates + admin grant | **10** |
+| LinkedIn share (future) | **10 optional** |
 
 Copy the stage block + **Acceptance** line into the agent prompt as scope boundary.

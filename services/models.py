@@ -116,6 +116,10 @@ class QuestionBank(Base):
     times_wrong: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
+    sample_test_cases: Mapped[list[Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=text("NULL")
+    )
+    coding_hint: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index("ix_question_bank_topic_difficulty", "topic_name", "difficulty"),
@@ -254,6 +258,12 @@ class AssessmentQuestion(Base):
     )
     #: Difficulty level stored at generation time: beginner / intermediate / advanced
     difficulty: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    #: Optional sample I/O for function/class coding questions (self-validation)
+    sample_test_cases: Mapped[list[Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=text("NULL")
+    )
+    #: Optional beginner nudge — never the full solution
+    coding_hint: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     assessment: Mapped["Assessment"] = relationship("Assessment", back_populates="questions")
 
