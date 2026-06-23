@@ -3,5 +3,6 @@ __pycache__/
 *.pyc
 .env
 data/
+certificates/previews/
 frontend/node_modules/
 frontend/dist/

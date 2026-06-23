@@ -6,6 +6,7 @@ import AdminAssessmentsPage from "./pages/AdminAssessmentsPage.jsx";
 import AdminReviewPage from "./pages/AdminReviewPage.jsx";
 import AdminSubmissionsPage from "./pages/AdminSubmissionsPage.jsx";
 import AdminCatalogPage from "./pages/AdminCatalogPage.jsx";
+import AdminCertificateLayoutPage from "./pages/AdminCertificateLayoutPage.jsx";
 import AdminQuestionBankPage from "./pages/AdminQuestionBankPage.jsx";
 import EmployeeReportPage from "./pages/EmployeeReportPage.jsx";
 import ImprovementPage from "./pages/ImprovementPage.jsx";
@@ -100,6 +101,14 @@ function Layout() {
           element={
             <ProtectedAdmin>
               <AdminQuestionBankPage />
+            </ProtectedAdmin>
+          }
+        />
+        <Route
+          path="/admin/certificate-layout"
+          element={
+            <ProtectedAdmin>
+              <AdminCertificateLayoutPage />
             </ProtectedAdmin>
           }
         />

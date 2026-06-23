@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { apiFetch } from "../api";
+import { apiFetch, apiFetchBlob } from "../api";
 import SimpleCodeEditor from "../components/SimpleCodeEditor.jsx";
 import QuestionStem from "../components/QuestionStem.jsx";
 import PythonRunPanel from "../components/PythonRunPanel.jsx";
@@ -17,6 +17,30 @@ import UnansweredSubmitAlert from "../components/UnansweredSubmitAlert.jsx";
 import { usePagination } from "../hooks/usePagination.js";
 import { countUnansweredQuestions } from "../lib/assessmentAnswers.js";
 import { openReportPrintWindow } from "../lib/reportRenderer.js";
+import { formatUnitScore, SAMPLE_TEST_CASES_NOTE } from "../lib/scoreDisplay.js";
+
+function SampleTestCasesPanel({ cases }) {
+  if (!Array.isArray(cases) || cases.length === 0) return null;
+  return (
+    <div className="sample-test-cases" aria-label="Sample test cases">
+      <p className="sample-test-cases-title">Sample test cases</p>
+      {cases.map((tc, i) => (
+        <div key={i} className="sample-test-case">
+          {tc.label ? <span className="sample-test-case-label">{tc.label}</span> : null}
+          <div className="sample-test-case-row">
+            <span className="sample-test-case-key">Input</span>
+            <pre className="sample-test-case-code">{tc.input}</pre>
+          </div>
+          <div className="sample-test-case-row">
+            <span className="sample-test-case-key">Expected output</span>
+            <pre className="sample-test-case-code">{tc.expected_output}</pre>
+          </div>
+        </div>
+      ))}
+      <p className="muted small-print sample-test-cases-note">{SAMPLE_TEST_CASES_NOTE}</p>
+    </div>
+  );
+}
 
 export default function ClientPage() {
   const location = useLocation();
@@ -49,6 +73,9 @@ export default function ClientPage() {
   const [reportData, setReportData] = useState(null);
   const [reportError, setReportError] = useState(null);
   const [unansweredWarning, setUnansweredWarning] = useState(null);
+  const [certificateName, setCertificateName] = useState("");
+  const [certificateGenerating, setCertificateGenerating] = useState(false);
+  const [certificateDismissed, setCertificateDismissed] = useState(false);
   const autoSubmitLock = useRef(false);
   const graceNotebookSubmitLock = useRef(false);
   const lastGraceSubmittedFile = useRef(null);
@@ -275,6 +302,10 @@ export default function ClientPage() {
           body: JSON.stringify(payload),
         });
         setResult(inBrowserData);
+        if (inBrowserData.certificate_offer) {
+          setCertificateDismissed(false);
+          setCertificateName(participantName.trim());
+        }
         if (auto) setTimeExpiredBanner(true);
 
         if (isMixed && notebookFile) {
@@ -449,6 +480,40 @@ export default function ClientPage() {
     if (pending) handleSubmit(pending.opts);
   }, [unansweredWarning, handleSubmit]);
 
+  const handleGenerateCertificate = useCallback(async () => {
+    const name = certificateName.trim();
+    if (!name || !assessment?.assessment_id || !employeeId.trim()) {
+      setError("Enter the name you want on your certificate.");
+      return;
+    }
+    setCertificateGenerating(true);
+    setError(null);
+    try {
+      const { blob, filename } = await apiFetchBlob("/client/certificate/generate", {
+        method: "POST",
+        body: JSON.stringify({
+          assessment_id: assessment.assessment_id,
+          employee_id: employeeId.trim(),
+          display_name: name,
+        }),
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+      setCertificateDismissed(true);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setCertificateGenerating(false);
+    }
+  }, [assessment?.assessment_id, certificateName, employeeId]);
+
+  const showCertificateModal =
+    Boolean(result?.certificate_offer) && !certificateDismissed;
+
   return (
     <div className={`page page--wide${showFixedTimer ? " page--timed-assessment" : ""}`}>
       {showFixedTimer && (
@@ -595,7 +660,7 @@ export default function ClientPage() {
                       {result && qr != null && (
                         <span
                           className={`result-tick ${qr.correct ? "correct" : "wrong"}`}
-                          title={`Score ${qr.score}/100${qr.feedback ? ` — ${qr.feedback}` : ""}`}
+                          title={`Score ${formatUnitScore(qr.score)} / 1.0${qr.feedback ? ` — ${qr.feedback}` : ""}`}
                           role="img"
                           aria-label={qr.correct ? "Correct" : "Incorrect"}
                         >
@@ -609,6 +674,14 @@ export default function ClientPage() {
                       languageCode={assessment?.language_code}
                       protectCodeFromCopy
                     />
+                    {q.type === "coding" && (
+                      <SampleTestCasesPanel cases={q.sample_test_cases} />
+                    )}
+                    {q.type === "coding" && q.coding_hint && (
+                      <p className="coding-hint muted">
+                        <strong>hint:</strong> {q.coding_hint}
+                      </p>
+                    )}
                     {q.type === "mcq" && Array.isArray(q.options) ? (
                       <div className="options" role="group" aria-label={`${displayLabel} choices`}>
                         {q.options.map((opt, idx) => (
@@ -789,7 +862,9 @@ export default function ClientPage() {
                       >
                         <div className="question-feedback-header">
                           <span className="question-feedback-label">Feedback</span>
-                          <span className="question-feedback-score">{qr.score}/100</span>
+                          <span className="question-feedback-score">
+                            {formatUnitScore(qr.score)} / 1.0
+                          </span>
                         </div>
                         {qr.feedback ? (
                           <p className="question-feedback-body">{qr.feedback}</p>
@@ -874,6 +949,60 @@ export default function ClientPage() {
         </section>
       )}
 
+      {showCertificateModal && (
+        <div className="certificate-modal-backdrop" role="presentation">
+          <section
+            className="card certificate-modal"
+            role="dialog"
+            aria-labelledby="certificate-modal-title"
+            aria-modal="true"
+          >
+            <h2 id="certificate-modal-title">You earned a certificate!</h2>
+            <p>
+              Your grade is{" "}
+              <strong>{Math.round((Number(result.score) || 0) * 100)}%</strong>.
+            </p>
+            <p>
+              You earned your certificate for{" "}
+              <strong>
+                {result.certificate_offer.language_label}{" "}
+                {result.certificate_offer.level}
+              </strong>
+              !
+            </p>
+            <label className="certificate-modal-field">
+              <span className="review-field-label">Name on certificate</span>
+              <input
+                type="text"
+                className="review-field-input"
+                value={certificateName}
+                onChange={(e) => setCertificateName(e.target.value)}
+                maxLength={256}
+                autoFocus
+              />
+            </label>
+            <div className="certificate-modal-actions">
+              <button
+                type="button"
+                className="primary"
+                onClick={handleGenerateCertificate}
+                disabled={certificateGenerating || !certificateName.trim()}
+              >
+                {certificateGenerating ? "Generating…" : "Generate certificate"}
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setCertificateDismissed(true)}
+                disabled={certificateGenerating}
+              >
+                Skip
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {result && (
         <section className="card result-card">
           <h2 className="result-card-title">
@@ -881,11 +1010,22 @@ export default function ClientPage() {
           </h2>
           <div className="result-summary">
             <div className="result-score-block">
-              <span className="result-score-label">Average score</span>
+              <span className="result-score-label">Total score</span>
               <div className="result-score-row">
-                <span className="result-score-value">{result.score}</span>
-                <span className="result-score-suffix">/ 100</span>
+                <span className="result-score-value">
+                  {formatUnitScore(result.achieved_total ?? result.score)}
+                </span>
+                <span className="result-score-suffix">
+                  / {formatUnitScore(result.max_total ?? result.questions_graded)}
+                </span>
               </div>
+              {result.max_total > 0 && (
+                <span className="muted small-print result-score-percent">
+                  Average {formatUnitScore(result.score)} / 1.0
+                  {" "}
+                  ({Math.round((Number(result.score) || 0) * 100)}%)
+                </span>
+              )}
             </div>
             <div className="result-meta">
               <span className="result-meta-label">Questions graded</span>

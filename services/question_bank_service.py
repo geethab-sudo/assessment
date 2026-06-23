@@ -141,6 +141,8 @@ def add_questions_to_bank(
                     times_used=1,
                     times_correct=0,
                     times_wrong=0,
+                    sample_test_cases=row.get("sample_test_cases"),
+                    coding_hint=row.get("coding_hint") or None,
                 )
                 session.add(bank_row)
                 session.flush()  # assigns bank_row.id
@@ -533,6 +535,8 @@ def find_bank_questions(
                 "topic_name": bq.topic_name or "",
                 "code_snippet": bq.code_snippet or "",
                 "difficulty": bq.difficulty,
+                "sample_test_cases": bq.sample_test_cases,
+                "coding_hint": bq.coding_hint or "",
             })
 
     shortage = max(0, n_needed - len(found))

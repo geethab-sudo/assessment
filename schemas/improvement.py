@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from schemas.certificate import CertificateEarnedItem
+
 
 class TopicPerformanceItem(BaseModel):
     topic_name: str
@@ -184,6 +186,10 @@ class EmployeeReportResponse(BaseModel):
     cumulative_progress: list[dict[str, int | str]] = Field(
         default_factory=list,
         description="Cumulative correct/wrong counts keyed by submitted_at.",
+    )
+    certificates_earned: list[CertificateEarnedItem] = Field(
+        default_factory=list,
+        description="Completion certificates issued for this employee (language + tier).",
     )
 
     model_config = ConfigDict(

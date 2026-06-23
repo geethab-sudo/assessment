@@ -7,6 +7,7 @@ import {
   partitionReviewQuestions,
 } from "../lib/assessmentConfirm.js";
 import { applyTabIndent } from "../lib/tabIndent.js";
+import { mentionsExternalFile } from "../lib/scoreDisplay.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -48,6 +49,92 @@ function OptionRow({ option, index, isCorrect, disabled, onTextChange, onMarkCor
   );
 }
 
+function TestCasesEditor({ cases, disabled, onChange }) {
+  const rows = cases ?? [];
+
+  function updateRow(index, field, value) {
+    const next = rows.map((row, i) =>
+      i === index ? { ...row, [field]: value } : row
+    );
+    onChange(next);
+  }
+
+  function addRow() {
+    onChange([...rows, { input: "", expected_output: "", label: "" }]);
+  }
+
+  function removeRow(index) {
+    onChange(rows.filter((_, i) => i !== index));
+  }
+
+  return (
+    <div className="review-test-cases">
+      <span className="review-field-label">Sample test cases (function/class coding)</span>
+      <p className="muted small-print review-test-cases-hint">
+        Representative input → expected output only. Participants are reminded to consider
+        additional edge cases beyond these examples.
+      </p>
+      {rows.length === 0 && (
+        <p className="muted small-print">No test cases — add rows or leave empty.</p>
+      )}
+      {rows.map((row, i) => (
+        <div key={i} className="review-test-case-row">
+          <label className="review-field">
+            <span className="review-field-label">Input</span>
+            <textarea
+              className="review-field-textarea review-field-textarea--code"
+              value={row.input ?? ""}
+              onChange={(e) => updateRow(i, "input", e.target.value)}
+              onKeyDown={(e) =>
+                applyTabIndent(e, row.input ?? "", (next) => updateRow(i, "input", next))
+              }
+              rows={2}
+              spellCheck={false}
+              disabled={disabled}
+            />
+          </label>
+          <label className="review-field">
+            <span className="review-field-label">Expected output</span>
+            <textarea
+              className="review-field-textarea review-field-textarea--code"
+              value={row.expected_output ?? ""}
+              onChange={(e) => updateRow(i, "expected_output", e.target.value)}
+              onKeyDown={(e) =>
+                applyTabIndent(e, row.expected_output ?? "", (next) =>
+                  updateRow(i, "expected_output", next)
+                )
+              }
+              rows={2}
+              spellCheck={false}
+              disabled={disabled}
+            />
+          </label>
+          <label className="review-field">
+            <span className="review-field-label">Label (optional)</span>
+            <input
+              type="text"
+              className="review-field-input"
+              value={row.label ?? ""}
+              onChange={(e) => updateRow(i, "label", e.target.value)}
+              disabled={disabled}
+            />
+          </label>
+          {!disabled && (
+            <button type="button" className="secondary review-test-case-remove" onClick={() => removeRow(i)}>
+              Remove
+            </button>
+          )}
+        </div>
+      ))}
+      {!disabled && (
+        <button type="button" className="secondary" onClick={addRow}>
+          Add test case
+        </button>
+      )}
+    </div>
+  );
+}
+
 function QuestionCard({
   question,
   index,
@@ -60,6 +147,8 @@ function QuestionCard({
   const isMcq = question.type === "mcq";
   const isCoding = question.type === "coding";
   const locked = readOnly || fromBank;
+  const externalFileWarning =
+    isCoding && mentionsExternalFile(question.question);
 
   function updateField(field, value) {
     if (locked) return;
@@ -116,6 +205,13 @@ function QuestionCard({
           />
         </label>
 
+        {externalFileWarning && (
+          <p className="review-external-file-warn" role="alert">
+            This coding question mentions external files. Pyodide cannot read files from disk —
+            rewrite so the exercise is self-contained in the terminal.
+          </p>
+        )}
+
         {!isCoding && (
           <label className="review-field">
             <span className="review-field-label">
@@ -142,6 +238,14 @@ function QuestionCard({
               disabled={locked}
             />
           </label>
+        )}
+
+        {isCoding && (
+          <TestCasesEditor
+            cases={question.sample_test_cases}
+            disabled={locked}
+            onChange={(next) => updateField("sample_test_cases", next)}
+          />
         )}
 
         {isMcq && (
@@ -188,6 +292,26 @@ function QuestionCard({
               value={question.correct_answer ?? ""}
               onChange={(e) => updateField("correct_answer", e.target.value)}
               rows={4}
+              readOnly={locked}
+              disabled={locked}
+            />
+          </label>
+        )}
+
+        {isCoding && (
+          <label className="review-field">
+            <span className="review-field-label">
+              Hint
+              <span className="review-field-hint muted small-print">
+                {" "}— optional nudge for beginners; must not reveal the full solution
+              </span>
+            </span>
+            <textarea
+              className="review-field-textarea"
+              value={question.coding_hint ?? ""}
+              onChange={(e) => updateField("coding_hint", e.target.value)}
+              rows={2}
+              placeholder="e.g. consider using a loop to visit each element"
               readOnly={locked}
               disabled={locked}
             />

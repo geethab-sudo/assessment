@@ -25,6 +25,7 @@ from services.assessment_service import (
     _options_for_csv,
     _parse_options,
     _row_from_question,
+    _score_to_unit,
     build_notebook_template,
     get_assessment_for_user,
 )
@@ -98,6 +99,29 @@ class TestRowFromQuestion(unittest.TestCase):
         q = {"question": "Q", "type": "coding", "answer": ""}
         row = _row_from_question(q, 1, "")
         self.assertEqual(row["code_snippet"], "")
+
+    def test_stage9_fields_preserved(self):
+        q = {
+            "question": "Write sum(nums)",
+            "type": "coding",
+            "answer": "def sum(nums): ...",
+            "sample_test_cases": [{"input": "[1,2]", "expected_output": "3"}],
+            "coding_hint": "try a loop",
+        }
+        row = _row_from_question(q, 2, "Basics")
+        self.assertEqual(len(row["sample_test_cases"]), 1)
+        self.assertEqual(row["coding_hint"], "try a loop")
+
+
+class TestScoreToUnit(unittest.TestCase):
+    def test_converts_hundred_scale(self):
+        self.assertEqual(_score_to_unit(70.0), 0.7)
+        self.assertEqual(_score_to_unit(100.0), 1.0)
+        self.assertEqual(_score_to_unit(0.0), 0.0)
+
+    def test_clamps_out_of_range(self):
+        self.assertEqual(_score_to_unit(150.0), 1.0)
+        self.assertEqual(_score_to_unit(-5.0), 0.0)
 
 
 class TestComputeRoutingFlag(unittest.TestCase):

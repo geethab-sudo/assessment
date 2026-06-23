@@ -43,6 +43,7 @@ from schemas.assessment import (
     SubmitAssessmentResponse,
 )
 from schemas.auth import ClientLoginResponse, LoginBody, LoginResponse
+from schemas.certificate import AdminIssueCertificateBody, ClientGenerateCertificateBody
 from schemas.catalog import LanguagesResponse
 from schemas.common import ErrorDetail, HealthResponse, ValidationErrorItem, ValidationErrorResponse
 from schemas.improvement import (
@@ -56,7 +57,7 @@ from schemas.improvement import (
     WeakAreasImprovementResponse,
 )
 from services import assessment_service, audit_log, auth_service, catalog_service, notebook_service, report_service
-from services import db_service, employee_profile_service, improvement_assessment_service
+from services import certificate_service, db_service, employee_profile_service, improvement_assessment_service
 from services.attempt_service import TimedAssessmentError
 from services.database import init_db, ping_database
 from services.llm_service import groq_key_configured
@@ -657,6 +658,52 @@ def submit_assessment(body: SubmitAssessmentBody) -> SubmitAssessmentResponse:
         raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post(
+    "/client/certificate/generate",
+    tags=["assessments"],
+    summary="Generate Tier 1 completion certificate (participant)",
+    responses={
+        200: {"description": "JPEG certificate file.", "content": {"image/jpeg": {}}},
+        400: ERROR_400,
+        403: ERROR_401,
+        422: ERROR_422,
+        500: ERROR_500,
+    },
+)
+def client_generate_certificate(body: ClientGenerateCertificateBody) -> Response:
+    """Render a certificate after a qualifying submit (>85%, certificate-enabled assessment)."""
+    try:
+        aid = _require_valid_assessment_id(body.assessment_id)
+        if not db_service.client_may_access_assessment(aid, None):
+            raise HTTPException(status_code=403, detail="Assessment not available.")
+        level, score, lang_code, lang_label = certificate_service.assert_client_may_generate_certificate(
+            aid, body.employee_id
+        )
+        result, _issued_id = certificate_service.issue_certificate(
+            employee_id=body.employee_id,
+            display_name=body.display_name,
+            level=level,
+            assessment_id=aid,
+            score=score,
+            issued_by="auto",
+            language_code=lang_code,
+            language_label=lang_label,
+        )
+        return Response(
+            content=result.image_bytes,
+            media_type=result.media_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{result.filename}"',
+            },
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Certificate generation failed: {e}") from e
 
 
 @app.post(

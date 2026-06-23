@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
+from fastapi.responses import FileResponse
 
 from openapi_config import ERROR_503, admin_crud_errors, auth_error_responses
 from routers.deps import require_admin
@@ -21,11 +22,19 @@ from schemas.admin import (
     BankAvailabilityResponse,
 )
 from schemas.assessment import AssessmentResponse
+from schemas.certificate import AdminIssueCertificateBody
+from schemas.certificate_layout import (
+    CertificateLayoutSavedResponse,
+    CertificateTemplateListResponse,
+    CertificateTemplateItem,
+    CertificateTemplatePreviewBody,
+    TemplateLayoutBody,
+)
 from schemas.catalog import LanguageResponse, LanguagesResponse, TopicResponse, TopicsResponse
 from schemas.common import OkDeletedResponse
 from schemas.improvement import EmployeeReportResponse
 from services import assessment_service, audit_log, catalog_service, db_service, question_bank_service
-from services import employee_profile_service
+from services import certificate_service, employee_profile_service
 
 admin_router = APIRouter(
     prefix="/admin",
@@ -459,6 +468,8 @@ def generate_assessment(
             question_source=body.question_source,
             target_employee_id=body.target_employee_id,
             allow_pyodide_paste=body.allow_pyodide_paste,
+            include_sample_test_cases=body.include_sample_test_cases,
+            include_beginner_coding_hints=body.include_beginner_coding_hints,
         )
         response = GenerateAssessmentResponse.model_validate(result)
     except RuntimeError as e:
@@ -502,6 +513,8 @@ def preview_questions(request: Request, body: GenerateAssessmentBody) -> dict:
             per_topic_config=body.per_topic_config or {},
             question_source=body.question_source,
             target_employee_id=body.target_employee_id,
+            include_sample_test_cases=body.include_sample_test_cases,
+            include_beginner_coding_hints=body.include_beginner_coding_hints,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
@@ -538,6 +551,8 @@ def confirm_assessment(request: Request, body: ConfirmAssessmentBody) -> Generat
             duration_minutes=body.duration_minutes,
             notebook_grace_minutes=body.notebook_grace_minutes,
             allow_pyodide_paste=body.allow_pyodide_paste,
+            certificate_enabled=body.certificate_enabled,
+            certificate_level=body.level if body.certificate_enabled else None,
         )
         response = GenerateAssessmentResponse.model_validate(result)
     except RuntimeError as e:
@@ -637,3 +652,163 @@ def patch_assessment_question(
     if not updated:
         raise HTTPException(status_code=404, detail="Question not found")
     return {"ok": True, "assessment_id": aid, "question_id": question_id.strip()}
+
+
+@admin_router.get(
+    "/certificate/templates",
+    summary="List certificate templates and calibration status",
+    response_model=CertificateTemplateListResponse,
+    dependencies=[Depends(require_admin)],
+)
+def list_certificate_templates() -> CertificateTemplateListResponse:
+    items = certificate_service.list_certificate_templates()
+    sig = certificate_service.signature_path()
+    layout = certificate_service.load_layout()
+    templates = []
+    for t in items:
+        layout_body = None
+        if t.layout:
+            try:
+                from schemas.certificate_layout import TemplateLayoutBody
+
+                layout_body = TemplateLayoutBody.model_validate(t.layout)
+            except Exception:
+                layout_body = None
+        templates.append(
+            CertificateTemplateItem(
+                filename=t.filename,
+                width=t.width,
+                height=t.height,
+                calibrated=t.calibrated,
+                levels=t.levels,
+                layout=layout_body,
+            )
+        )
+    uncalibrated = sum(1 for t in templates if not t.calibrated)
+    return CertificateTemplateListResponse(
+        templates=templates,
+        uncalibrated_count=uncalibrated,
+        signature_file=str(layout.get("signature_file") or "signature.png"),
+        signature_present=sig.is_file(),
+    )
+
+
+@admin_router.get(
+    "/certificate/templates/{filename}/background",
+    summary="Certificate template background image (for layout editor)",
+    dependencies=[Depends(require_admin)],
+    responses={404: {"description": "Template not found."}},
+)
+def get_certificate_template_background(
+    filename: str = Path(..., description="Template filename, e.g. Begineer.jpg"),
+) -> FileResponse:
+    try:
+        name = certificate_service.validate_template_filename(filename)
+    except (ValueError, FileNotFoundError) as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    path = certificate_service.certificates_dir() / name
+    return FileResponse(path, media_type="image/jpeg", filename=name)
+
+
+@admin_router.put(
+    "/certificate/templates/{filename}/layout",
+    summary="Save name/date/signature layout for one template",
+    response_model=CertificateLayoutSavedResponse,
+    dependencies=[Depends(require_admin)],
+)
+def save_certificate_template_layout(
+    request: Request,
+    filename: str,
+    body: TemplateLayoutBody,
+) -> CertificateLayoutSavedResponse:
+    try:
+        certificate_service.save_template_layout(
+            filename,
+            body.model_dump(),
+        )
+    except (ValueError, FileNotFoundError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    audit_log.admin_action(
+        request,
+        action="certificate.layout.save",
+        resource="certificate_template",
+        resource_id=filename.strip(),
+    )
+    return CertificateLayoutSavedResponse(ok=True, filename=filename.strip())
+
+
+@admin_router.post(
+    "/certificate/templates/{filename}/preview",
+    summary="Preview certificate with draft or saved layout",
+    dependencies=[Depends(require_admin)],
+    responses={
+        200: {"description": "JPEG preview.", "content": {"image/jpeg": {}}},
+        400: {"description": "Invalid layout or template."},
+    },
+)
+def preview_certificate_template(
+    filename: str,
+    body: CertificateTemplatePreviewBody,
+) -> Response:
+    try:
+        fields = body.layout.model_dump() if body.layout else None
+        result = certificate_service.render_certificate_template(
+            filename,
+            body.display_name,
+            fields=fields,
+        )
+    except (ValueError, FileNotFoundError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Preview failed: {e}") from e
+    return Response(
+        content=result.image_bytes,
+        media_type=result.media_type,
+        headers={"Content-Disposition": f'inline; filename="{result.filename}"'},
+    )
+
+
+@admin_router.post(
+    "/certificate/issue",
+    summary="Manually issue a Tier 1 certificate",
+    dependencies=[Depends(require_admin)],
+    responses={
+        200: {"description": "JPEG certificate file.", "content": {"image/jpeg": {}}},
+        **auth_error_responses(),
+        400: {"description": "Invalid level or missing display name."},
+        500: {"description": "Rendering failed."},
+    },
+)
+def admin_issue_certificate(
+    request: Request,
+    body: AdminIssueCertificateBody,
+) -> Response:
+    """Admin grant: render certificate with chosen name and level (no score gate)."""
+    try:
+        result, issued_id = certificate_service.issue_certificate(
+            employee_id=body.employee_id,
+            display_name=body.display_name,
+            level=body.level,
+            assessment_id=body.assessment_id,
+            score=None,
+            issued_by="admin",
+            language_code=body.language_code,
+            language_label=body.language_label,
+        )
+        audit_log.admin_action(
+            request,
+            action="certificate.issue",
+            resource="certificate",
+            resource_id=str(issued_id),
+        )
+        return Response(
+            content=result.image_bytes,
+            media_type=result.media_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{result.filename}"',
+            },
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Certificate issue failed: {e}") from e

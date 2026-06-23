@@ -1,3 +1,5 @@
+import { formatUnitScore } from "../lib/scoreDisplay.js";
+
 /**
  * Shown at the end of the participant test after in-browser submit (MCQ + Pyodide coding).
  * Includes overall score and the printable feedback report download action.
@@ -19,11 +21,20 @@ export default function InBrowserResultsPanel({
       </h2>
       <div className="result-summary">
         <div className="result-score-block">
-          <span className="result-score-label">Average score</span>
+          <span className="result-score-label">Total score</span>
           <div className="result-score-row">
-            <span className="result-score-value">{result.score}</span>
-            <span className="result-score-suffix">/ 100</span>
+            <span className="result-score-value">
+              {formatUnitScore(result.achieved_total ?? result.score)}
+            </span>
+            <span className="result-score-suffix">
+              / {formatUnitScore(result.max_total ?? result.questions_graded)}
+            </span>
           </div>
+          {result.max_total > 0 && (
+            <span className="muted small-print result-score-percent">
+              Average {formatUnitScore(result.score)} / 1.0
+            </span>
+          )}
         </div>
         <div className="result-meta">
           <span className="result-meta-label">Questions graded</span>

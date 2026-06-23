@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy import (
     Boolean,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -116,6 +117,10 @@ class QuestionBank(Base):
     times_wrong: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
+    sample_test_cases: Mapped[list[Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=text("NULL")
+    )
+    coding_hint: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index("ix_question_bank_topic_difficulty", "topic_name", "difficulty"),
@@ -189,6 +194,12 @@ class Assessment(Base):
         nullable=False,
         server_default=text("false"),
     )
+    certificate_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+    )
+    certificate_level: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     questions: Mapped[list["AssessmentQuestion"]] = relationship(
         "AssessmentQuestion",
@@ -229,6 +240,23 @@ class AssessmentAttempt(Base):
     )
 
 
+class CertificateIssued(Base):
+    """Audit row when a participant or admin generates a Tier 1 certificate."""
+
+    __tablename__ = "certificates_issued"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    employee_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    display_name: Mapped[str] = mapped_column(String(256), nullable=False)
+    level: Mapped[str] = mapped_column(String(32), nullable=False)
+    language_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    language_label: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    assessment_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    issued_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    issued_by: Mapped[str] = mapped_column(String(64), nullable=False, server_default=text("'auto'"))
+
+
 class AssessmentQuestion(Base):
     __tablename__ = "assessment_questions"
 
@@ -254,6 +282,12 @@ class AssessmentQuestion(Base):
     )
     #: Difficulty level stored at generation time: beginner / intermediate / advanced
     difficulty: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    #: Optional sample I/O for function/class coding questions (self-validation)
+    sample_test_cases: Mapped[list[Any] | None] = mapped_column(
+        JSONB, nullable=True, server_default=text("NULL")
+    )
+    #: Optional beginner nudge — never the full solution
+    coding_hint: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     assessment: Mapped["Assessment"] = relationship("Assessment", back_populates="questions")
 

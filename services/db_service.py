@@ -275,6 +275,8 @@ def save_shared_assessment_rows(
     duration_minutes: int | None = None,
     notebook_grace_minutes: int | None = None,
     allow_pyodide_paste: bool = False,
+    certificate_enabled: bool = False,
+    certificate_level: str | None = None,
 ) -> None:
     """Shared assessment: owner_client_id is NULL (any client may access).
 
@@ -311,6 +313,12 @@ def save_shared_assessment_rows(
                 notebook_grace_minutes if is_timed else None
             )
             existing.allow_pyodide_paste = allow_pyodide_paste
+            existing.certificate_enabled = certificate_enabled
+            existing.certificate_level = (
+                (certificate_level or "").strip().lower() or None
+                if certificate_enabled
+                else None
+            )
         else:
             session.add(
                 Assessment(
@@ -327,6 +335,12 @@ def save_shared_assessment_rows(
                         notebook_grace_minutes if is_timed else None
                     ),
                     allow_pyodide_paste=allow_pyodide_paste,
+                    certificate_enabled=certificate_enabled,
+                    certificate_level=(
+                        (certificate_level or "").strip().lower() or None
+                        if certificate_enabled
+                        else None
+                    ),
                 )
             )
         for row in rows:
@@ -342,6 +356,8 @@ def save_shared_assessment_rows(
                     code_snippet=row.get("code_snippet") or None,
                     bank_question_id=row.get("bank_question_id"),
                     difficulty=row.get("difficulty"),
+                    sample_test_cases=row.get("sample_test_cases"),
+                    coding_hint=row.get("coding_hint") or None,
                 )
             )
         session.commit()
@@ -366,6 +382,8 @@ def read_questions_by_assessment(assessment_id: str) -> list[dict[str, Any]]:
                 "code_snippet": r.code_snippet or "",
                 "bank_question_id": r.bank_question_id,
                 "difficulty": r.difficulty or "",
+                "sample_test_cases": r.sample_test_cases or None,
+                "coding_hint": r.coding_hint or "",
             }
             for r in rows
         ]
@@ -430,6 +448,9 @@ def get_assessment_metadata(assessment_id: str) -> dict[str, Any]:
                 "duration_minutes": None,
                 "notebook_grace_minutes": None,
                 "allow_pyodide_paste": False,
+                "certificate_enabled": False,
+                "certificate_level": None,
+                "language_label": None,
             }
         topic_names = _coerce_stored_topic_names(row.topic_names)
         jupyter_topic_names: list[str] = []
@@ -451,6 +472,9 @@ def get_assessment_metadata(assessment_id: str) -> dict[str, Any]:
             "duration_minutes": row.duration_minutes,
             "notebook_grace_minutes": row.notebook_grace_minutes,
             "allow_pyodide_paste": bool(row.allow_pyodide_paste),
+            "certificate_enabled": bool(row.certificate_enabled),
+            "certificate_level": (row.certificate_level or "").strip() or None,
+            "language_label": (row.language_label or "").strip() or None,
         }
 
 

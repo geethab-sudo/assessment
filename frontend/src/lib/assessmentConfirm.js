@@ -25,6 +25,10 @@ export function buildConfirmQuestions(questions) {
     correct_answer: q.correct_answer ?? "",
     topic_name: q.topic_name ?? "",
     ...(q.bank_question_id != null ? { bank_question_id: q.bank_question_id } : {}),
+    ...(Array.isArray(q.sample_test_cases) && q.sample_test_cases.length > 0
+      ? { sample_test_cases: q.sample_test_cases }
+      : {}),
+    ...(q.coding_hint ? { coding_hint: q.coding_hint } : {}),
   }));
 }
 

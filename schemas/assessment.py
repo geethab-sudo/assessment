@@ -74,6 +74,14 @@ class SubmitAssessmentBody(BaseModel):
     )
 
 
+class SampleTestCaseOut(BaseModel):
+    """Read-only sample input → output for self-validation (coding questions)."""
+
+    input: str = ""
+    expected_output: str = ""
+    label: str | None = None
+
+
 class QuestionOut(BaseModel):
     """A single assessment question (correct answers are never exposed)."""
 
@@ -99,6 +107,24 @@ class QuestionOut(BaseModel):
         None,
         description="Optional inline code snippet displayed with the question.",
     )
+    sample_test_cases: list[SampleTestCaseOut] = Field(
+        default_factory=list,
+        description="Optional sample I/O examples for function/class coding tasks.",
+    )
+    coding_hint: str | None = Field(
+        None,
+        description="Optional beginner nudge for coding questions (never the full solution).",
+    )
+
+    @field_validator("coding_hint", mode="before")
+    @classmethod
+    def strip_coding_hint(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        s = str(v).strip()
+        if s.lower().startswith("hint:"):
+            s = s[5:].strip()
+        return s or None
 
 
 class TimerState(BaseModel):
@@ -197,9 +223,21 @@ class SubmitAssessmentResponse(BaseModel):
         description="Combined label `employee_id | participant_name`.",
     )
     score: float = Field(..., description="Average score across graded questions (0.0–1.0).")
+    achieved_total: float = Field(
+        ...,
+        description="Sum of per-question scores on the 0.0–1.0 scale.",
+    )
+    max_total: float = Field(
+        ...,
+        description="Maximum achievable total (one point per graded question).",
+    )
     feedback: str = Field(..., description="Newline-separated per-question feedback.")
     questions_graded: int
     question_results: list[QuestionResult]
+    certificate_offer: dict[str, Any] | None = Field(
+        None,
+        description="Present when the participant qualifies for a Tier 1 certificate after submit.",
+    )
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -208,6 +246,8 @@ class SubmitAssessmentResponse(BaseModel):
                     "assessment_id": "550e8400-e29b-41d4-a716-446655440000",
                     "user_id": "EMP-10042 | Jane Doe",
                     "score": 0.85,
+                    "achieved_total": 1.7,
+                    "max_total": 2.0,
                     "feedback": "Q1: Good solution.\nQ2: Correct option.",
                     "questions_graded": 2,
                     "question_results": [
