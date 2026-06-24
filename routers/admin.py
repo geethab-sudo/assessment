@@ -450,7 +450,7 @@ def generate_assessment(
     - `questions_per_type`: keys must match `types`; counts 1–30 each
     - `is_timed`: when `true`, `duration_minutes` is required
 
-    Returns HTTP 503 when `GROQ_API_KEY` is not configured.
+    Returns HTTP 503 when the selected generation provider API key is not configured.
     """
     try:
         result = assessment_service.create_assessment(
@@ -470,6 +470,7 @@ def generate_assessment(
             allow_pyodide_paste=body.allow_pyodide_paste,
             include_sample_test_cases=body.include_sample_test_cases,
             include_beginner_coding_hints=body.include_beginner_coding_hints,
+            generation_provider=body.generation_provider,
         )
         response = GenerateAssessmentResponse.model_validate(result)
     except RuntimeError as e:
@@ -515,6 +516,7 @@ def preview_questions(request: Request, body: GenerateAssessmentBody) -> dict:
             target_employee_id=body.target_employee_id,
             include_sample_test_cases=body.include_sample_test_cases,
             include_beginner_coding_hints=body.include_beginner_coding_hints,
+            generation_provider=body.generation_provider,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e

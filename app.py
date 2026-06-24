@@ -60,7 +60,7 @@ from services import assessment_service, audit_log, auth_service, catalog_servic
 from services import certificate_service, db_service, employee_profile_service, improvement_assessment_service
 from services.attempt_service import TimedAssessmentError
 from services.database import init_db, ping_database
-from services.llm_service import groq_key_configured
+from services.llm_service import gemini_key_configured, groq_key_configured
 
 MAX_NOTEBOOK_BYTES = 5 * 1024 * 1024  # 5 MiB
 
@@ -158,6 +158,7 @@ app.include_router(admin_ops_router)
                         "status": "ok",
                         "database": True,
                         "groq_configured": True,
+                        "gemini_configured": True,
                         "auth_configured": True,
                     }
                 }
@@ -175,6 +176,7 @@ def health() -> HealthResponse:
         status="ok",
         database=ping_database(),
         groq_configured=groq_key_configured(),
+        gemini_configured=gemini_key_configured(),
         auth_configured=bool(
             auth_service.jwt_configured() and auth_service.admin_password_configured()
         ),

@@ -481,6 +481,14 @@ export default function AdminReviewPage() {
           bankCount={bankCount}
           llmCount={llmCount}
         />
+        {previewMeta?.generation_provider && (
+            <p className="muted" style={{ marginTop: "0.5rem" }}>
+              Generated with{" "}
+              <strong>
+                {previewMeta.generation_provider === "gemini" ? "Gemini" : "Groq"}
+              </strong>
+            </p>
+          )}
         {previewMeta &&
           isRecycleMode &&
           (previewMeta.bank_sourced_count > 0 || previewMeta.llm_generated_count > 0) && (

@@ -1,6 +1,8 @@
 """
-LLM calls via Groq (OpenAI-compatible Chat Completions API) with JSON responses.
-Get a key at https://console.groq.com/keys — set GROQ_API_KEY in .env
+LLM facade: question generation (Groq or Gemini) and answer grading (Groq only).
+
+Get a Groq key at https://console.groq.com/keys — set GROQ_API_KEY in .env
+Get a Gemini key at https://aistudio.google.com/apikey — set GOOGLE_API_KEY1 in .env
 """
 
 from __future__ import annotations
@@ -13,88 +15,28 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from openai import APIStatusError, OpenAI
+
+from services.llm.providers import (
+    assert_generation_provider_configured,
+    chat_json_for_generation,
+    chat_json_for_grading,
+    gemini_key_configured,
+    groq_key_configured,
+    normalize_generation_provider,
+)
 
 # Ensure `.env` is loaded when this module is imported (project root = parent of `services/`)
 load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
 
-# Groq OpenAI-compatible base URL (not the OpenAI Responses API)
-GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-
-_client: OpenAI | None = None
-
-
-def _normalize_groq_key(raw: str | None) -> str | None:
-    """Strip whitespace and optional surrounding quotes often pasted by mistake."""
-    if raw is None:
-        return None
-    key = raw.strip().strip('"').strip("'").strip()
-    return key or None
-
-
-def groq_key_configured() -> bool:
-    """True if a non-empty GROQ_API_KEY is present after normalization."""
-    return _normalize_groq_key(os.environ.get("GROQ_API_KEY")) is not None
-
-
-def _get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        api_key = _normalize_groq_key(os.environ.get("GROQ_API_KEY"))
-        if not api_key:
-            raise RuntimeError(
-                "GROQ_API_KEY is not set. Add it to your environment or .env "
-                "(create a key at https://console.groq.com/keys)."
-            )
-        _client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL)
-    return _client
-
-
-def _groq_auth_hint() -> str:
-    return (
-        "Groq returned 401 (invalid API key). (1) Copy a key from "
-        "https://console.groq.com/keys (starts with `gsk_`). (2) Put it in `.env` as "
-        "GROQ_API_KEY=gsk_... on one line, no quotes. (3) Save the file — unsaved editor "
-        "buffers still leave the old placeholder on disk. (4) Restart uvicorn. "
-        "If you previously `export`ed GROQ_API_KEY in the terminal, close that shell or "
-        "unset it; the app now prefers `.env` over stale env vars."
-    )
-
-
-def _chat_json_text(
-    prompt: str,
-    model: str | None = None,
-    *,
-    temperature: float = 0.4,
-) -> str:
-    """
-    Chat Completions with JSON object mode (Groq supports this for compatible models).
-    """
-    m = model or os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-    client = _get_client()
-    try:
-        response = client.chat.completions.create(
-            model=m,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You reply only with a single valid JSON object. No markdown.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            response_format={"type": "json_object"},
-            temperature=temperature,
-        )
-    except APIStatusError as e:
-        if e.status_code == 401:
-            raise RuntimeError(_groq_auth_hint()) from e
-        raise RuntimeError(f"Groq API error ({e.status_code}): {e}") from e
-
-    choice = response.choices[0].message
-    text = choice.content if choice else None
-    if not text:
-        raise RuntimeError("Empty response from Groq")
-    return text
+__all__ = [
+    "generate_questions",
+    "evaluate_answers",
+    "groq_key_configured",
+    "gemini_key_configured",
+    "normalize_generation_provider",
+    "_normalize_sample_test_cases",
+    "_split_embedded_coding_hint",
+]
 
 
 def _parse_strict_json(raw: str) -> dict[str, Any]:
@@ -113,12 +55,6 @@ _VARIATION_HINTS = (
     "Where relevant, reference idiomatic Python or the standard library.",
     "Use fresh variable names and numeric examples; avoid overused textbook clichés.",
     "Blend syntax questions with small behavior-prediction snippets.",
-)
-
-
-_EDGE_CASE_NOTE = (
-    "These examples help you validate your solution; "
-    "make sure you also consider edge cases beyond the examples shown."
 )
 
 
@@ -181,12 +117,16 @@ def generate_questions(
     admin_level: str = "",
     include_sample_test_cases: bool = False,
     include_beginner_coding_hints: bool = False,
+    generation_provider: str = "grok",
 ) -> list[dict[str, Any]]:
     """
     Ask the LLM to generate assessment questions; returns a list of question dicts.
     Each dict: id, type, question, options (list or empty), answer (correct / reference).
     Each assessment_id gets a distinct prompt so successive assessments do not reuse the same items.
     """
+    provider = normalize_generation_provider(generation_provider)
+    assert_generation_provider_configured(provider)
+
     type_lines: list[str] = []
     total = 0
     for t in types:
@@ -283,7 +223,7 @@ Return ONLY valid JSON (no markdown fences) with this exact shape:
 
 Use sequential integer "id" values starting at 1 across all questions."""
 
-    raw = _chat_json_text(prompt, temperature=gen_temp)
+    raw = chat_json_for_generation(provider, prompt, temperature=gen_temp)
     data = _parse_strict_json(raw)
     questions = data.get("questions")
     if not isinstance(questions, list) or not questions:
@@ -327,7 +267,7 @@ Use sequential integer "id" values starting at 1 across all questions."""
 def evaluate_answers(question: str, user_answer: str) -> dict[str, Any]:
     """
     Evaluate a single free-form or structured answer; returns { "score": number, "feedback": string }.
-    Score should be 0-100.
+    Score should be 0-100. Always uses Groq (grading provider is not selectable in v1).
     """
     prompt = f"""You grade one exam question fairly and briefly.
 
@@ -343,7 +283,7 @@ Return ONLY valid JSON (no markdown) with this exact shape:
   "feedback": "<short constructive feedback>"
 }}"""
 
-    raw = _chat_json_text(prompt)
+    raw = chat_json_for_grading(prompt)
     data = _parse_strict_json(raw)
     score = data.get("score")
     feedback = data.get("feedback", "")

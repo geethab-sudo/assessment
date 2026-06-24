@@ -101,7 +101,10 @@ ERROR_422: dict[str, Any] = {
     },
 }
 ERROR_500 = _error_response("Unexpected server error.", "Internal server error")
-ERROR_503 = _error_response("Required service or configuration unavailable.", "GROQ API key is not configured")
+ERROR_503 = _error_response(
+    "Required service or configuration unavailable.",
+    "LLM API key is not configured for the selected generation provider",
+)
 
 
 def auth_error_responses(*, include_403: bool = False) -> dict[int, dict[str, Any]]:

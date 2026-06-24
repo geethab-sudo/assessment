@@ -140,11 +140,13 @@ def _gen_kwargs(
     *,
     include_sample_test_cases: bool = False,
     include_beginner_coding_hints: bool = False,
+    generation_provider: str = "grok",
 ) -> dict[str, Any]:
     return {
         "admin_level": level.strip().lower(),
         "include_sample_test_cases": include_sample_test_cases,
         "include_beginner_coding_hints": include_beginner_coding_hints,
+        "generation_provider": generation_provider,
     }
 
 
@@ -494,6 +496,7 @@ def preview_questions(
     target_employee_id: str | None = None,
     include_sample_test_cases: bool = False,
     include_beginner_coding_hints: bool = False,
+    generation_provider: str = "grok",
 ) -> dict[str, Any]:
     """Generate questions via LLM and return them for admin review — nothing is written to the DB.
 
@@ -533,6 +536,7 @@ def preview_questions(
             level,
             include_sample_test_cases=include_sample_test_cases,
             include_beginner_coding_hints=include_beginner_coding_hints,
+            generation_provider=generation_provider,
         ),
     )
 
@@ -568,6 +572,7 @@ def preview_questions(
             "difficulty": difficulty,
             "catalog_topic_names": catalog_topic_names,
             "routing_flag": routing_flag,
+            "generation_provider": generation_provider.strip().lower(),
             **_generation_stats_fields(gen_stats),
         },
     }
@@ -724,6 +729,7 @@ def create_assessment(
     allow_pyodide_paste: bool = False,
     include_sample_test_cases: bool = False,
     include_beginner_coding_hints: bool = False,
+    generation_provider: str = "grok",
 ) -> dict[str, Any]:
     """Generate questions via LLM and persist (shared assessment in PostgreSQL)."""
     difficulty = LEVEL_TO_DIFFICULTY.get(level.strip().lower())
@@ -764,6 +770,7 @@ def create_assessment(
             level,
             include_sample_test_cases=include_sample_test_cases,
             include_beginner_coding_hints=include_beginner_coding_hints,
+            generation_provider=generation_provider,
         ),
     )
 

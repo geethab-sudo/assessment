@@ -105,7 +105,10 @@ Edit `.env` and set at minimum:
 
 | Variable | Purpose |
 |----------|---------|
-| `GROQ_API_KEY` | Groq API key |
+| `GROQ_API_KEY` | Groq API key (question generation with Groq and all answer grading) |
+| `GOOGLE_API_KEY1` | Optional — Google AI key for **Gemini** question generation (admin picker) |
+| `GEMINI_MODEL` | Optional — prepend one model id (default chain still used as fallbacks) |
+| `GEMINI_MODEL_CHAIN` | Optional comma-separated try order (default: `gemini-3.1-pro-preview`, `gemini-3.5-flash`, `gemini-3-flash-preview`, `gemini-2.5-flash`) |
 | `JWT_SECRET` | Long random string for JWT signing |
 | `ADMIN_PASSWORD` | Admin portal password — plain text or a bcrypt hash (recommended for production) |
 | `DATABASE_URL` | PostgreSQL URL, e.g. `postgresql+psycopg://postgres:postgres@127.0.0.1:5433/assesment` |

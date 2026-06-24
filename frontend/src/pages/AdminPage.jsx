@@ -125,6 +125,10 @@ export default function AdminPage() {
   const [questionSource, setQuestionSource] = useState("generate_new");
   const [targetEmployeeId, setTargetEmployeeId] = useState("");
   const [bankAvailability, setBankAvailability] = useState(null);
+  const [generationProvider, setGenerationProvider] = useState("grok");
+  /** null = health check pending or unavailable; only disable radios when explicitly false */
+  const [groqConfigured, setGroqConfigured] = useState(null);
+  const [geminiConfigured, setGeminiConfigured] = useState(null);
 
   const tier1Presets = useMemo(() => getTier1Presets(), []);
 
@@ -206,6 +210,17 @@ export default function AdminPage() {
   useEffect(() => {
     void loadLanguages();
   }, [loadLanguages]);
+
+  useEffect(() => {
+    apiFetch("/health")
+      .then((data) => {
+        setGroqConfigured(Boolean(data.groq_configured));
+        setGeminiConfigured(Boolean(data.gemini_configured));
+      })
+      .catch(() => {
+        /* Health unreachable — leave null; do not claim API keys are missing */
+      });
+  }, []);
 
   useEffect(() => {
     if (languageId === "") {
@@ -540,6 +555,7 @@ export default function AdminPage() {
         include_beginner_coding_hints: includeBeginnerCodingHints,
         certificate_enabled: usePresetTier1 && certificateEnabled,
         question_source: questionSource,
+        generation_provider: generationProvider,
         ...(targetEmployeeId.trim()
           ? { target_employee_id: targetEmployeeId.trim() }
           : {}),
@@ -602,8 +618,14 @@ export default function AdminPage() {
     return typeMcq || typeCoding || typeSubjective;
   }, [topicMode, usePresetTier1, allocationMode, totalCounts, typeMcq, typeCoding, typeSubjective]);
 
+  const generationProviderReady =
+    generationProvider === "gemini"
+      ? geminiConfigured !== false
+      : groqConfigured !== false;
+
   const canGenerate =
     !loading &&
+    generationProviderReady &&
     (topicMode === "catalog" ? catalogReady : customTopic.trim().length > 0) &&
     hasAnyQuestions &&
     (!usePresetTier1 || (selectedPresetName && presetMissingTopics.length === 0));
@@ -631,9 +653,40 @@ export default function AdminPage() {
 
       <section className="card">
         <h2>Configuration</h2>
+        <div className="bank-source-block">
+          <h3 className="topic-preview-title">Generation model</h3>
+          <div className="radio-group" role="radiogroup" aria-label="Generation model">
+          <label className="radio-row">
+            <input
+              type="radio"
+              name="generationProvider"
+              value="grok"
+              checked={generationProvider === "grok"}
+              onChange={() => setGenerationProvider("grok")}
+              disabled={groqConfigured === false}
+            />
+            Groq (Grok) — default
+          </label>
+          <label className="radio-row">
+            <input
+              type="radio"
+              name="generationProvider"
+              value="gemini"
+              checked={generationProvider === "gemini"}
+              onChange={() => setGenerationProvider("gemini")}
+              disabled={geminiConfigured === false}
+            />
+            Gemini{geminiConfigured === false ? " (API key not configured)" : ""}
+          </label>
+          </div>
+          <p className="muted small-print" style={{ marginTop: "0.5rem" }}>
+            Used only when generating new questions. Answer grading always uses Groq.
+          </p>
+        </div>
         {topicMode === "catalog" && (
-          <div className="bank-source-block" style={{ marginBottom: "1.25rem" }}>
+          <div className="bank-source-block">
             <h3 className="topic-preview-title">Question source</h3>
+            <div className="radio-group" role="radiogroup" aria-label="Question source">
             <label className="radio-row">
               <input
                 type="radio"
@@ -654,6 +707,7 @@ export default function AdminPage() {
               />
               Recycle then generate (bank first, LLM for any shortfall)
             </label>
+            </div>
             {questionSource === "recycle_then_generate" && (
               <>
                 <label style={{ display: "block", marginTop: "0.75rem" }}>

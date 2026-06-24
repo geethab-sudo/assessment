@@ -477,6 +477,113 @@
 
 ---
 
+## Stage 11A — Admin model picker: Grok vs Gemini (generation)
+
+> **Goal:** Admin chooses **Grok** or **Gemini** when generating questions; Gemini uses `GOOGLE_API_KEY1` + `gemini-3.5-flash` (configurable).  
+> **Depends on:** Stages 0–3 (generation pipeline)  
+> **Blocks:** Nothing  
+> **Does not include:** Grading provider switch (stays Groq); MongoDB (Stage 11B)
+
+### Backend — provider layer
+
+- [ ] Create `services/llm/` package: `providers.py`, `groq_provider.py`, `gemini_provider.py`
+- [ ] Move Groq `_chat_json_text`, client init, key helpers into `groq_provider.py`
+- [ ] Implement `gemini_provider.chat_json_text` via `google-genai` SDK
+- [ ] `gemini_key_configured()` — non-empty `GOOGLE_API_KEY1` after normalize
+- [ ] `generate_questions(..., generation_provider="grok"|"gemini")` routes to provider
+- [ ] Keep shared prompt + JSON parse + `normalize_generated_question` in facade
+- [ ] `evaluate_answers` unchanged (Groq only) — document in code comment
+
+### Dependencies & env
+
+- [ ] Add `google-genai` to `requirements.txt`
+- [ ] `.env.example`: `GOOGLE_API_KEY1`, `GEMINI_MODEL=gemini-3.5-flash`
+- [ ] Default model `gemini-3.5-flash`; override via `GEMINI_MODEL`
+
+### Schema & API
+
+- [ ] `GenerateAssessmentBody.generation_provider: Literal["grok", "gemini"]` default `grok`
+- [ ] Pass `generation_provider` through `assessment_service` (`gen_kwargs`, preview, create, confirm)
+- [ ] HTTP 503 when selected provider key missing (clear error message)
+- [ ] `HealthResponse.gemini_configured: bool`
+- [ ] Update `/health` handler and OpenAPI examples
+- [ ] Update `openapi_config.ERROR_503` copy if needed
+
+### Admin UI
+
+- [ ] `AdminPage.jsx`: radio **Grok (Groq)** | **Gemini** in Generate section (default Grok)
+- [ ] Note: grading still uses Groq
+- [ ] Disable/warn on Gemini when `gemini_configured` false (fetch `/health` or pass flag)
+- [ ] Include `generation_provider` in preview + confirm payloads
+- [ ] Optional: show provider in `AdminReviewPage` preview meta
+
+### Tests
+
+- [ ] Unit: provider routing mock (gemini vs groq)
+- [ ] Schema: default + invalid `generation_provider`
+- [ ] API: preview with `gemini` + no key → 503
+- [ ] Regression: `tests/test_assessment_recycle.py` still passes
+
+**Acceptance:** Admin selects Gemini → preview returns questions; Grok path unchanged; submit grading still uses Groq.
+
+---
+
+## Stage 11B — PostgreSQL → MongoDB Atlas
+
+> **Goal:** All persistence on **MongoDB Atlas** via `MONGODB_URI`; no Postgres Docker on cloud server; schema ready for future `question_bank` vector search.  
+> **Depends on:** Stages 0–7 (all DB-backed features)  
+> **Recommended order:** 11B-1 → 11B-2 → … → 11B-6 (one sub-session per agent)  
+> **Out of scope:** Embedding generation, Atlas Vector Search index creation
+
+### 11B-1 — Mongo connection & indexes
+
+- [ ] Replace `services/database.py` with pymongo client + `get_database()` + `ping_database()`
+- [ ] `init_db()`: create all collection indexes (idempotent)
+- [ ] `counters` collection for integer `id` sequences (`next_id("question_bank")`)
+- [ ] Remove SQLAlchemy engine / `SessionLocal` / Postgres URL helpers
+- [ ] `requirements.txt`: add `pymongo` (+ `dnspython` if needed); remove `sqlalchemy`, `psycopg`
+
+### 11B-2 — Document models & catalog
+
+- [ ] Replace `services/models.py` ORM with document type definitions (or inline dicts)
+- [ ] Rewrite `catalog_service.py` for `languages` + `topics` collections
+- [ ] Rewrite `scripts/seed_sample_catalog.py` for Mongo
+- [ ] Port difficulty backfill logic to Mongo `init_db` or one-time script
+
+### 11B-3 — Assessments & submissions
+
+- [ ] Rewrite `services/db_service.py` (assessments, assessment_questions, submissions)
+- [ ] Preserve all public function signatures used by `assessment_service`, `app.py`, routers
+- [ ] Rewrite `attempt_service.py` for `assessment_attempts`
+
+### 11B-4 — Question bank & mastery
+
+- [ ] Rewrite `question_bank_service.py` (upsert, stats `$inc`, find, availability, mastery)
+- [ ] `employee_question_mastery` collection + backfill from submissions when empty
+- [ ] `backfill_question_bank_from_assessment_questions` on Mongo
+
+### 11B-5 — Reports, certificates, remaining services
+
+- [ ] `employee_profile_service.py`, `report_service.py` — Mongo reads
+- [ ] `certificate_service.py` — `certificates_issued` collection
+- [ ] `improvement_assessment_service.py` — verify no direct SQLAlchemy imports
+- [ ] `scripts/seed_demo_students.py` — Mongo
+
+### 11B-6 — Migration, deploy docs, cleanup
+
+- [ ] `scripts/migrate_postgres_to_mongodb.py` (PG `DATABASE_URL` → `MONGODB_URI`, dry-run)
+- [ ] `.env.example`: `MONGODB_URI`, `MONGODB_DB_NAME`; deprecate `DATABASE_URL` / `POSTGRES_*`
+- [ ] `README.md`: Atlas setup, IP allowlist, seed without Docker Postgres
+- [ ] `docker-compose.yml`: remove or deprecate `db` service
+- [ ] `ARCHITECTURE.md`: MongoDB + future vector note on `question_bank`
+- [ ] `tests/TEST_GUIDE.md`: update DB assumptions
+- [ ] Full `pytest tests/ -q` green
+- [ ] Manual QA script (task.md) on Atlas-backed deploy
+
+**Acceptance:** App runs with only `MONGODB_URI`; all admin/client flows work; cloud deploy needs no local Postgres; migration script can copy existing PG data to Atlas.
+
+---
+
 ## Stage 8 — Future backlog (not scheduled)
 
 ### 4B report polish (optional)
@@ -491,7 +598,7 @@
 - [ ] Employee authentication (replace self-declared `employee_id`)
 - [ ] Admin retire/archive bank question
 - [ ] `scripts/seed_question_bank.py` — bulk demo questions from catalog
-- [ ] Update [ARCHITECTURE.md](ARCHITECTURE.md) — PostgreSQL + question bank (currently describes CSV)
+- [ ] Update [ARCHITECTURE.md](ARCHITECTURE.md) — MongoDB Atlas + question bank (Stage 11B)
 - [ ] **LinkedIn certificate share** — Stage 10 optional (after certificate v1)
 
 **Explicitly out of scope:** email delivery (`POST …/employee-report/send`).
@@ -516,6 +623,18 @@
 14. Admin: Tier 1 with certificate enabled → client scores >85% → certificate modal + download
 15. Admin: employee report → manual **Generate certificate** for eligible user
 
+### After Stage 11A
+
+16. Admin: select **Gemini** → generate Tier 1 preview → confirm questions parse correctly
+17. Admin: select **Grok** → same flow still works
+18. Submit assessment → coding/subjective grading still works (Groq)
+
+### After Stage 11B
+
+19. Seed catalog against Atlas: `python scripts/seed_sample_catalog.py`
+20. Re-run steps 1–15 on MongoDB-backed deploy (no local Postgres)
+21. If migrating: run `scripts/migrate_postgres_to_mongodb.py --dry-run` then live; verify row counts
+
 ---
 
 ## Agent session quick-pick
@@ -536,5 +655,7 @@
 | Add optional beginner coding hints | **9D** |
 | Tier 1 certificates + admin grant | **10** |
 | LinkedIn share (future) | **10 optional** |
+| Grok vs Gemini generation picker | **11A** |
+| MongoDB Atlas migration | **11B** (split 11B-1…11B-6) |
 
 Copy the stage block + **Acceptance** line into the agent prompt as scope boundary.

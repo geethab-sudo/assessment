@@ -98,6 +98,10 @@ class GenerateAssessmentBody(BaseModel):
         False,
         description="When true, participants who score >85% may receive a Tier 1 certificate.",
     )
+    generation_provider: Literal["grok", "gemini"] = Field(
+        default="grok",
+        description="LLM provider for question generation. Grading always uses Groq.",
+    )
 
     @field_validator("target_employee_id", mode="before")
     @classmethod
@@ -117,6 +121,14 @@ class GenerateAssessmentBody(BaseModel):
                 "question_source must be generate_new or recycle_then_generate"
             )
         return qs
+
+    @field_validator("generation_provider")
+    @classmethod
+    def normalize_generation_provider(cls, v: str) -> str:
+        gp = v.strip().lower()
+        if gp not in ("grok", "gemini"):
+            raise ValueError("generation_provider must be grok or gemini")
+        return gp
 
     @field_validator("topic", mode="before")
     @classmethod
