@@ -14,9 +14,9 @@ from typing import Any
 from services import db_service
 from services import question_bank_service
 from services import attempt_service
-from services.database import get_session_factory
+from services.database import coll
 from services.llm_service import evaluate_answers, generate_questions
-from services.models import Assessment
+from services.models import as_document
 from services.notebook_plan_service import (
     derive_per_topic_config,
     jupyter_topic_names_from_list,
@@ -360,9 +360,6 @@ def _generation_stats_fields(stats: dict[str, Any]) -> dict[str, Any]:
 
 def _build_per_topic_strings(topic_names: list[str]) -> dict[str, str]:
     """Return LLM topic strings for each catalog topic name (with reference docs)."""
-    from sqlalchemy import select
-    from services.models import Topic
-
     try:
         rows = db_service.get_topics_by_names(topic_names)
         by_name = {r.name: r for r in rows}
@@ -1028,10 +1025,13 @@ def _apply_timed_state(
         out["questions"] = []
         return out
 
-    with get_session_factory()() as session:
-        assessment_row = session.get(Assessment, assessment_id)
-    if assessment_row and assessment_row.is_timed:
-        out["timer"] = attempt_service.get_or_create_attempt(assessment_row, employee_id)
+    assessment_row = coll("assessments").find_one(
+        {"assessment_id": assessment_id.strip()}
+    )
+    if assessment_row and assessment_row.get("is_timed"):
+        out["timer"] = attempt_service.get_or_create_attempt(
+            as_document(assessment_row), employee_id
+        )
     return out
 
 

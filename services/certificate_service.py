@@ -481,25 +481,20 @@ def score_qualifies_for_certificate(score: float) -> bool:
 
 def employee_assessment_unit_score(assessment_id: str, employee_id: str) -> float | None:
     from services.attempt_service import normalize_employee_id
-    from services.models import Submission
-    from services.database import get_session_factory
-    from sqlalchemy import select
+    from services.database import coll
 
     eid = normalize_employee_id(employee_id)
     if not eid:
         return None
-    with get_session_factory()() as session:
-        rows = session.scalars(
-            select(Submission).where(Submission.assessment_id == assessment_id)
-        ).all()
+    rows = list(coll("submissions").find({"assessment_id": assessment_id.strip()}))
     scores: list[float] = []
     for r in rows:
-        uid = r.user_id or ""
+        uid = r.get("user_id") or ""
         part = uid.split("|", 1)[0].strip().casefold()
         if part != eid:
             continue
         try:
-            raw = float(r.score or 0)
+            raw = float(r.get("score") or 0)
         except (TypeError, ValueError):
             continue
         scores.append(max(0.0, min(1.0, raw / 100.0)))
@@ -548,30 +543,27 @@ def resolve_certificate_language(
 
 def list_employee_certificates(employee_id: str) -> list[dict[str, Any]]:
     from services.attempt_service import normalize_employee_id
-    from services.database import get_session_factory
-    from services.models import CertificateIssued
-    from sqlalchemy import select
+    from services.database import coll
 
     eid = normalize_employee_id(employee_id)
     if not eid:
         return []
-    with get_session_factory()() as session:
-        rows = session.scalars(
-            select(CertificateIssued)
-            .where(CertificateIssued.employee_id == eid)
-            .order_by(CertificateIssued.issued_at.desc())
-        ).all()
+    rows = list(
+        coll("certificates_issued")
+        .find({"employee_id": eid})
+        .sort("issued_at", -1)
+    )
     return [
         {
-            "id": int(r.id),
-            "display_name": r.display_name,
-            "level": r.level,
-            "language_code": (r.language_code or "").strip() or None,
-            "language_label": (r.language_label or "").strip() or None,
-            "assessment_id": r.assessment_id,
-            "score": float(r.score) if r.score is not None else None,
-            "issued_at": r.issued_at,
-            "issued_by": r.issued_by,
+            "id": int(r["id"]),
+            "display_name": r["display_name"],
+            "level": r["level"],
+            "language_code": (r.get("language_code") or "").strip() or None,
+            "language_label": (r.get("language_label") or "").strip() or None,
+            "assessment_id": r.get("assessment_id"),
+            "score": float(r["score"]) if r.get("score") is not None else None,
+            "issued_at": r.get("issued_at"),
+            "issued_by": r.get("issued_by"),
         }
         for r in rows
     ]
@@ -589,8 +581,7 @@ def record_certificate_issued(
     language_label: str | None = None,
 ) -> int:
     from services.attempt_service import normalize_employee_id
-    from services.database import get_session_factory
-    from services.models import CertificateIssued
+    from services.database import coll, next_id
 
     eid = normalize_employee_id(employee_id)
     if not eid:
@@ -601,22 +592,22 @@ def record_certificate_issued(
         language_code=language_code,
         language_label=language_label,
     )
-    with get_session_factory()() as session:
-        row = CertificateIssued(
-            employee_id=eid,
-            display_name=(display_name or "").strip(),
-            level=lv,
-            language_code=lang_code,
-            language_label=lang_label,
-            assessment_id=(assessment_id or "").strip() or None,
-            score=float(score) if score is not None else None,
-            issued_at=utc_now_iso(),
-            issued_by=(issued_by or "auto").strip() or "auto",
-        )
-        session.add(row)
-        session.commit()
-        session.refresh(row)
-        return int(row.id)
+    issued_id = next_id("certificates_issued")
+    coll("certificates_issued").insert_one(
+        {
+            "id": issued_id,
+            "employee_id": eid,
+            "display_name": (display_name or "").strip(),
+            "level": lv,
+            "language_code": lang_code,
+            "language_label": lang_label,
+            "assessment_id": (assessment_id or "").strip() or None,
+            "score": float(score) if score is not None else None,
+            "issued_at": utc_now_iso(),
+            "issued_by": (issued_by or "auto").strip() or "auto",
+        }
+    )
+    return issued_id
 
 
 def issue_certificate(

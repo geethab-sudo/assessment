@@ -55,25 +55,33 @@ def _question_display(row: dict[str, Any]) -> tuple[str, str | None]:
     return prose, code
 
 
+def _question_correct_for_summary(q: dict[str, Any]) -> bool:
+    if q.get("correct") is not None:
+        return bool(q["correct"])
+    return float(q.get("score") or 0) >= SCORE_CORRECT_THRESHOLD
+
+
 def aggregate_topic_summary(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Roll up per-question scores into topic-level averages (each question is /100)."""
-    by_topic: dict[str, list[float]] = {}
+    """Roll up per-question scores into topic-level summary (correct count and average %)."""
+    by_topic: dict[str, list[dict[str, Any]]] = {}
     for q in questions:
         topic = (q.get("topic_name") or "").strip() or _UNTOPPED_TOPIC_LABEL
-        by_topic.setdefault(topic, []).append(float(q["score"]))
+        by_topic.setdefault(topic, []).append(q)
 
     summary: list[dict[str, Any]] = []
     for topic in sorted(by_topic.keys()):
-        scores = by_topic[topic]
-        n = len(scores)
-        total = sum(scores)
-        avg = total / n if n else 0.0
+        items = by_topic[topic]
+        n = len(items)
+        scores = [float(q["score"]) for q in items]
+        correct_count = sum(1 for q in items if _question_correct_for_summary(q))
+        avg = sum(scores) / n if n else 0.0
         summary.append(
             {
                 "topic_name": topic,
                 "questions_count": n,
-                "total_score": round(total, 2),
-                "max_score": n * 100,
+                "correct_count": correct_count,
+                "total_score": correct_count,
+                "max_score": n,
                 "average_score": round(avg, 2),
                 "percent": round(avg, 2),
             }

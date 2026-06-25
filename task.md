@@ -573,8 +573,8 @@
 
 - [ ] `scripts/migrate_postgres_to_mongodb.py` (PG `DATABASE_URL` → `MONGODB_URI`, dry-run)
 - [ ] `.env.example`: `MONGODB_URI`, `MONGODB_DB_NAME`; deprecate `DATABASE_URL` / `POSTGRES_*`
-- [ ] `README.md`: Atlas setup, IP allowlist, seed without Docker Postgres
-- [ ] `docker-compose.yml`: remove or deprecate `db` service
+- [x] `README.md`: Atlas setup, IP allowlist, seed without Docker
+- [x] `docker-compose.yml`: removed (Atlas-only deploy)
 - [ ] `ARCHITECTURE.md`: MongoDB + future vector note on `question_bank`
 - [ ] `tests/TEST_GUIDE.md`: update DB assumptions
 - [ ] Full `pytest tests/ -q` green

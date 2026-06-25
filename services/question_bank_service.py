@@ -12,17 +12,7 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select, update
-from sqlalchemy.orm import Session
-
-from services.database import get_session_factory
-from services.models import (
-    Assessment,
-    AssessmentQuestion,
-    EmployeeQuestionMastery,
-    QuestionBank,
-    Submission,
-)
+from services.database import coll, next_id
 
 
 ALLOWED_BANK_LEVELS = frozenset({"beginner", "intermediate", "advanced"})
@@ -70,16 +60,7 @@ def infer_bank_level_from_topic(
     return "beginner"
 
 
-def _session() -> Session:
-    return get_session_factory()()
-
-
-# ---------------------------------------------------------------------------
-# Content hashing (deduplication key)
-# ---------------------------------------------------------------------------
-
 def _content_hash(qtype: str, topic_name: str, question_text: str) -> str:
-    """SHA-256 of (type | topic | first 1000 chars of question text)."""
     payload = f"{qtype.strip().lower()}|{topic_name.strip()}|{question_text.strip()[:1000]}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -87,10 +68,6 @@ def _content_hash(qtype: str, topic_name: str, question_text: str) -> str:
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-
-# ---------------------------------------------------------------------------
-# Upsert questions into the bank (called after assessment confirm/create)
-# ---------------------------------------------------------------------------
 
 def add_questions_to_bank(
     rows: list[dict[str, Any]],
@@ -107,63 +84,61 @@ def add_questions_to_bank(
 
     diff = normalize_bank_level(level)
     lang = (language_code or "").strip()[:32] or None
-
     hash_to_id: dict[str, int] = {}
+    bank = coll("question_bank")
 
-    with _session() as session:
-        for row in rows:
-            qtype = (row.get("type") or "").strip().lower()
-            topic = (row.get("topic_name") or "").strip()
-            qtext = (row.get("question") or "").strip()
-            if not qtext or not qtype:
-                continue
+    for row in rows:
+        qtype = (row.get("type") or "").strip().lower()
+        topic = (row.get("topic_name") or "").strip()
+        qtext = (row.get("question") or "").strip()
+        if not qtext or not qtype:
+            continue
 
-            ch = _content_hash(qtype, topic, qtext)
-
-            existing = session.scalar(
-                select(QuestionBank).where(QuestionBank.content_hash == ch)
+        ch = _content_hash(qtype, topic, qtext)
+        existing = bank.find_one({"content_hash": ch})
+        if existing:
+            bank.update_one(
+                {"content_hash": ch},
+                {"$inc": {"times_used": 1}},
             )
-            if existing:
-                existing.times_used = existing.times_used + 1
-                hash_to_id[ch] = existing.id
-            else:
-                bank_row = QuestionBank(
-                    content_hash=ch,
-                    question_text=qtext,
-                    type=qtype,
-                    options=row.get("options", "") or "",
-                    correct_answer=row.get("correct_answer", "") or "",
-                    code_snippet=row.get("code_snippet") or None,
-                    topic_name=topic,
-                    language_code=lang,
-                    difficulty=diff,
-                    created_at=_utc_now_iso(),
-                    times_used=1,
-                    times_correct=0,
-                    times_wrong=0,
-                    sample_test_cases=row.get("sample_test_cases"),
-                    coding_hint=row.get("coding_hint") or None,
-                )
-                session.add(bank_row)
-                session.flush()  # assigns bank_row.id
-                hash_to_id[ch] = bank_row.id
-
-        session.commit()
+            hash_to_id[ch] = int(existing["id"])
+        else:
+            bank_id = next_id("question_bank")
+            bank.insert_one(
+                {
+                    "id": bank_id,
+                    "content_hash": ch,
+                    "question_text": qtext,
+                    "type": qtype,
+                    "options": row.get("options", "") or "",
+                    "correct_answer": row.get("correct_answer", "") or "",
+                    "code_snippet": row.get("code_snippet") or None,
+                    "topic_name": topic,
+                    "language_code": lang,
+                    "difficulty": diff,
+                    "created_at": _utc_now_iso(),
+                    "times_used": 1,
+                    "times_correct": 0,
+                    "times_wrong": 0,
+                    "sample_test_cases": row.get("sample_test_cases"),
+                    "coding_hint": row.get("coding_hint") or None,
+                }
+            )
+            hash_to_id[ch] = bank_id
 
     return hash_to_id
 
 
 def _topic_name_for_bank_row(
-    aq: AssessmentQuestion,
-    assessment: Assessment | None,
+    aq: dict[str, Any],
+    assessment: dict[str, Any] | None,
 ) -> str:
-    """Resolve catalog topic name for a legacy assessment question row."""
-    topic = (aq.topic_name or "").strip()
+    topic = (aq.get("topic_name") or "").strip()
     if topic:
         return topic
     if not assessment:
         return ""
-    names = assessment.topic_names or []
+    names = assessment.get("topic_names") or []
     if not isinstance(names, list):
         return ""
     for raw in names:
@@ -181,81 +156,76 @@ def backfill_question_bank_from_assessment_questions() -> int:
     Returns the number of assessment question rows newly linked to the bank.
     """
     linked = 0
+    aq_coll = coll("assessment_questions")
+    bank = coll("question_bank")
+    assessments = coll("assessments")
 
-    with _session() as session:
-        aq_rows = session.scalars(
-            select(AssessmentQuestion)
-            .where(AssessmentQuestion.bank_question_id.is_(None))
-            .order_by(AssessmentQuestion.id.asc())
-        ).all()
+    aq_rows = list(
+        aq_coll.find({"bank_question_id": None}).sort("id", 1)
+    )
+    assessment_cache: dict[str, dict[str, Any] | None] = {}
 
-        assessment_cache: dict[str, Assessment | None] = {}
+    def _assessment_for(aid: str) -> dict[str, Any] | None:
+        if aid not in assessment_cache:
+            assessment_cache[aid] = assessments.find_one({"assessment_id": aid})
+        return assessment_cache[aid]
 
-        def _assessment_for(aq: AssessmentQuestion) -> Assessment | None:
-            aid = aq.assessment_id
-            if aid not in assessment_cache:
-                assessment_cache[aid] = session.get(Assessment, aid)
-            return assessment_cache[aid]
+    for aq in aq_rows:
+        qtype = (aq.get("type") or "").strip().lower()
+        qtext = (aq.get("question") or "").strip()
+        if not qtype or not qtext:
+            continue
 
-        for aq in aq_rows:
-            qtype = (aq.type or "").strip().lower()
-            qtext = (aq.question or "").strip()
-            if not qtype or not qtext:
-                continue
+        assessment = _assessment_for(aq["assessment_id"])
+        topic = _topic_name_for_bank_row(aq, assessment)
+        if not topic:
+            continue
 
-            assessment = _assessment_for(aq)
-            topic = _topic_name_for_bank_row(aq, assessment)
-            if not topic:
-                continue
+        level = infer_bank_level_from_topic(
+            topic,
+            explicit_difficulty=aq.get("difficulty"),
+        )
+        lang = None
+        if assessment and assessment.get("language_code"):
+            lang = (assessment["language_code"] or "").strip()[:32] or None
 
-            level = infer_bank_level_from_topic(
-                topic,
-                explicit_difficulty=aq.difficulty,
+        ch = _content_hash(qtype, topic, qtext)
+        existing = bank.find_one({"content_hash": ch})
+        if existing:
+            bank.update_one(
+                {"content_hash": ch},
+                {"$inc": {"times_used": 1}},
             )
-            lang = None
-            if assessment and assessment.language_code:
-                lang = (assessment.language_code or "").strip()[:32] or None
-
-            ch = _content_hash(qtype, topic, qtext)
-            existing = session.scalar(
-                select(QuestionBank).where(QuestionBank.content_hash == ch)
+            bank_id = int(existing["id"])
+        else:
+            bank_id = next_id("question_bank")
+            bank.insert_one(
+                {
+                    "id": bank_id,
+                    "content_hash": ch,
+                    "question_text": qtext,
+                    "type": qtype,
+                    "options": aq.get("options") or "",
+                    "correct_answer": aq.get("correct_answer") or "",
+                    "code_snippet": aq.get("code_snippet") or None,
+                    "topic_name": topic,
+                    "language_code": lang,
+                    "difficulty": level,
+                    "created_at": _utc_now_iso(),
+                    "times_used": 1,
+                    "times_correct": 0,
+                    "times_wrong": 0,
+                }
             )
-            if existing:
-                existing.times_used = (existing.times_used or 0) + 1
-                bank_id = existing.id
-            else:
-                bank_row = QuestionBank(
-                    content_hash=ch,
-                    question_text=qtext,
-                    type=qtype,
-                    options=aq.options or "",
-                    correct_answer=aq.correct_answer or "",
-                    code_snippet=aq.code_snippet or None,
-                    topic_name=topic,
-                    language_code=lang,
-                    difficulty=level,
-                    created_at=_utc_now_iso(),
-                    times_used=1,
-                    times_correct=0,
-                    times_wrong=0,
-                )
-                session.add(bank_row)
-                session.flush()
-                bank_id = bank_row.id
 
-            aq.bank_question_id = bank_id
-            if not aq.difficulty:
-                aq.difficulty = level
-            linked += 1
-
-        session.commit()
+        update_fields: dict[str, Any] = {"bank_question_id": bank_id}
+        if not aq.get("difficulty"):
+            update_fields["difficulty"] = level
+        aq_coll.update_one({"_id": aq["_id"]}, {"$set": update_fields})
+        linked += 1
 
     return linked
 
-
-# ---------------------------------------------------------------------------
-# Link assessment_questions rows to their bank counterparts
-# ---------------------------------------------------------------------------
 
 def link_assessment_questions_to_bank(
     assessment_id: str,
@@ -267,72 +237,42 @@ def link_assessment_questions_to_bank(
         return
 
     diff = normalize_bank_level(level)
+    aq_coll = coll("assessment_questions")
 
-    with _session() as session:
-        aq_rows = session.scalars(
-            select(AssessmentQuestion).where(
-                AssessmentQuestion.assessment_id == assessment_id
+    for aq in aq_coll.find({"assessment_id": assessment_id}):
+        qtype = (aq.get("type") or "").strip().lower()
+        topic = (aq.get("topic_name") or "").strip()
+        qtext = (aq.get("question") or "").strip()
+        ch = _content_hash(qtype, topic, qtext)
+        bank_id = hash_to_bank_id.get(ch)
+        if bank_id is not None:
+            aq_coll.update_one(
+                {"_id": aq["_id"]},
+                {"$set": {"bank_question_id": bank_id, "difficulty": diff}},
             )
-        ).all()
 
-        for aq in aq_rows:
-            qtype = (aq.type or "").strip().lower()
-            topic = (aq.topic_name or "").strip()
-            qtext = (aq.question or "").strip()
-            ch = _content_hash(qtype, topic, qtext)
-            bank_id = hash_to_bank_id.get(ch)
-            if bank_id is not None:
-                aq.bank_question_id = bank_id
-                aq.difficulty = diff
-
-        session.commit()
-
-
-# ---------------------------------------------------------------------------
-# Stats counters (atomic updates)
-# ---------------------------------------------------------------------------
 
 def increment_question_usage(bank_question_id: int) -> None:
-    """Atomically increment times_used for a bank question."""
-    with _session() as session:
-        session.execute(
-            update(QuestionBank)
-            .where(QuestionBank.id == bank_question_id)
-            .values(times_used=QuestionBank.times_used + 1)
-        )
-        session.commit()
+    coll("question_bank").update_one(
+        {"id": int(bank_question_id)},
+        {"$inc": {"times_used": 1}},
+    )
 
 
 def record_question_outcome(bank_question_id: int | None, correct: bool) -> None:
-    """Atomically increment times_correct or times_wrong for a bank question."""
     if bank_question_id is None:
         return
-
-    with _session() as session:
-        if correct:
-            session.execute(
-                update(QuestionBank)
-                .where(QuestionBank.id == bank_question_id)
-                .values(times_correct=QuestionBank.times_correct + 1)
-            )
-        else:
-            session.execute(
-                update(QuestionBank)
-                .where(QuestionBank.id == bank_question_id)
-                .values(times_wrong=QuestionBank.times_wrong + 1)
-            )
-        session.commit()
+    field = "times_correct" if correct else "times_wrong"
+    coll("question_bank").update_one(
+        {"id": int(bank_question_id)},
+        {"$inc": {field: 1}},
+    )
 
 
 def record_employee_question_mastery(
     employee_id: str,
     bank_question_id: int | None,
 ) -> None:
-    """
-    Persist that this employee mastered a bank question (answered correctly).
-
-    Idempotent: duplicate (employee_id, bank_question_id) pairs are ignored.
-    """
     from services.attempt_service import normalize_employee_id
 
     if bank_question_id is None:
@@ -341,91 +281,76 @@ def record_employee_question_mastery(
     if not eid:
         return
 
-    with _session() as session:
-        existing = session.scalar(
-            select(EmployeeQuestionMastery.id).where(
-                EmployeeQuestionMastery.employee_id == eid,
-                EmployeeQuestionMastery.bank_question_id == bank_question_id,
-            )
-        )
-        if existing is not None:
-            return
-        session.add(
-            EmployeeQuestionMastery(
-                employee_id=eid,
-                bank_question_id=bank_question_id,
-                mastered_at=_utc_now_iso(),
-            )
-        )
-        session.commit()
+    mastery = coll("employee_question_mastery")
+    if mastery.find_one(
+        {"employee_id": eid, "bank_question_id": int(bank_question_id)},
+        projection={"_id": 1},
+    ):
+        return
+    mastery.insert_one(
+        {
+            "id": next_id("employee_question_mastery"),
+            "employee_id": eid,
+            "bank_question_id": int(bank_question_id),
+            "mastered_at": _utc_now_iso(),
+        }
+    )
 
 
 def backfill_employee_mastery_from_submissions() -> int:
-    """
-    Populate ``employee_question_mastery`` from historical correct submissions.
-
-    Returns the number of new mastery rows inserted.
-    """
     from services.attempt_service import (
         normalize_employee_id,
         parse_employee_id_from_user_label,
     )
 
     inserted = 0
-    with _session() as session:
-        subs = session.scalars(
-            select(Submission).where(Submission.question_id != "notebook")
-        ).all()
+    subs = coll("submissions").find({"question_id": {"$ne": "notebook"}})
+    mastery = coll("employee_question_mastery")
+    aq_coll = coll("assessment_questions")
 
-        for sub in subs:
-            eid = normalize_employee_id(
-                parse_employee_id_from_user_label(sub.user_id or "")
-            )
-            if not eid:
-                continue
+    for sub in subs:
+        eid = normalize_employee_id(
+            parse_employee_id_from_user_label(sub.get("user_id") or "")
+        )
+        if not eid:
+            continue
 
-            aq = session.scalar(
-                select(AssessmentQuestion).where(
-                    AssessmentQuestion.assessment_id == sub.assessment_id,
-                    AssessmentQuestion.question_id == sub.question_id,
-                )
-            )
-            if not aq or aq.bank_question_id is None:
-                continue
+        aq = aq_coll.find_one(
+            {
+                "assessment_id": sub["assessment_id"],
+                "question_id": sub["question_id"],
+            }
+        )
+        if not aq or aq.get("bank_question_id") is None:
+            continue
 
-            if not _submission_indicates_mastered(
-                aq.type,
-                sub.user_answer,
-                aq.correct_answer,
-                sub.score,
-            ):
-                continue
+        if not _submission_indicates_mastered(
+            aq.get("type") or "",
+            sub.get("user_answer") or "",
+            aq.get("correct_answer") or "",
+            sub.get("score") or "",
+        ):
+            continue
 
-            exists = session.scalar(
-                select(EmployeeQuestionMastery.id).where(
-                    EmployeeQuestionMastery.employee_id == eid,
-                    EmployeeQuestionMastery.bank_question_id == aq.bank_question_id,
-                )
-            )
-            if exists is not None:
-                continue
+        bid = int(aq["bank_question_id"])
+        if mastery.find_one(
+            {"employee_id": eid, "bank_question_id": bid},
+            projection={"_id": 1},
+        ):
+            continue
 
-            session.add(
-                EmployeeQuestionMastery(
-                    employee_id=eid,
-                    bank_question_id=aq.bank_question_id,
-                    mastered_at=sub.timestamp or _utc_now_iso(),
-                )
-            )
-            inserted += 1
+        mastery.insert_one(
+            {
+                "id": next_id("employee_question_mastery"),
+                "employee_id": eid,
+                "bank_question_id": bid,
+                "mastered_at": sub.get("timestamp") or _utc_now_iso(),
+            }
+        )
+        inserted += 1
 
-        session.commit()
     return inserted
 
-
-# ---------------------------------------------------------------------------
-# Employee exclusion — mastered questions only
-# ---------------------------------------------------------------------------
 
 def _submission_indicates_mastered(
     qtype: str,
@@ -433,7 +358,6 @@ def _submission_indicates_mastered(
     correct_answer: str,
     score_text: str,
 ) -> bool:
-    """True when the participant answered correctly (MCQ match or score ≥ 70)."""
     from services.assessment_service import _is_answer_correct
 
     try:
@@ -449,30 +373,18 @@ def _submission_indicates_mastered(
 
 
 def get_employee_mastered_bank_ids(employee_id: str) -> set[int]:
-    """
-    Return bank question IDs this employee has mastered (answered correctly).
-
-    Reads the persistent ``employee_question_mastery`` table (not recomputed from
-    submissions). Rows are added by ``record_employee_question_mastery`` on submit.
-    """
     from services.attempt_service import normalize_employee_id
 
     eid = normalize_employee_id(employee_id)
     if not eid:
         return set()
 
-    with _session() as session:
-        rows = session.scalars(
-            select(EmployeeQuestionMastery.bank_question_id).where(
-                EmployeeQuestionMastery.employee_id == eid
-            )
-        ).all()
-        return set(rows)
+    rows = coll("employee_question_mastery").find(
+        {"employee_id": eid},
+        {"bank_question_id": 1},
+    )
+    return {int(r["bank_question_id"]) for r in rows}
 
-
-# ---------------------------------------------------------------------------
-# Find reusable questions from the bank
-# ---------------------------------------------------------------------------
 
 def find_bank_questions(
     topic_names: list[str],
@@ -483,12 +395,6 @@ def find_bank_questions(
     exclude_bank_ids: set[int] | None = None,
     exclude_employee_id: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
-    """
-    Find up to n_needed reusable questions from the bank.
-
-    Returns (found_list, shortage_count) where shortage_count = max(0, n_needed - len(found)).
-    Questions **mastered** by exclude_employee_id are excluded; wrong answers may repeat.
-    """
     if n_needed <= 0 or not topic_names:
         return [], max(0, n_needed)
 
@@ -498,54 +404,47 @@ def find_bank_questions(
     if not names:
         return [], n_needed
 
-    # Build exclusion set
     all_excluded: set[int] = set(exclude_bank_ids or set())
     if exclude_employee_id:
         all_excluded |= get_employee_mastered_bank_ids(exclude_employee_id)
 
-    with _session() as session:
-        query = (
-            select(QuestionBank)
-            .where(
-                QuestionBank.topic_name.in_(names),
-                QuestionBank.difficulty == diff,
-            )
-            .order_by(
-                QuestionBank.times_used.asc(),
-                QuestionBank.id.asc(),
-            )
+    query: dict[str, Any] = {
+        "topic_name": {"$in": names},
+        "difficulty": diff,
+    }
+    if qtype_filter:
+        query["type"] = qtype_filter
+
+    candidates = list(
+        coll("question_bank")
+        .find(query)
+        .sort([("times_used", 1), ("id", 1)])
+    )
+
+    found: list[dict[str, Any]] = []
+    for bq in candidates:
+        if int(bq["id"]) in all_excluded:
+            continue
+        if len(found) >= n_needed:
+            break
+        found.append(
+            {
+                "bank_question_id": bq["id"],
+                "question": bq["question_text"],
+                "type": bq["type"],
+                "options": bq.get("options") or "",
+                "correct_answer": bq.get("correct_answer") or "",
+                "topic_name": bq.get("topic_name") or "",
+                "code_snippet": bq.get("code_snippet") or "",
+                "difficulty": bq["difficulty"],
+                "sample_test_cases": bq.get("sample_test_cases"),
+                "coding_hint": bq.get("coding_hint") or "",
+            }
         )
-        if qtype_filter:
-            query = query.where(QuestionBank.type == qtype_filter)
-
-        candidates = session.scalars(query).all()
-
-        found: list[dict[str, Any]] = []
-        for bq in candidates:
-            if bq.id in all_excluded:
-                continue
-            if len(found) >= n_needed:
-                break
-            found.append({
-                "bank_question_id": bq.id,
-                "question": bq.question_text,
-                "type": bq.type,
-                "options": bq.options or "",
-                "correct_answer": bq.correct_answer or "",
-                "topic_name": bq.topic_name or "",
-                "code_snippet": bq.code_snippet or "",
-                "difficulty": bq.difficulty,
-                "sample_test_cases": bq.sample_test_cases,
-                "coding_hint": bq.coding_hint or "",
-            })
 
     shortage = max(0, n_needed - len(found))
     return found, shortage
 
-
-# ---------------------------------------------------------------------------
-# Bank browsing / stats (admin API)
-# ---------------------------------------------------------------------------
 
 def get_bank_stats(
     *,
@@ -554,48 +453,50 @@ def get_bank_stats(
     language_code: str | None = None,
     question_type: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return bank questions with stats, filtered by optional criteria."""
-    with _session() as session:
-        query = select(QuestionBank).order_by(
-            QuestionBank.times_used.desc(),
-            QuestionBank.id.desc(),
-        )
+    query: dict[str, Any] = {}
+    if topic_name:
+        query["topic_name"] = topic_name.strip()
+    if difficulty:
+        query["difficulty"] = normalize_bank_level(difficulty)
+    if language_code:
+        query["language_code"] = language_code.strip()
+    if question_type:
+        query["type"] = question_type.strip().lower()
 
-        if topic_name:
-            query = query.where(QuestionBank.topic_name == topic_name.strip())
-        if difficulty:
-            query = query.where(
-                QuestionBank.difficulty == normalize_bank_level(difficulty)
-            )
-        if language_code:
-            query = query.where(QuestionBank.language_code == language_code.strip())
-        if question_type:
-            query = query.where(QuestionBank.type == question_type.strip().lower())
+    rows = list(
+        coll("question_bank")
+        .find(query)
+        .sort([("times_used", -1), ("id", -1)])
+    )
 
-        rows = session.scalars(query).all()
-
-        result: list[dict[str, Any]] = []
-        for bq in rows:
-            total_answers = bq.times_correct + bq.times_wrong
-            result.append({
-                "id": bq.id,
-                "question_text": bq.question_text,
-                "type": bq.type,
-                "topic_name": bq.topic_name or "",
-                "language_code": bq.language_code or "",
-                "difficulty": bq.difficulty,
-                "created_at": bq.created_at,
-                "times_used": bq.times_used,
-                "times_correct": bq.times_correct,
-                "times_wrong": bq.times_wrong,
+    result: list[dict[str, Any]] = []
+    for bq in rows:
+        times_correct = int(bq.get("times_correct") or 0)
+        times_wrong = int(bq.get("times_wrong") or 0)
+        total_answers = times_correct + times_wrong
+        result.append(
+            {
+                "id": bq["id"],
+                "question_text": bq["question_text"],
+                "type": bq["type"],
+                "topic_name": bq.get("topic_name") or "",
+                "language_code": bq.get("language_code") or "",
+                "difficulty": bq["difficulty"],
+                "created_at": bq.get("created_at"),
+                "times_used": int(bq.get("times_used") or 0),
+                "times_correct": times_correct,
+                "times_wrong": times_wrong,
                 "percent_correct": round(
-                    (bq.times_correct / total_answers * 100) if total_answers > 0 else 0.0, 2
+                    (times_correct / total_answers * 100) if total_answers > 0 else 0.0,
+                    2,
                 ),
                 "percent_wrong": round(
-                    (bq.times_wrong / total_answers * 100) if total_answers > 0 else 0.0, 2
+                    (times_wrong / total_answers * 100) if total_answers > 0 else 0.0,
+                    2,
                 ),
-            })
-        return result
+            }
+        )
+    return result
 
 
 def get_bank_availability(
@@ -605,11 +506,6 @@ def get_bank_availability(
     *,
     exclude_employee_id: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Check how many bank questions are available for the given topics/difficulty.
-
-    Returns availability info including per-topic breakdown and shortfall.
-    """
     diff = normalize_bank_level(difficulty)
     names = [n.strip() for n in topic_names if n and n.strip()]
 
@@ -625,25 +521,18 @@ def get_bank_availability(
     if exclude_employee_id:
         excluded = get_employee_mastered_bank_ids(exclude_employee_id)
 
-    with _session() as session:
-        per_topic: list[dict[str, Any]] = []
-        total_available = 0
+    per_topic: list[dict[str, Any]] = []
+    total_available = 0
+    bank = coll("question_bank")
 
-        for tname in names:
-            candidates = session.scalars(
-                select(QuestionBank).where(
-                    QuestionBank.topic_name == tname,
-                    QuestionBank.difficulty == diff,
-                )
-            ).all()
-
-            usable = [c for c in candidates if c.id not in excluded]
-            count = len(usable)
-            total_available += count
-            per_topic.append({
-                "topic_name": tname,
-                "available": count,
-            })
+    for tname in names:
+        candidates = list(
+            bank.find({"topic_name": tname, "difficulty": diff})
+        )
+        usable = [c for c in candidates if int(c["id"]) not in excluded]
+        count = len(usable)
+        total_available += count
+        per_topic.append({"topic_name": tname, "available": count})
 
     shortage = max(0, n_requested - total_available)
     return {

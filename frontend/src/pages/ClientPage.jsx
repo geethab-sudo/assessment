@@ -17,7 +17,7 @@ import UnansweredSubmitAlert from "../components/UnansweredSubmitAlert.jsx";
 import { usePagination } from "../hooks/usePagination.js";
 import { countUnansweredQuestions } from "../lib/assessmentAnswers.js";
 import { openReportPrintWindow } from "../lib/reportRenderer.js";
-import { formatUnitScore, SAMPLE_TEST_CASES_NOTE } from "../lib/scoreDisplay.js";
+import { formatUnitScore, formatCorrectTotal, countCorrectResults, SAMPLE_TEST_CASES_NOTE } from "../lib/scoreDisplay.js";
 
 function SampleTestCasesPanel({ cases }) {
   if (!Array.isArray(cases) || cases.length === 0) return null;
@@ -1013,10 +1013,10 @@ export default function ClientPage() {
               <span className="result-score-label">Total score</span>
               <div className="result-score-row">
                 <span className="result-score-value">
-                  {formatUnitScore(result.achieved_total ?? result.score)}
-                </span>
-                <span className="result-score-suffix">
-                  / {formatUnitScore(result.max_total ?? result.questions_graded)}
+                  {formatCorrectTotal(
+                    countCorrectResults(result.question_results),
+                    result.questions_graded ?? result.question_results?.length
+                  )}
                 </span>
               </div>
               {result.max_total > 0 && (
@@ -1058,7 +1058,10 @@ export default function ClientPage() {
                         <td>{row.topic_name}</td>
                         <td>{row.questions_count}</td>
                         <td>
-                          {row.total_score} / {row.max_score}
+                          {formatCorrectTotal(
+                            row.correct_count ?? row.total_score,
+                            row.questions_count ?? row.max_score
+                          )}
                         </td>
                         <td>{row.percent}%</td>
                       </tr>

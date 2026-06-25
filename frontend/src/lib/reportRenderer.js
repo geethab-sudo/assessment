@@ -62,7 +62,7 @@ function renderTopicSummaryRows(rows) {
     <tr>
       <td>${escapeHtml(t.topic_name)}</td>
       <td>${t.questions_count}</td>
-      <td>${t.total_score} / ${t.max_score}</td>
+      <td>${t.correct_count ?? t.total_score}/${t.questions_count ?? t.max_score}</td>
       <td>${t.percent}%</td>
     </tr>`
     )

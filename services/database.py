@@ -1,642 +1,228 @@
 """
-PostgreSQL connection and schema creation (SQLAlchemy 2).
-Set DATABASE_URL, e.g. postgresql+psycopg://user:pass@localhost:5432/assesment
+MongoDB connection, indexes, and integer id sequences.
+
+Set MONGODB_URI, e.g. mongodb+srv://user:pass@cluster.mongodb.net/assesment
+Optional MONGODB_DB_NAME (default: assesment).
 """
 
 from __future__ import annotations
 
 import os
+import re
+import time
+from typing import Any
+from urllib.parse import urlparse
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument
+from pymongo.collection import Collection
+from pymongo.database import Database
 
+_client: MongoClient | None = None
 
-class Base(DeclarativeBase):
-    pass
-
-
-_engine = None
-SessionLocal = None
-
-
-def get_database_url() -> str:
-    url = os.environ.get("DATABASE_URL", "").strip()
-    if not url:
-        raise RuntimeError(
-            "DATABASE_URL is not set. Example: "
-            "postgresql+psycopg://postgres:postgres@localhost:5432/assesment"
-        )
-    # Heroku-style URLs
-    if url.startswith("postgres://"):
-        url = "postgresql+psycopg://" + url[len("postgres://") :]
-    return url
-
-
-def get_engine():
-    global _engine
-    if _engine is None:
-        _engine = create_engine(
-            get_database_url(),
-            pool_pre_ping=True,
-            pool_size=5,
-            max_overflow=10,
-        )
-    return _engine
+COLLECTIONS = (
+    "counters",
+    "languages",
+    "topics",
+    "question_bank",
+    "employee_question_mastery",
+    "assessments",
+    "assessment_questions",
+    "assessment_attempts",
+    "submissions",
+    "certificates_issued",
+)
 
 
-def get_session_factory():
-    global SessionLocal
-    if SessionLocal is None:
-        SessionLocal = sessionmaker(
-            bind=get_engine(),
-            autoflush=False,
-            autocommit=False,
-            expire_on_commit=False,
-        )
-    return SessionLocal
+def get_mongodb_uri() -> str:
+    """Read connection string from MONGODB_URI (preferred) or legacy MONGODB_URL."""
+    for key in ("MONGODB_URI", "MONGODB_URL"):
+        uri = (os.environ.get(key) or "").strip().strip('"').strip("'")
+        if uri:
+            return uri
+    raise RuntimeError(
+        "MONGODB_URI is not set. Example: "
+        "mongodb+srv://user:pass@cluster.mongodb.net/assesment?retryWrites=true&w=majority"
+    )
 
 
-def init_db() -> None:
-    """Create tables if they do not exist."""
-    # Import models so they register with Base.metadata
-    from services import models  # noqa: F401
-
-    get_engine()
-    eng = get_engine()
-    Base.metadata.create_all(bind=eng)
-    _ensure_assessments_language_code_column(eng)
-    _ensure_assessments_catalog_meta_columns(eng)
-    _ensure_assessments_created_at_column(eng)
-    _ensure_modality_and_routing_columns(eng)
-    _ensure_raw_notebook_column(eng)
-    _ensure_question_topic_name_column(eng)
-    _ensure_assessment_timed_columns(eng)
-    _ensure_allow_pyodide_paste_column(eng)
-    _ensure_assessment_attempts_table(eng)
-    _ensure_topic_coding_editor_language_column(eng)
-    _ensure_question_code_snippet_column(eng)
-    _ensure_stage9_question_columns(eng)
-    _ensure_certificate_columns(eng)
-    _ensure_required_indexes(eng)
-    _ensure_question_bank_table(eng)           # must run before FK column below
-    _ensure_assessment_question_bank_columns(eng)
-    _backfill_question_bank_difficulty_labels(eng)
-    _backfill_question_bank_from_assessment_questions_if_needed(eng)
-    _ensure_employee_question_mastery_table(eng)
-    _backfill_employee_question_mastery_if_empty(eng)
+def get_database_name() -> str:
+    explicit = (os.environ.get("MONGODB_DB_NAME") or "").strip()
+    if explicit:
+        return explicit
+    uri = get_mongodb_uri()
+    path = urlparse(uri).path.strip("/")
+    if path:
+        return path.split("/")[0]
+    return "assesment"
 
 
-def _ensure_raw_notebook_column(eng) -> None:
-    """Add raw_notebook column to submissions table if it does not exist (PostgreSQL)."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'submissions' AND column_name = 'raw_notebook'
-                    ) THEN
-                        ALTER TABLE submissions ADD COLUMN raw_notebook JSONB NULL;
-                    END IF;
-                END $$;
-                """
-            )
-        )
+def get_client() -> MongoClient:
+    global _client
+    if _client is None:
+        kwargs: dict[str, Any] = {
+            # Atlas free tier / cold clusters often need >10s on first connect.
+            "serverSelectionTimeoutMS": 30_000,
+            "connectTimeoutMS": 20_000,
+        }
+        try:
+            import certifi
+
+            kwargs["tlsCAFile"] = certifi.where()
+        except ImportError:
+            pass
+        _client = MongoClient(get_mongodb_uri(), **kwargs)
+    return _client
 
 
-def _ensure_assessments_language_code_column(eng) -> None:
-    """For existing DBs created before language_code, add the column (PostgreSQL)."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessments' AND column_name = 'language_code'
-                    ) THEN
-                        ALTER TABLE assessments ADD COLUMN language_code VARCHAR(32) NULL;
-                    END IF;
-                END $$;
-                """
-            )
-        )
+def reset_client() -> None:
+    """Close the singleton client (used by tests when env or database name changes)."""
+    global _client
+    if _client is not None:
+        _client.close()
+        _client = None
 
 
-def _ensure_assessments_catalog_meta_columns(eng) -> None:
-    """Add language_label and topic_names for DBs created before catalog metadata on assessments."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessments' AND column_name = 'language_label'
-                    ) THEN
-                        ALTER TABLE assessments ADD COLUMN language_label VARCHAR(256) NULL;
-                    END IF;
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessments' AND column_name = 'topic_names'
-                    ) THEN
-                        ALTER TABLE assessments
-                        ADD COLUMN topic_names JSONB NOT NULL DEFAULT '[]'::jsonb;
-                    END IF;
-                END $$;
-                """
-            )
-        )
+def get_database() -> Database:
+    return get_client()[get_database_name()]
 
 
-def _ensure_assessments_created_at_column(eng) -> None:
-    """Add created_at for DBs created before assessment timestamps were stored."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessments' AND column_name = 'created_at'
-                    ) THEN
-                        ALTER TABLE assessments ADD COLUMN created_at VARCHAR(64) NULL;
-                    END IF;
-                END $$;
-                """
-            )
-        )
-def _ensure_modality_and_routing_columns(eng) -> None:
-    """Add modality to topics, and routing_flag to assessments and submissions if they do not exist (PostgreSQL)."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'topics' AND column_name = 'modality'
-                    ) THEN
-                        ALTER TABLE topics ADD COLUMN modality VARCHAR(32) NOT NULL DEFAULT 'pyodide';
-                    END IF;
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessments' AND column_name = 'routing_flag'
-                    ) THEN
-                        ALTER TABLE assessments ADD COLUMN routing_flag VARCHAR(32) NOT NULL DEFAULT 'pyodide';
-                    END IF;
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'submissions' AND column_name = 'routing_flag'
-                    ) THEN
-                        ALTER TABLE submissions ADD COLUMN routing_flag VARCHAR(32) NOT NULL DEFAULT 'pyodide';
-                    END IF;
-                END $$;
-                """
-            )
-        )
+def coll(name: str) -> Collection:
+    return get_database()[name]
 
 
-def _ensure_question_topic_name_column(eng) -> None:
-    """Add topic_name to assessment_questions for per-topic question attribution."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessment_questions' AND column_name = 'topic_name'
-                    ) THEN
-                        ALTER TABLE assessment_questions
-                        ADD COLUMN topic_name VARCHAR(512) NOT NULL DEFAULT '';
-                    END IF;
-                END $$;
-                """
-            )
-        )
+def next_id(counter_name: str) -> int:
+    doc = coll("counters").find_one_and_update(
+        {"_id": counter_name},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    return int(doc["seq"])
 
 
-def _ensure_assessment_timed_columns(eng) -> None:
-    """Add timed-assessment config columns to assessments."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessments' AND column_name = 'is_timed'
-                    ) THEN
-                        ALTER TABLE assessments
-                        ADD COLUMN is_timed BOOLEAN NOT NULL DEFAULT false;
-                    END IF;
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessments' AND column_name = 'duration_minutes'
-                    ) THEN
-                        ALTER TABLE assessments ADD COLUMN duration_minutes INTEGER NULL;
-                    END IF;
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessments' AND column_name = 'notebook_grace_minutes'
-                    ) THEN
-                        ALTER TABLE assessments ADD COLUMN notebook_grace_minutes INTEGER NULL;
-                    END IF;
-                END $$;
-                """
-            )
-        )
+def sync_counter(counter_name: str, minimum: int) -> None:
+    """Ensure a counter is at least ``minimum`` (used after PG migration)."""
+    coll("counters").update_one(
+        {"_id": counter_name},
+        {"$max": {"seq": int(minimum)}},
+        upsert=True,
+    )
 
 
-def _ensure_allow_pyodide_paste_column(eng) -> None:
-    """Per-assessment opt-in for paste in in-browser coding editors."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessments'
-                          AND column_name = 'allow_pyodide_paste'
-                    ) THEN
-                        ALTER TABLE assessments
-                        ADD COLUMN allow_pyodide_paste BOOLEAN NOT NULL DEFAULT false;
-                    END IF;
-                END $$;
-                """
-            )
-        )
+def _ensure_indexes() -> None:
+    db = get_database()
+
+    db.languages.create_index([("code", ASCENDING)], unique=True)
+
+    db.topics.create_index([("language_id", ASCENDING), ("name", ASCENDING)], unique=True)
+    db.topics.create_index([("name", ASCENDING)])
+
+    db.question_bank.create_index([("content_hash", ASCENDING)], unique=True)
+    db.question_bank.create_index([("language_code", ASCENDING)])
+    db.question_bank.create_index([("difficulty", ASCENDING)])
+    db.question_bank.create_index([("topic_name", ASCENDING), ("difficulty", ASCENDING)])
+
+    db.employee_question_mastery.create_index(
+        [("employee_id", ASCENDING), ("bank_question_id", ASCENDING)],
+        unique=True,
+    )
+    db.employee_question_mastery.create_index([("employee_id", ASCENDING)])
+    db.employee_question_mastery.create_index([("bank_question_id", ASCENDING)])
+
+    db.assessments.create_index([("assessment_id", ASCENDING)], unique=True)
+    db.assessments.create_index([("created_at", DESCENDING)])
+
+    db.assessment_questions.create_index(
+        [("assessment_id", ASCENDING), ("question_id", ASCENDING)],
+        unique=True,
+    )
+    db.assessment_questions.create_index([("assessment_id", ASCENDING)])
+    db.assessment_questions.create_index([("bank_question_id", ASCENDING)])
+
+    db.assessment_attempts.create_index(
+        [("assessment_id", ASCENDING), ("employee_id", ASCENDING)],
+        unique=True,
+    )
+    db.assessment_attempts.create_index([("assessment_id", ASCENDING)])
+    db.assessment_attempts.create_index([("employee_id", ASCENDING)])
+
+    db.submissions.create_index([("assessment_id", ASCENDING), ("user_id", ASCENDING)])
+    db.submissions.create_index([("timestamp", DESCENDING)])
+
+    db.certificates_issued.create_index([("employee_id", ASCENDING)])
+    db.certificates_issued.create_index([("assessment_id", ASCENDING)])
 
 
-def _ensure_topic_coding_editor_language_column(eng) -> None:
-    """Add coding_editor_language to topics (shell / powershell for terminal-style coding)."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'topics' AND column_name = 'coding_editor_language'
-                    ) THEN
-                        ALTER TABLE topics ADD COLUMN coding_editor_language VARCHAR(32) NULL;
-                    END IF;
-                END $$;
-                """
-            )
-        )
+def _backfill_question_bank_difficulty_labels() -> None:
+    mapping = {
+        "easy": "beginner",
+        "medium": "intermediate",
+        "hard": "advanced",
+    }
+    for collection, field in (
+        ("question_bank", "difficulty"),
+        ("assessment_questions", "difficulty"),
+    ):
+        for old, new in mapping.items():
+            coll(collection).update_many({field: old}, {"$set": {field: new}})
 
 
-def _ensure_question_code_snippet_column(eng) -> None:
-    """Add code_snippet to assessment_questions for MCQ code blocks."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessment_questions'
-                          AND column_name = 'code_snippet'
-                    ) THEN
-                        ALTER TABLE assessment_questions
-                        ADD COLUMN code_snippet TEXT NULL;
-                    END IF;
-                END $$;
-                """
-            )
-        )
-
-
-def _ensure_stage9_question_columns(eng) -> None:
-    """Add sample_test_cases and coding_hint to assessment_questions and question_bank."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessment_questions'
-                          AND column_name = 'sample_test_cases'
-                    ) THEN
-                        ALTER TABLE assessment_questions
-                        ADD COLUMN sample_test_cases JSONB NULL;
-                    END IF;
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessment_questions'
-                          AND column_name = 'coding_hint'
-                    ) THEN
-                        ALTER TABLE assessment_questions
-                        ADD COLUMN coding_hint TEXT NULL;
-                    END IF;
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'question_bank'
-                          AND column_name = 'sample_test_cases'
-                    ) THEN
-                        ALTER TABLE question_bank
-                        ADD COLUMN sample_test_cases JSONB NULL;
-                    END IF;
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'question_bank'
-                          AND column_name = 'coding_hint'
-                    ) THEN
-                        ALTER TABLE question_bank
-                        ADD COLUMN coding_hint TEXT NULL;
-                    END IF;
-                END $$;
-                """
-            )
-        )
-
-
-def _ensure_certificate_columns(eng) -> None:
-    """Stage 10: certificate flags on assessments + certificates_issued audit table."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessments'
-                          AND column_name = 'certificate_enabled'
-                    ) THEN
-                        ALTER TABLE assessments
-                        ADD COLUMN certificate_enabled BOOLEAN NOT NULL DEFAULT false;
-                    END IF;
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessments'
-                          AND column_name = 'certificate_level'
-                    ) THEN
-                        ALTER TABLE assessments
-                        ADD COLUMN certificate_level VARCHAR(32) NULL;
-                    END IF;
-                END $$;
-                """
-            )
-        )
-        conn.execute(
-            text(
-                """
-                CREATE TABLE IF NOT EXISTS certificates_issued (
-                    id             SERIAL PRIMARY KEY,
-                    employee_id    VARCHAR(64)  NOT NULL,
-                    display_name   VARCHAR(256) NOT NULL,
-                    level          VARCHAR(32)  NOT NULL,
-                    assessment_id  VARCHAR(36)  NULL,
-                    score          DOUBLE PRECISION NULL,
-                    issued_at      VARCHAR(64)  NOT NULL,
-                    issued_by      VARCHAR(64)  NOT NULL DEFAULT 'auto'
-                );
-                CREATE INDEX IF NOT EXISTS ix_certificates_issued_employee_id
-                    ON certificates_issued (employee_id);
-                CREATE INDEX IF NOT EXISTS ix_certificates_issued_assessment_id
-                    ON certificates_issued (assessment_id);
-                """
-            )
-        )
-        conn.execute(
-            text(
-                """
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'certificates_issued'
-                          AND column_name = 'language_code'
-                    ) THEN
-                        ALTER TABLE certificates_issued
-                        ADD COLUMN language_code VARCHAR(32) NULL;
-                    END IF;
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'certificates_issued'
-                          AND column_name = 'language_label'
-                    ) THEN
-                        ALTER TABLE certificates_issued
-                        ADD COLUMN language_label VARCHAR(256) NULL;
-                    END IF;
-                END $$;
-                """
-            )
-        )
-
-
-def _ensure_question_bank_table(eng) -> None:
-    """Create question_bank table and its indexes if they do not exist."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                CREATE TABLE IF NOT EXISTS question_bank (
-                    id             SERIAL PRIMARY KEY,
-                    content_hash   VARCHAR(64) NOT NULL UNIQUE,
-                    question_text  TEXT        NOT NULL,
-                    type           VARCHAR(32) NOT NULL,
-                    options        TEXT        NOT NULL DEFAULT '',
-                    correct_answer TEXT        NOT NULL DEFAULT '',
-                    code_snippet   TEXT        NULL,
-                    topic_name     VARCHAR(512) NOT NULL DEFAULT '',
-                    language_code  VARCHAR(32)  NULL,
-                    difficulty     VARCHAR(32)  NOT NULL,
-                    created_at     VARCHAR(64)  NOT NULL,
-                    times_used     INTEGER NOT NULL DEFAULT 0,
-                    times_correct  INTEGER NOT NULL DEFAULT 0,
-                    times_wrong    INTEGER NOT NULL DEFAULT 0
-                );
-                CREATE INDEX IF NOT EXISTS ix_question_bank_content_hash
-                    ON question_bank (content_hash);
-                CREATE INDEX IF NOT EXISTS ix_question_bank_language_code
-                    ON question_bank (language_code);
-                CREATE INDEX IF NOT EXISTS ix_question_bank_difficulty
-                    ON question_bank (difficulty);
-                CREATE INDEX IF NOT EXISTS ix_question_bank_topic_difficulty
-                    ON question_bank (topic_name, difficulty);
-                """
-            )
-        )
-
-
-def _ensure_assessment_question_bank_columns(eng) -> None:
-    """Add bank_question_id (FK) and difficulty columns to assessment_questions if missing."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessment_questions'
-                          AND column_name = 'bank_question_id'
-                    ) THEN
-                        ALTER TABLE assessment_questions
-                        ADD COLUMN bank_question_id INTEGER NULL
-                            REFERENCES question_bank(id) ON DELETE SET NULL;
-                    END IF;
-                    IF NOT EXISTS (
-                        SELECT 1 FROM information_schema.columns
-                        WHERE table_name = 'assessment_questions'
-                          AND column_name = 'difficulty'
-                    ) THEN
-                        ALTER TABLE assessment_questions
-                        ADD COLUMN difficulty VARCHAR(32) NULL;
-                    END IF;
-                END $$;
-                CREATE INDEX IF NOT EXISTS ix_aq_bank_question_id
-                    ON assessment_questions (bank_question_id);
-                """
-            )
-        )
-
-
-def _backfill_question_bank_difficulty_labels(eng) -> None:
-    """Map legacy easy/medium/hard labels to beginner/intermediate/advanced."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                UPDATE question_bank SET difficulty = 'beginner'
-                    WHERE difficulty = 'easy';
-                UPDATE question_bank SET difficulty = 'intermediate'
-                    WHERE difficulty = 'medium';
-                UPDATE question_bank SET difficulty = 'advanced'
-                    WHERE difficulty = 'hard';
-
-                UPDATE assessment_questions SET difficulty = 'beginner'
-                    WHERE difficulty = 'easy';
-                UPDATE assessment_questions SET difficulty = 'intermediate'
-                    WHERE difficulty = 'medium';
-                UPDATE assessment_questions SET difficulty = 'advanced'
-                    WHERE difficulty = 'hard';
-                """
-            )
-        )
-
-
-def _ensure_employee_question_mastery_table(eng) -> None:
-    """Per-employee mastered bank questions (employee_id + bank_question_id)."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                CREATE TABLE IF NOT EXISTS employee_question_mastery (
-                    id               SERIAL PRIMARY KEY,
-                    employee_id      VARCHAR(64) NOT NULL,
-                    bank_question_id INTEGER NOT NULL
-                        REFERENCES question_bank(id) ON DELETE CASCADE,
-                    mastered_at      VARCHAR(64) NOT NULL,
-                    CONSTRAINT uq_employee_bank_mastery
-                        UNIQUE (employee_id, bank_question_id)
-                );
-                CREATE INDEX IF NOT EXISTS ix_eqm_employee_id
-                    ON employee_question_mastery (employee_id);
-                CREATE INDEX IF NOT EXISTS ix_eqm_bank_question_id
-                    ON employee_question_mastery (bank_question_id);
-                """
-            )
-        )
-
-
-def _backfill_question_bank_from_assessment_questions_if_needed(eng) -> None:
-    """Import legacy assessment questions into question_bank (one-time per row)."""
-    with eng.connect() as conn:
-        count = conn.execute(
-            text(
-                "SELECT COUNT(*) FROM assessment_questions WHERE bank_question_id IS NULL"
-            )
-        ).scalar()
-    if not count or int(count) == 0:
+def _backfill_question_bank_from_assessment_questions_if_needed() -> None:
+    if not coll("assessment_questions").find_one(
+        {"bank_question_id": None},
+        projection={"_id": 1},
+    ):
         return
     from services import question_bank_service
 
     question_bank_service.backfill_question_bank_from_assessment_questions()
 
 
-def _backfill_employee_question_mastery_if_empty(eng) -> None:
-    """One-time populate mastery from historical correct submissions."""
-    with eng.connect() as conn:
-        count = conn.execute(
-            text("SELECT COUNT(*) FROM employee_question_mastery")
-        ).scalar()
-    if count and int(count) > 0:
+def _backfill_employee_question_mastery_if_empty() -> None:
+    if coll("employee_question_mastery").find_one({}, projection={"_id": 1}):
         return
     from services import question_bank_service
 
     question_bank_service.backfill_employee_mastery_from_submissions()
 
 
-def _ensure_required_indexes(eng) -> None:
-    """Add btree indexes used by frequent filters/sorts (idempotent on PostgreSQL)."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                CREATE INDEX IF NOT EXISTS ix_submissions_assessment_id_user_id
-                    ON submissions (assessment_id, user_id);
-                CREATE INDEX IF NOT EXISTS ix_submissions_timestamp
-                    ON submissions (timestamp DESC);
-                CREATE INDEX IF NOT EXISTS ix_topics_name
-                    ON topics (name);
-                CREATE INDEX IF NOT EXISTS ix_assessments_created_at
-                    ON assessments (created_at DESC NULLS LAST);
-                """
-            )
-        )
+def _wait_for_mongo(timeout_seconds: float = 45.0) -> None:
+    """Retry ping until MongoDB is reachable (Atlas cold start / flaky first connect)."""
+    deadline = time.monotonic() + timeout_seconds
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        try:
+            get_client().admin.command("ping")
+            return
+        except Exception as exc:
+            last_error = exc
+            time.sleep(2)
+    raise RuntimeError(
+        f"Could not connect to MongoDB within {timeout_seconds:.0f}s. "
+        "Check MONGODB_URI, Atlas Network Access (allow your IP or 0.0.0.0/0), "
+        "and that the cluster is not paused."
+    ) from last_error
 
 
-def _ensure_assessment_attempts_table(eng) -> None:
-    """Create assessment_attempts if missing (also created by create_all on fresh DB)."""
-    with eng.begin() as conn:
-        conn.execute(
-            text(
-                """
-                CREATE TABLE IF NOT EXISTS assessment_attempts (
-                    id SERIAL PRIMARY KEY,
-                    assessment_id VARCHAR(36) NOT NULL
-                        REFERENCES assessments(assessment_id) ON DELETE CASCADE,
-                    employee_id VARCHAR(64) NOT NULL,
-                    started_at VARCHAR(64) NOT NULL,
-                    expires_at VARCHAR(64) NOT NULL,
-                    notebook_expires_at VARCHAR(64) NOT NULL,
-                    submitted_at VARCHAR(64) NULL,
-                    CONSTRAINT uq_assessment_attempt_employee
-                        UNIQUE (assessment_id, employee_id)
-                );
-                CREATE INDEX IF NOT EXISTS ix_assessment_attempts_assessment_id
-                    ON assessment_attempts (assessment_id);
-                CREATE INDEX IF NOT EXISTS ix_assessment_attempts_employee_id
-                    ON assessment_attempts (employee_id);
-                """
-            )
-        )
+def init_db() -> None:
+    """Create indexes and run one-time backfills (idempotent)."""
+    _wait_for_mongo()
+    _ensure_indexes()
+    _backfill_question_bank_difficulty_labels()
+    _backfill_question_bank_from_assessment_questions_if_needed()
+    _backfill_employee_question_mastery_if_empty()
 
 
 def ping_database() -> bool:
     try:
-        eng = get_engine()
-        with eng.connect() as conn:
-            conn.execute(text("SELECT 1"))
+        get_client().admin.command("ping")
         return True
     except Exception:
         return False
+
+
+def doc_int_id(doc: dict[str, Any] | None) -> int | None:
+    if not doc:
+        return None
+    value = doc.get("id")
+    return int(value) if value is not None else None

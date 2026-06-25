@@ -34,6 +34,16 @@ class TestAllocatePerTopicConfig(unittest.TestCase):
 class TestCreateWeakAreasAssessment(unittest.TestCase):
     """Stage 5 — personalized weak-topic practice from question bank only."""
 
+    def setUp(self) -> None:
+        self._lang_label = patch(
+            "services.improvement_assessment_service._resolve_language_label",
+            return_value="Python",
+        )
+        self._lang_label.start()
+
+    def tearDown(self) -> None:
+        self._lang_label.stop()
+
     @patch("services.improvement_assessment_service._persist_bank_only_assessment")
     @patch("services.improvement_assessment_service._build_bank_only_rows")
     @patch(
@@ -193,6 +203,16 @@ class TestCreateWeakAreasAssessment(unittest.TestCase):
 class TestCreateNewAreasAssessment(unittest.TestCase):
     """Stage 6 — practice on catalog topics the employee has never attempted."""
 
+    def setUp(self) -> None:
+        self._lang_label = patch(
+            "services.improvement_assessment_service._resolve_language_label",
+            return_value="Python",
+        )
+        self._lang_label.start()
+
+    def tearDown(self) -> None:
+        self._lang_label.stop()
+
     @patch("services.improvement_assessment_service._persist_bank_only_assessment")
     @patch("services.improvement_assessment_service._build_bank_only_rows")
     @patch(
@@ -292,8 +312,6 @@ class TestWeakAreasApi(unittest.TestCase):
         cls._env_patch.start()
         with (
             patch("dotenv.load_dotenv"),
-            patch("services.database.init_db"),
-            patch("services.database.ping_database", return_value=True),
             patch("services.audit_log.configure_audit_logging"),
         ):
             sys.modules.pop("app", None)
@@ -420,6 +438,16 @@ class TestSelectStepUpTopics(unittest.TestCase):
 
 class TestCreateDifficultyImprovementAssessment(unittest.TestCase):
     """Stage 7 — harder bank questions on familiar topics."""
+
+    def setUp(self) -> None:
+        self._lang_label = patch(
+            "services.improvement_assessment_service._resolve_language_label",
+            return_value="Python",
+        )
+        self._lang_label.start()
+
+    def tearDown(self) -> None:
+        self._lang_label.stop()
 
     @patch("services.improvement_assessment_service._persist_bank_only_assessment")
     @patch("services.improvement_assessment_service._build_bank_only_rows")

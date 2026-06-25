@@ -6,6 +6,7 @@ import sys
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
@@ -90,17 +91,30 @@ class TestCertificateService(unittest.TestCase):
         self.assertNotEqual(small_img.image_bytes, large_img.image_bytes)
 
     def test_record_certificate_includes_language_and_level(self) -> None:
-        issued_id = record_certificate_issued(
-            employee_id="E-cert-test",
-            display_name="Language Test",
-            level="intermediate",
-            language_code="py",
-            language_label="Python",
-            score=0.91,
-            issued_by="auto",
-        )
-        self.assertGreater(issued_id, 0)
-        rows = list_employee_certificates("E-cert-test")
+        stored: list[dict] = []
+        certs = MagicMock()
+
+        def insert_one(doc: dict) -> None:
+            stored.append(doc)
+
+        certs.insert_one.side_effect = insert_one
+        certs.find.return_value.sort.return_value = stored
+
+        with (
+            patch("services.database.coll", return_value=certs),
+            patch("services.database.next_id", return_value=1),
+        ):
+            issued_id = record_certificate_issued(
+                employee_id="E-cert-test",
+                display_name="Language Test",
+                level="intermediate",
+                language_code="py",
+                language_label="Python",
+                score=0.91,
+                issued_by="auto",
+            )
+            self.assertGreater(issued_id, 0)
+            rows = list_employee_certificates("E-cert-test")
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["level"], "intermediate")
         self.assertEqual(rows[0]["language_code"], "py")

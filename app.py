@@ -666,6 +666,7 @@ def submit_assessment(body: SubmitAssessmentBody) -> SubmitAssessmentResponse:
     "/client/certificate/generate",
     tags=["assessments"],
     summary="Generate Tier 1 completion certificate (participant)",
+    description="Render and record a certificate after a qualifying assessment submit.",
     responses={
         200: {"description": "JPEG certificate file.", "content": {"image/jpeg": {}}},
         400: ERROR_400,

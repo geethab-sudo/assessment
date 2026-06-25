@@ -167,8 +167,6 @@ class TestPreviewProvider503(unittest.TestCase):
       cls._env_patch.start()
       with (
           patch("dotenv.load_dotenv"),
-          patch("services.database.init_db"),
-          patch("services.database.ping_database", return_value=True),
           patch("services.audit_log.configure_audit_logging"),
       ):
           sys.modules.pop("app", None)

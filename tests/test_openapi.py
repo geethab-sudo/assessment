@@ -24,6 +24,7 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/assessment/{assessment_id}/template": {"get"},
     "/client/employee-profile": {"get"},
     "/client/my-report": {"get"},
+    "/client/certificate/generate": {"post"},
     "/client/improvement/weak-areas": {"post"},
     "/client/improvement/new-areas": {"post"},
     "/client/improvement/difficulty": {"post"},
@@ -44,6 +45,11 @@ EXPECTED_ROUTES: dict[str, set[str]] = {
     "/generate-assessment": {"post"},
     "/admin/question-bank": {"get"},
     "/admin/question-bank/availability": {"get"},
+    "/admin/certificate/templates": {"get"},
+    "/admin/certificate/templates/{filename}/background": {"get"},
+    "/admin/certificate/templates/{filename}/layout": {"put"},
+    "/admin/certificate/templates/{filename}/preview": {"post"},
+    "/admin/certificate/issue": {"post"},
 }
 
 
@@ -67,8 +73,6 @@ class TestOpenAPISchema(unittest.TestCase):
         cls._env_patch.start()
         with (
             patch("dotenv.load_dotenv"),
-            patch("services.database.init_db"),
-            patch("services.database.ping_database", return_value=True),
             patch("services.audit_log.configure_audit_logging"),
         ):
             sys.modules.pop("app", None)

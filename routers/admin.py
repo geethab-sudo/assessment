@@ -659,6 +659,7 @@ def patch_assessment_question(
 @admin_router.get(
     "/certificate/templates",
     summary="List certificate templates and calibration status",
+    description="Return JPG certificate templates, calibration flags, and mapped difficulty levels.",
     response_model=CertificateTemplateListResponse,
     dependencies=[Depends(require_admin)],
 )
@@ -698,6 +699,7 @@ def list_certificate_templates() -> CertificateTemplateListResponse:
 @admin_router.get(
     "/certificate/templates/{filename}/background",
     summary="Certificate template background image (for layout editor)",
+    description="Serve the raw template image for the admin layout calibration UI.",
     dependencies=[Depends(require_admin)],
     responses={404: {"description": "Template not found."}},
 )
@@ -715,6 +717,7 @@ def get_certificate_template_background(
 @admin_router.put(
     "/certificate/templates/{filename}/layout",
     summary="Save name/date/signature layout for one template",
+    description="Persist click-calibrated field positions for one certificate template.",
     response_model=CertificateLayoutSavedResponse,
     dependencies=[Depends(require_admin)],
 )
@@ -742,6 +745,7 @@ def save_certificate_template_layout(
 @admin_router.post(
     "/certificate/templates/{filename}/preview",
     summary="Preview certificate with draft or saved layout",
+    description="Render a JPEG preview using draft or saved layout coordinates.",
     dependencies=[Depends(require_admin)],
     responses={
         200: {"description": "JPEG preview.", "content": {"image/jpeg": {}}},
@@ -773,6 +777,7 @@ def preview_certificate_template(
 @admin_router.post(
     "/certificate/issue",
     summary="Manually issue a Tier 1 certificate",
+    description="Admin grant: render and record a certificate without a score gate.",
     dependencies=[Depends(require_admin)],
     responses={
         200: {"description": "JPEG certificate file.", "content": {"image/jpeg": {}}},

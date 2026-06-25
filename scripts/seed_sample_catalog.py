@@ -3,7 +3,7 @@
 Insert sample languages and topics (with related_documents) for local development.
 Safe to re-run: skips rows that already exist (by language code and topic name).
 
-Usage (from project root, with DATABASE_URL in .env):
+Usage (from project root, with MONGODB_URI in .env):
   python scripts/seed_sample_catalog.py
 """
 
@@ -19,13 +19,9 @@ os.chdir(ROOT)
 
 from dotenv import load_dotenv  # noqa: E402
 
-load_dotenv(ROOT / ".env")
-load_dotenv(override=True)
+load_dotenv(ROOT / ".env", override=True)
 
-from sqlalchemy import select  # noqa: E402
-
-from services.database import init_db, get_session_factory  # noqa: E402
-from services.models import Language, Topic  # noqa: E402
+from services.database import coll, init_db, next_id  # noqa: E402
 
 # Sample catalog: general English, Python, Java, Node.js
 SAMPLE: list[dict] = [
@@ -352,58 +348,63 @@ SAMPLE: list[dict] = [
 
 def main() -> None:
     init_db()
-    sf = get_session_factory()
     created_lang = 0
     created_topic = 0
     skipped_lang = 0
     skipped_topic = 0
 
-    with sf() as session:
-        for block in SAMPLE:
-            code = block["code"]
-            name = block["name"]
-            lang = session.scalar(select(Language).where(Language.code == code))
-            if not lang:
-                lang = Language(code=code, name=name)
-                session.add(lang)
-                session.flush()
-                created_lang += 1
-            else:
-                skipped_lang += 1
+    for block in SAMPLE:
+        code = block["code"]
+        name = block["name"]
+        lang = coll("languages").find_one({"code": code})
+        if not lang:
+            lang = {
+                "id": next_id("languages"),
+                "code": code,
+                "name": name,
+            }
+            coll("languages").insert_one(lang)
+            created_lang += 1
+        else:
+            skipped_lang += 1
 
-            lid = lang.id
-            for t in block["topics"]:
-                tname = t["name"]
-                docs = t.get("related_documents") or []
-                modality = t.get("modality", "pyodide")
-                coding_editor = t.get("coding_editor_language")
-                if coding_editor:
-                    coding_editor = str(coding_editor).strip().lower()
-                    if coding_editor not in ("shell", "powershell"):
-                        coding_editor = None
-                existing = session.scalar(
-                    select(Topic).where(
-                        Topic.language_id == lid,
-                        Topic.name == tname,
-                    )
+        lid = lang["id"]
+        for t in block["topics"]:
+            tname = t["name"]
+            docs = t.get("related_documents") or []
+            modality = t.get("modality", "pyodide")
+            coding_editor = t.get("coding_editor_language")
+            if coding_editor:
+                coding_editor = str(coding_editor).strip().lower()
+                if coding_editor not in ("shell", "powershell"):
+                    coding_editor = None
+            existing = coll("topics").find_one(
+                {"language_id": lid, "name": tname}
+            )
+            if existing:
+                coll("topics").update_one(
+                    {"id": existing["id"]},
+                    {
+                        "$set": {
+                            "modality": modality,
+                            "related_documents": docs,
+                            "coding_editor_language": coding_editor,
+                        }
+                    },
                 )
-                if existing:
-                    existing.modality = modality
-                    existing.related_documents = docs
-                    existing.coding_editor_language = coding_editor
-                    skipped_topic += 1
-                    continue
-                session.add(
-                    Topic(
-                        language_id=lid,
-                        name=tname,
-                        related_documents=docs,
-                        modality=modality,
-                        coding_editor_language=coding_editor,
-                    )
-                )
-                created_topic += 1
-        session.commit()
+                skipped_topic += 1
+                continue
+            coll("topics").insert_one(
+                {
+                    "id": next_id("topics"),
+                    "language_id": lid,
+                    "name": tname,
+                    "related_documents": docs,
+                    "modality": modality,
+                    "coding_editor_language": coding_editor,
+                }
+            )
+            created_topic += 1
 
     print(
         f"Done. Languages: {created_lang} created, {skipped_lang} already present. "
