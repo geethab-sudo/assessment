@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "../api";
+import { fetchCertificateShareMetadata } from "../lib/certificateApi.js";
+import CertificateSharePanel from "../components/CertificateSharePanel.jsx";
 import SimpleCodeEditor from "../components/SimpleCodeEditor.jsx";
 import QuestionStem from "../components/QuestionStem.jsx";
 import PythonRunPanel from "../components/PythonRunPanel.jsx";
@@ -76,6 +78,9 @@ export default function ClientPage() {
   const [certificateName, setCertificateName] = useState("");
   const [certificateGenerating, setCertificateGenerating] = useState(false);
   const [certificateDismissed, setCertificateDismissed] = useState(false);
+  const [certificateShareMeta, setCertificateShareMeta] = useState(null);
+  const [certificateShareMessage, setCertificateShareMessage] = useState(null);
+  const [certificateShareLoading, setCertificateShareLoading] = useState(false);
   const autoSubmitLock = useRef(false);
   const graceNotebookSubmitLock = useRef(false);
   const lastGraceSubmittedFile = useRef(null);
@@ -488,8 +493,10 @@ export default function ClientPage() {
     }
     setCertificateGenerating(true);
     setError(null);
+    setCertificateShareMeta(null);
+    setCertificateShareMessage(null);
     try {
-      const { blob, filename } = await apiFetchBlob("/client/certificate/generate", {
+      const { blob, filename, certificateId } = await apiFetchBlob("/client/certificate/generate", {
         method: "POST",
         body: JSON.stringify({
           assessment_id: assessment.assessment_id,
@@ -503,7 +510,22 @@ export default function ClientPage() {
       link.download = filename;
       link.click();
       URL.revokeObjectURL(url);
-      setCertificateDismissed(true);
+      if (certificateId) {
+        setCertificateShareLoading(true);
+        try {
+          const meta = await fetchCertificateShareMetadata({
+            employeeId: employeeId.trim(),
+            certificateId: Number(certificateId),
+          });
+          setCertificateShareMeta(meta);
+        } catch (shareErr) {
+          setCertificateShareMessage(
+            shareErr.message || "Certificate saved, but share link could not be loaded."
+          );
+        } finally {
+          setCertificateShareLoading(false);
+        }
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -952,53 +974,96 @@ export default function ClientPage() {
       {showCertificateModal && (
         <div className="certificate-modal-backdrop" role="presentation">
           <section
-            className="card certificate-modal"
+            className={`card certificate-modal${certificateShareMeta ? " certificate-modal--success" : ""}`}
             role="dialog"
             aria-labelledby="certificate-modal-title"
             aria-modal="true"
           >
-            <h2 id="certificate-modal-title">You earned a certificate!</h2>
-            <p>
-              Your grade is{" "}
-              <strong>{Math.round((Number(result.score) || 0) * 100)}%</strong>.
-            </p>
-            <p>
-              You earned your certificate for{" "}
-              <strong>
-                {result.certificate_offer.language_label}{" "}
-                {result.certificate_offer.level}
-              </strong>
-              !
-            </p>
-            <label className="certificate-modal-field">
-              <span className="review-field-label">Name on certificate</span>
-              <input
-                type="text"
-                className="review-field-input"
-                value={certificateName}
-                onChange={(e) => setCertificateName(e.target.value)}
-                maxLength={256}
-                autoFocus
-              />
-            </label>
-            <div className="certificate-modal-actions">
-              <button
-                type="button"
-                className="primary"
-                onClick={handleGenerateCertificate}
-                disabled={certificateGenerating || !certificateName.trim()}
-              >
-                {certificateGenerating ? "Generating…" : "Generate certificate"}
-              </button>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => setCertificateDismissed(true)}
-                disabled={certificateGenerating}
-              >
-                Skip
-              </button>
-            </div>
+            {!certificateShareMeta ? (
+              <>
+                <h2 id="certificate-modal-title">You earned a certificate!</h2>
+                <p>
+                  Your grade is{" "}
+                  <strong>{Math.round((Number(result.score) || 0) * 100)}%</strong>.
+                </p>
+                <p>
+                  You earned your certificate for{" "}
+                  <strong>
+                    {result.certificate_offer.language_label}{" "}
+                    {result.certificate_offer.level}
+                  </strong>
+                  !
+                </p>
+                <label className="certificate-modal-field">
+                  <span className="review-field-label">Name on certificate</span>
+                  <input
+                    type="text"
+                    className="review-field-input"
+                    value={certificateName}
+                    onChange={(e) => setCertificateName(e.target.value)}
+                    maxLength={256}
+                    autoFocus
+                  />
+                </label>
+                <div className="certificate-modal-actions">
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={handleGenerateCertificate}
+                    disabled={certificateGenerating || !certificateName.trim()}
+                  >
+                    {certificateGenerating ? "Generating…" : "Generate certificate"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => setCertificateDismissed(true)}
+                    disabled={certificateGenerating}
+                  >
+                    Skip
+                  </button>
+                </div>
+                {certificateShareLoading && (
+                  <p className="muted small-print" role="status">
+                    Preparing share options…
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="certificate-modal-success">
+                  <span className="certificate-modal-success-icon" aria-hidden>
+                    ✓
+                  </span>
+                  <div>
+                    <h2 id="certificate-modal-title">Certificate ready</h2>
+                    <p className="certificate-modal-success-subtitle">
+                      <strong>{certificateShareMeta.display_name}</strong> ·{" "}
+                      {certificateShareMeta.title}
+                    </p>
+                    <p className="muted small-print">
+                      Your certificate image was downloaded. Share it on LinkedIn or send the
+                      verification link below.
+                    </p>
+                  </div>
+                </div>
+                <CertificateSharePanel meta={certificateShareMeta} />
+                <div className="certificate-modal-actions certificate-modal-actions--footer">
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={() => setCertificateDismissed(true)}
+                  >
+                    Done
+                  </button>
+                </div>
+              </>
+            )}
+            {certificateShareMessage && (
+              <p className="muted small-print" role="status">
+                {certificateShareMessage}
+              </p>
+            )}
           </section>
         </div>
       )}

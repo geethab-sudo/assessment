@@ -10,4 +10,5 @@ nbformat>=5.10.0
 python-multipart
 bcrypt>=5.0.0
 Pillow>=10.0.0
+qrcode>=8.0
 google-genai>=1.0.0

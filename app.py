@@ -43,7 +43,13 @@ from schemas.assessment import (
     SubmitAssessmentResponse,
 )
 from schemas.auth import ClientLoginResponse, LoginBody, LoginResponse
-from schemas.certificate import AdminIssueCertificateBody, ClientGenerateCertificateBody
+from schemas.certificate import (
+    AdminIssueCertificateBody,
+    CertificateShareMetadataResponse,
+    CertificateVerificationResponse,
+    ClientGenerateCertificateBody,
+    PublicCertificateSettingsResponse,
+)
 from schemas.catalog import LanguagesResponse
 from schemas.common import ErrorDetail, HealthResponse, ValidationErrorItem, ValidationErrorResponse
 from schemas.improvement import (
@@ -51,13 +57,17 @@ from schemas.improvement import (
     DifficultyImprovementResponse,
     EmployeeProfileResponse,
     EmployeeReportResponse,
+    FromTopicsImprovementRequest,
+    ImprovementSessionResponse,
     NewAreasImprovementRequest,
     NewAreasImprovementResponse,
+    QuickPracticeRequest,
     WeakAreasImprovementRequest,
     WeakAreasImprovementResponse,
 )
 from services import assessment_service, audit_log, auth_service, catalog_service, notebook_service, report_service
 from services import certificate_service, db_service, employee_profile_service, improvement_assessment_service
+from services import platform_settings_service
 from services.attempt_service import TimedAssessmentError
 from services.database import init_db, ping_database
 from services.llm_service import gemini_key_configured, groq_key_configured
@@ -515,7 +525,7 @@ def get_client_employee_report(
 @app.post(
     "/client/improvement/weak-areas",
     tags=["client"],
-    summary="Create bank-only practice assessment on weak topics",
+    summary="Create bank-only practice assessment on focus topics",
     response_model=WeakAreasImprovementResponse,
     responses={
         200: {"description": "Practice assessment created or availability explanation returned."},
@@ -526,12 +536,14 @@ def get_client_employee_report(
 def post_client_improvement_weak_areas(
     body: WeakAreasImprovementRequest,
 ) -> WeakAreasImprovementResponse:
-    """Bank-only weak-areas practice — never calls the LLM."""
+    """Bank-only focus-area practice — never calls the LLM."""
     try:
+        topics = body.topic_names or None
         data = improvement_assessment_service.create_weak_areas_assessment(
             body.employee_id.strip(),
             body.language_code.strip(),
             questions_requested=body.questions_requested,
+            topic_names=topics if topics else None,
         )
         return WeakAreasImprovementResponse.model_validate(data)
     except ValueError as e:
@@ -556,11 +568,13 @@ def post_client_improvement_new_areas(
 ) -> NewAreasImprovementResponse:
     """Bank-only new-areas practice — never calls the LLM."""
     try:
+        topics = body.topic_names or None
         data = improvement_assessment_service.create_new_areas_assessment(
             body.employee_id.strip(),
             body.language_code.strip(),
             questions_requested=body.questions_requested,
             topics_count=body.topics_count,
+            topic_names=topics if topics else None,
         )
         return NewAreasImprovementResponse.model_validate(data)
     except ValueError as e:
@@ -585,13 +599,64 @@ def post_client_improvement_difficulty(
 ) -> DifficultyImprovementResponse:
     """Bank-only step-up difficulty practice — never calls the LLM."""
     try:
+        topics = body.topic_names or None
         data = improvement_assessment_service.create_difficulty_improvement_assessment(
             body.employee_id.strip(),
             body.language_code.strip(),
             questions_requested=body.questions_requested,
             topics_count=body.topics_count,
+            topic_names=topics if topics else None,
         )
         return DifficultyImprovementResponse.model_validate(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post(
+    "/client/improvement/from-topics",
+    tags=["client"],
+    summary="Create bank-only practice for selected topics (report charts)",
+    response_model=ImprovementSessionResponse,
+    responses={200: {}, 400: ERROR_400, 500: ERROR_500},
+)
+def post_client_improvement_from_topics(
+    body: FromTopicsImprovementRequest,
+) -> ImprovementSessionResponse:
+    """Bank-only practice for explicit topics from report heatmap/radar — never calls the LLM."""
+    try:
+        data = improvement_assessment_service.create_from_topics_assessment(
+            body.employee_id.strip(),
+            body.language_code.strip(),
+            body.topic_names,
+            questions_requested=body.questions_requested,
+        )
+        return ImprovementSessionResponse.model_validate(data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post(
+    "/client/improvement/quick-practice",
+    tags=["client"],
+    summary="One-click practice from report recommendations",
+    response_model=ImprovementSessionResponse,
+    responses={200: {}, 400: ERROR_400, 500: ERROR_500},
+)
+def post_client_improvement_quick_practice(
+    body: QuickPracticeRequest,
+) -> ImprovementSessionResponse:
+    """One-click bank-only practice built from report recommendations — never calls the LLM."""
+    try:
+        data = improvement_assessment_service.create_quick_practice_assessment(
+            body.employee_id.strip(),
+            body.language_code.strip(),
+            questions_requested=body.questions_requested,
+        )
+        return ImprovementSessionResponse.model_validate(data)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
@@ -684,7 +749,7 @@ def client_generate_certificate(body: ClientGenerateCertificateBody) -> Response
         level, score, lang_code, lang_label = certificate_service.assert_client_may_generate_certificate(
             aid, body.employee_id
         )
-        result, _issued_id = certificate_service.issue_certificate(
+        result, issued_id = certificate_service.issue_certificate(
             employee_id=body.employee_id,
             display_name=body.display_name,
             level=level,
@@ -699,6 +764,7 @@ def client_generate_certificate(body: ClientGenerateCertificateBody) -> Response
             media_type=result.media_type,
             headers={
                 "Content-Disposition": f'attachment; filename="{result.filename}"',
+                "X-Certificate-Id": str(issued_id),
             },
         )
     except ValueError as e:
@@ -707,6 +773,116 @@ def client_generate_certificate(body: ClientGenerateCertificateBody) -> Response
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Certificate generation failed: {e}") from e
+
+
+@app.get(
+    "/client/certificate/{certificate_id}/share-metadata",
+    tags=["client"],
+    summary="Share metadata for an earned certificate",
+    response_model=CertificateShareMetadataResponse,
+    responses={200: {}, 400: ERROR_400, 404: ERROR_400, 500: ERROR_500},
+)
+def client_certificate_share_metadata(
+    certificate_id: Annotated[int, Path(ge=1)],
+    employee_id: Annotated[str, Query(min_length=1, max_length=64)],
+) -> CertificateShareMetadataResponse:
+    """Return LinkedIn share URL and public verification link for an earned certificate."""
+    try:
+        data = certificate_service.get_certificate_share_metadata(
+            certificate_id, employee_id.strip()
+        )
+        return CertificateShareMetadataResponse.model_validate(data)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get(
+    "/public/certificate/settings",
+    tags=["client"],
+    summary="Public certificate issuer branding",
+    description="Organization name and verification page intro for public certificate pages (no authentication).",
+    response_model=PublicCertificateSettingsResponse,
+    responses={200: {}, 500: ERROR_500},
+)
+def public_certificate_settings() -> PublicCertificateSettingsResponse:
+    """Organization name and verification page intro (no auth)."""
+    data = platform_settings_service.get_certificate_issuer_settings()
+    return PublicCertificateSettingsResponse.model_validate(data)
+
+
+@app.get(
+    "/public/certificate/{certificate_id}/verify",
+    tags=["client"],
+    summary="Public certificate verification record",
+    response_model=CertificateVerificationResponse,
+    responses={200: {}, 404: ERROR_400, 500: ERROR_500},
+)
+def public_certificate_verify(
+    certificate_id: Annotated[int, Path(ge=1)],
+) -> CertificateVerificationResponse:
+    """Coursera-style public verification: anyone with the credential ID can confirm authenticity."""
+    try:
+        data = certificate_service.get_public_certificate_verification(certificate_id)
+        return CertificateVerificationResponse.model_validate(data)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get(
+    "/public/certificate/{certificate_id}/image",
+    tags=["client"],
+    summary="Public certificate image (JPEG)",
+    responses={
+        200: {"description": "Rendered certificate JPEG.", "content": {"image/jpeg": {}}},
+        404: ERROR_400,
+        500: ERROR_500,
+    },
+)
+def public_certificate_image(certificate_id: Annotated[int, Path(ge=1)]) -> Response:
+    """Re-render the certificate image for verification pages and social sharing."""
+    try:
+        row = certificate_service.get_certificate_row(certificate_id)
+        if not row:
+            raise ValueError("Certificate not found")
+        result = certificate_service.render_certificate_for_row(row)
+        return Response(
+            content=result.image_bytes,
+            media_type=result.media_type,
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get(
+    "/public/certificate/{certificate_id}/qr",
+    tags=["client"],
+    summary="QR code PNG for certificate verification URL",
+    responses={
+        200: {"description": "QR code PNG.", "content": {"image/png": {}}},
+        404: ERROR_400,
+        500: ERROR_500,
+    },
+)
+def public_certificate_qr(certificate_id: Annotated[int, Path(ge=1)]) -> Response:
+    """PNG QR code encoding the public verification page URL."""
+    try:
+        row = certificate_service.get_certificate_row(certificate_id)
+        if not row:
+            raise ValueError("Certificate not found")
+        url = certificate_service.verification_url_for_certificate(certificate_id)
+        png = certificate_service.generate_verification_qr_png(url)
+        return Response(content=png, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.post(

@@ -27,6 +27,8 @@ def pytest_configure(config: pytest.Config) -> None:
     """Point all tests at Atlas ``test_db`` before any app or service imports."""
     load_dotenv(_ROOT / ".env", override=False)
     os.environ["MONGODB_DB_NAME"] = TEST_DB_NAME
+    # Ensure dev database name from .env cannot leak into test workers.
+    assert os.environ["MONGODB_DB_NAME"] == TEST_DB_NAME
     uri = (os.environ.get("MONGODB_URI") or os.environ.get("MONGODB_URL") or "").strip()
     if not uri:
         pytest.exit(

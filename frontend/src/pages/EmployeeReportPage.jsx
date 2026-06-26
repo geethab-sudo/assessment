@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { apiFetchBlob } from "../api";
-import { fetchEmployeeReport } from "../lib/employeeReportApi.js";
+import {
+  createQuickPracticeAssessment,
+  fetchCertificateShareMetadata,
+  fetchEmployeeReport,
+} from "../lib/employeeReportApi.js";
+import {
+  DEFAULT_QUICK_PRACTICE_QUESTIONS,
+  practiceIntentLabel,
+  PROFICIENCY_THRESHOLD,
+} from "../lib/improvementConstants.js";
 
 const CERT_LEVELS = [
   { value: "beginner", label: "Beginner" },
@@ -417,7 +426,13 @@ function buildHeatmapModel(languages) {
   };
 }
 
-function TopicHeatmap({ languages, languageColors, expanded = false }) {
+function TopicHeatmap({
+  languages,
+  languageColors,
+  expanded = false,
+  interactive = false,
+  onCellClick,
+}) {
   const model = useMemo(() => buildHeatmapModel(languages), [languages]);
 
   if (!model.topics.length) {
@@ -465,9 +480,32 @@ function TopicHeatmap({ languages, languageColors, expanded = false }) {
                 return (
                   <td
                     key={col.code}
-                    className="emp-report-heatmap-cell"
+                    className={`emp-report-heatmap-cell${
+                      interactive && hasValue ? " emp-report-heatmap-cell--clickable" : ""
+                    }`}
                     style={heatmapCellStyle(hasValue ? percent : null)}
-                    title={label}
+                    title={
+                      interactive && hasValue
+                        ? `${label} — click to practice`
+                        : label
+                    }
+                    onClick={
+                      interactive && hasValue && onCellClick
+                        ? () => onCellClick(topic, col.code, percent)
+                        : undefined
+                    }
+                    onKeyDown={
+                      interactive && hasValue && onCellClick
+                        ? (e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onCellClick(topic, col.code, percent);
+                            }
+                          }
+                        : undefined
+                    }
+                    role={interactive && hasValue ? "button" : undefined}
+                    tabIndex={interactive && hasValue ? 0 : undefined}
                   >
                     {hasValue ? `${Math.round(percent)}%` : "—"}
                   </td>
@@ -479,6 +517,7 @@ function TopicHeatmap({ languages, languageColors, expanded = false }) {
       </table>
       <p className="muted small-print emp-report-heatmap-legend">
         Green ≥75% · Amber 50–74% · Red &lt;50% · Gray = not attempted
+        {interactive && " · Click a score cell to start topic practice"}
       </p>
     </div>
   );
@@ -633,7 +672,7 @@ function CumulativeStackedChart({ points, expanded = false }) {
   );
 }
 
-function RadarChart({ topics, expanded = false }) {
+function RadarChart({ topics, expanded = false, interactive = false, onTopicClick }) {
   if (!topics?.length) {
     return <p className="muted small-print">Not enough topic data for radar chart.</p>;
   }
@@ -742,7 +781,26 @@ function RadarChart({ topics, expanded = false }) {
         <p className="emp-report-radar-key-heading">Topic key</p>
         <ul className="emp-report-radar-key">
           {items.map((t) => (
-            <li key={t.topic_name} className="emp-report-radar-key-row">
+            <li
+              key={t.topic_name}
+              className={`emp-report-radar-key-row${
+                interactive ? " emp-report-radar-key-row--clickable" : ""
+              }`}
+              onClick={interactive && onTopicClick ? () => onTopicClick(t.topic_name) : undefined}
+              onKeyDown={
+                interactive && onTopicClick
+                  ? (e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onTopicClick(t.topic_name);
+                      }
+                    }
+                  : undefined
+              }
+              role={interactive ? "button" : undefined}
+              tabIndex={interactive ? 0 : undefined}
+              title={interactive ? "Click to choose topics to practice" : undefined}
+            >
               <span className="emp-report-radar-key-letter" aria-hidden>
                 {t.symbol}
               </span>
@@ -839,6 +897,7 @@ function TypeDonut({ breakdown, expanded = false }) {
 }
 
 export default function EmployeeReportPage({ mode = "client" }) {
+  const navigate = useNavigate();
   const { employeeId: routeEmployeeId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialEmployee =
@@ -859,6 +918,10 @@ export default function EmployeeReportPage({ mode = "client" }) {
   const [certGenerating, setCertGenerating] = useState(false);
   const [certError, setCertError] = useState(null);
   const [certMessage, setCertMessage] = useState(null);
+  const [quickPracticeStarting, setQuickPracticeStarting] = useState(false);
+  const [quickPracticeError, setQuickPracticeError] = useState(null);
+  const [certShareBusyId, setCertShareBusyId] = useState(null);
+  const [certShareMessage, setCertShareMessage] = useState(null);
 
   useEffect(() => {
     if (routeEmployeeId?.trim()) {
@@ -934,6 +997,182 @@ export default function EmployeeReportPage({ mode = "client" }) {
     });
     return map;
   }, [report?.languages]);
+
+  const primaryLanguageCode = report?.languages?.[0]?.language_code || "py";
+  const clientInteractive = mode === "client";
+
+  const navigateToPracticePicker = useCallback(
+    ({
+      title,
+      subtitle,
+      topics,
+      languageCode,
+      languageLabel,
+      initialSelected = [],
+      mode = "from-topics",
+    }) => {
+      const eid = employeeIdInput.trim();
+      if (!eid || !topics.length) return;
+      setExpandedChartId(null);
+      const returnTo = `/client/my-report?employee_id=${encodeURIComponent(eid)}&period=${encodeURIComponent(period)}`;
+      navigate("/client/topic-practice", {
+        state: {
+          employeeId: eid,
+          languageCode,
+          languageLabel,
+          title,
+          subtitle,
+          topics,
+          initialSelected,
+          mode,
+          returnTo,
+        },
+      });
+    },
+    [employeeIdInput, period, navigate]
+  );
+
+  const handleHeatmapCellClick = useCallback(
+    (topic, langCode) => {
+      if (!report) return;
+      const lang = (report.languages || []).find((l) => l.language_code === langCode);
+      const langTopics = lang?.topics || [];
+      const items = langTopics.map((t) => ({
+        name: t.topic_name,
+        hint: practiceIntentLabel(t.percent_correct),
+      }));
+      if (!items.length) return;
+      navigateToPracticePicker({
+        title: "Choose topics to practice",
+        subtitle:
+          "You clicked a topic on the heatmap. Select one or more topics below, then start a short practice session.",
+        topics: items,
+        languageCode: langCode,
+        languageLabel: lang?.language_label || langCode,
+        initialSelected: [topic],
+        mode: "from-topics",
+      });
+    },
+    [report, navigateToPracticePicker]
+  );
+
+  const handleRadarTopicClick = useCallback(
+    (topicName) => {
+      if (!report) return;
+      const items = (report.radar_topics || []).slice(0, 8).map((t) => ({
+        name: t.topic_name,
+        hint: practiceIntentLabel(t.rolling_avg_percent ?? t.latest_percent),
+      }));
+      if (!items.length) return;
+      const lang = (report.languages || [])[0];
+      navigateToPracticePicker({
+        title: "Choose topics to practice",
+        subtitle:
+          "Topics from your radar chart. Pick what you want to work on and how many questions to try.",
+        topics: items,
+        languageCode: lang?.language_code || primaryLanguageCode,
+        languageLabel: lang?.language_label || primaryLanguageCode,
+        initialSelected: [topicName],
+        mode: "from-topics",
+      });
+    },
+    [report, primaryLanguageCode, navigateToPracticePicker]
+  );
+
+  const handleTopicTableClick = useCallback(
+    (lang, topicName) => {
+      if (!report || !clientInteractive) return;
+      const items = (lang.topics || []).map((t) => ({
+        name: t.topic_name,
+        hint: practiceIntentLabel(t.percent_correct),
+      }));
+      if (!items.length) return;
+      navigateToPracticePicker({
+        title: "Choose topics to practice",
+        subtitle:
+          "You selected a topic from your coverage table. Pick one or more topics, then start practice.",
+        topics: items,
+        languageCode: lang.language_code,
+        languageLabel: lang.language_label || lang.language_code,
+        initialSelected: [topicName],
+        mode: "from-topics",
+      });
+    },
+    [report, clientInteractive, navigateToPracticePicker]
+  );
+
+  const handleOpenUnexploredPicker = useCallback(() => {
+    const names = report?.insights?.unexplored_topics || [];
+    if (!names.length) return;
+    const lang = (report.languages || [])[0];
+    navigateToPracticePicker({
+      title: "Choose topics to explore",
+      subtitle:
+        "These catalog topics are new to you. Practice runs at beginner difficulty.",
+      topics: names.map((name) => ({ name, hint: "Explore (beginner)" })),
+      languageCode: lang?.language_code || primaryLanguageCode,
+      languageLabel: lang?.language_label || primaryLanguageCode,
+      initialSelected: [],
+      mode: "new-areas",
+    });
+  }, [report, primaryLanguageCode, navigateToPracticePicker]);
+
+  const handleQuickPractice = useCallback(async () => {
+    const eid = employeeIdInput.trim();
+    if (!eid) return;
+    setQuickPracticeStarting(true);
+    setQuickPracticeError(null);
+    try {
+      const data = await createQuickPracticeAssessment({
+        employeeId: eid,
+        languageCode: primaryLanguageCode,
+        questionsRequested: DEFAULT_QUICK_PRACTICE_QUESTIONS,
+      });
+      if (data.assessment_id) {
+        navigate("/client", {
+          state: { assessmentId: data.assessment_id, employeeId: eid },
+        });
+      } else {
+        setQuickPracticeError(
+          data.availability_message || "Could not create quick practice assessment."
+        );
+      }
+    } catch (e) {
+      setQuickPracticeError(e.message || "Could not create quick practice assessment.");
+    } finally {
+      setQuickPracticeStarting(false);
+    }
+  }, [employeeIdInput, primaryLanguageCode, navigate]);
+
+  const handleCertificateShare = useCallback(
+    async (certificateId, action) => {
+      const eid = employeeIdInput.trim();
+      if (!eid) return;
+      setCertShareBusyId(certificateId);
+      setCertShareMessage(null);
+      try {
+        const meta = await fetchCertificateShareMetadata({
+          employeeId: eid,
+          certificateId,
+        });
+        if (action === "linkedin") {
+          window.open(meta.linkedin_url, "_blank", "noopener,noreferrer");
+          setCertShareMessage("Opened LinkedIn share dialog.");
+        } else if (action === "verify") {
+          window.open(meta.verification_url || meta.share_url, "_blank", "noopener,noreferrer");
+          setCertShareMessage("Opened public verification page.");
+        } else {
+          await navigator.clipboard.writeText(meta.verification_url || meta.share_url);
+          setCertShareMessage("Verification link copied to clipboard.");
+        }
+      } catch (e) {
+        setCertShareMessage(e.message || "Could not load share link.");
+      } finally {
+        setCertShareBusyId(null);
+      }
+    },
+    [employeeIdInput]
+  );
 
   function handlePrint() {
     window.print();
@@ -1124,6 +1363,7 @@ export default function EmployeeReportPage({ mode = "client" }) {
                   <th scope="col">Score</th>
                   <th scope="col">Issued</th>
                   <th scope="col">By</th>
+                  {clientInteractive && <th scope="col">Share</th>}
                 </tr>
               </thead>
               <tbody>
@@ -1137,11 +1377,44 @@ export default function EmployeeReportPage({ mode = "client" }) {
                     </td>
                     <td>{formatDate(cert.issued_at)}</td>
                     <td>{cert.issued_by === "admin" ? "Admin" : "Participant"}</td>
+                    {clientInteractive && (
+                      <td className="emp-report-cert-share-cell">
+                        <button
+                          type="button"
+                          className="link-button"
+                          disabled={certShareBusyId === cert.id}
+                          onClick={() => handleCertificateShare(cert.id, "linkedin")}
+                        >
+                          LinkedIn
+                        </button>
+                        <button
+                          type="button"
+                          className="link-button"
+                          disabled={certShareBusyId === cert.id}
+                          onClick={() => handleCertificateShare(cert.id, "verify")}
+                        >
+                          Verify
+                        </button>
+                        <button
+                          type="button"
+                          className="link-button"
+                          disabled={certShareBusyId === cert.id}
+                          onClick={() => handleCertificateShare(cert.id, "copy")}
+                        >
+                          Copy link
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {certShareMessage && (
+            <p className="muted small-print" role="status">
+              {certShareMessage}
+            </p>
+          )}
         </section>
       )}
 
@@ -1245,6 +1518,8 @@ export default function EmployeeReportPage({ mode = "client" }) {
                     languages={report.languages}
                     languageColors={languageColors}
                     expanded={expanded}
+                    interactive={clientInteractive}
+                    onCellClick={handleHeatmapCellClick}
                   />
                 )}
               />
@@ -1285,16 +1560,25 @@ export default function EmployeeReportPage({ mode = "client" }) {
               expandedId={expandedChartId}
               onExpand={setExpandedChartId}
               renderChart={(expanded) => (
-                <RadarChart topics={report.radar_topics} expanded={expanded} />
+                <RadarChart
+                  topics={report.radar_topics}
+                  expanded={expanded}
+                  interactive={clientInteractive}
+                  onTopicClick={handleRadarTopicClick}
+                />
               )}
             />
           </section>
 
           {(report.languages || []).map((lang) => (
             <section key={lang.language_code} className="card emp-report-topics">
-              <h3>
-                {lang.language_label} — topics covered
-              </h3>
+              <h3>{lang.language_label} — topics covered</h3>
+              {clientInteractive && (
+                <p className="muted small-print emp-report-topics-hint">
+                  Click any topic to start a practice session — same flow as the heatmap and radar
+                  chart.
+                </p>
+              )}
               <div className="table-wrap">
                 <table className="data-table emp-report-topic-table">
                   <thead>
@@ -1311,9 +1595,20 @@ export default function EmployeeReportPage({ mode = "client" }) {
                     {(lang.topics || []).map((topic) => (
                       <tr key={topic.topic_name}>
                         <td>
-                          <span className={topicChipClass(topic.percent_correct)}>
-                            {topic.topic_name}
-                          </span>
+                          {clientInteractive ? (
+                            <button
+                              type="button"
+                              className={`emp-report-topic-link ${topicChipClass(topic.percent_correct)}`}
+                              onClick={() => handleTopicTableClick(lang, topic.topic_name)}
+                              title="Start practice on this topic"
+                            >
+                              {topic.topic_name}
+                            </button>
+                          ) : (
+                            <span className={topicChipClass(topic.percent_correct)}>
+                              {topic.topic_name}
+                            </span>
+                          )}
                         </td>
                         <td>{topic.questions_count}</td>
                         <td>{topic.mastered_count}</td>
@@ -1354,12 +1649,25 @@ export default function EmployeeReportPage({ mode = "client" }) {
                     ))}
                   </ul>
                 ) : (
-                  <p className="muted small-print">No weak topics below 70% in recent assessments.</p>
+                  <p className="muted small-print">
+                    No focus topics below {PROFICIENCY_THRESHOLD}% in recent assessments.
+                  </p>
                 )}
               </div>
             </div>
             <div className="emp-report-unexplored">
-              <h4>Unexplored topics (your languages)</h4>
+              <div className="emp-report-unexplored-header">
+                <h4>Unexplored topics (your languages)</h4>
+                {clientInteractive && (report.insights.unexplored_topics || []).length > 0 && (
+                  <button
+                    type="button"
+                    className="secondary emp-report-unexplored-cta"
+                    onClick={handleOpenUnexploredPicker}
+                  >
+                    Explore selected topics
+                  </button>
+                )}
+              </div>
               {(report.insights.unexplored_topics || []).length ? (
                 groupTopicsByTier(report.insights.unexplored_topics).map(([tier, names]) => (
                   <div key={tier} className="emp-report-unexplored-tier">
@@ -1383,7 +1691,24 @@ export default function EmployeeReportPage({ mode = "client" }) {
             </div>
             {(report.insights.recommendations || []).length > 0 && (
               <div className="emp-report-recommendations">
-                <h4>Recommendations</h4>
+                <div className="emp-report-recommendations-header">
+                  <h4>Recommendations</h4>
+                  {clientInteractive && (
+                    <button
+                      type="button"
+                      className="primary emp-report-quick-practice-btn"
+                      onClick={handleQuickPractice}
+                      disabled={quickPracticeStarting}
+                    >
+                      {quickPracticeStarting ? "Creating…" : "Ok, let's do it!"}
+                    </button>
+                  )}
+                </div>
+                {quickPracticeError && (
+                  <p className="error" role="alert">
+                    {quickPracticeError}
+                  </p>
+                )}
                 <ul>
                   {report.insights.recommendations.map((r) => (
                     <li key={r}>{r}</li>

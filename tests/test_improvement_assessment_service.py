@@ -542,5 +542,95 @@ class TestCreateDifficultyImprovementAssessment(unittest.TestCase):
         mock_llm.assert_not_called()
 
 
+class TestFromTopicsAssessment(unittest.TestCase):
+    """Stage 12B — explicit topic picker practice."""
+
+    @patch("services.improvement_assessment_service._persist_bank_only_assessment")
+    @patch("services.improvement_assessment_service._build_bank_only_rows")
+    @patch(
+        "services.improvement_assessment_service.employee_profile_service.get_employee_profile"
+    )
+    def test_from_topics_with_explicit_names(
+        self,
+        mock_profile: unittest.mock.MagicMock,
+        mock_build: unittest.mock.MagicMock,
+        mock_persist: unittest.mock.MagicMock,
+    ) -> None:
+        from services.improvement_assessment_service import create_from_topics_assessment
+
+        mock_profile.return_value = {
+            "assessments_analyzed": 2,
+            "topic_performance": [
+                {
+                    "topic_name": "OOP Basics",
+                    "average_percent": 60.0,
+                    "last_difficulty": "beginner",
+                }
+            ],
+            "recommended_difficulty_by_topic": {"OOP Basics": "beginner"},
+        }
+        mock_build.return_value = ([{"question_id": "1"}], 0)
+        mock_persist.return_value = "ASM-FROM"
+
+        result = create_from_topics_assessment(
+            "E1001",
+            "python",
+            ["OOP Basics"],
+            questions_requested=10,
+        )
+
+        self.assertEqual(result["assessment_id"], "ASM-FROM")
+        self.assertEqual(result["selected_topics"], ["OOP Basics"])
+        self.assertEqual(result["questions_requested"], 10)
+
+
+class TestQuickPracticeAssessment(unittest.TestCase):
+    """Stage 12C — one-click recommendation practice."""
+
+    @patch("services.improvement_assessment_service._persist_bank_only_assessment")
+    @patch("services.improvement_assessment_service._build_bank_only_rows")
+    @patch(
+        "services.improvement_assessment_service.employee_profile_service.get_employee_report"
+    )
+    @patch(
+        "services.improvement_assessment_service.employee_profile_service.get_employee_profile"
+    )
+    def test_quick_practice_default_ten_questions(
+        self,
+        mock_profile: unittest.mock.MagicMock,
+        mock_report: unittest.mock.MagicMock,
+        mock_build: unittest.mock.MagicMock,
+        mock_persist: unittest.mock.MagicMock,
+    ) -> None:
+        from services.improvement_assessment_service import create_quick_practice_assessment
+
+        mock_report.return_value = {
+            "insights": {
+                "unexplored_topics": ["Tier 2 - New Topic"],
+                "focus_areas": ["OOP Basics"],
+                "strengths": [],
+            }
+        }
+        mock_profile.return_value = {
+            "assessments_analyzed": 2,
+            "topic_performance": [
+                {
+                    "topic_name": "OOP Basics",
+                    "average_percent": 60.0,
+                    "last_difficulty": "beginner",
+                }
+            ],
+            "recommended_difficulty_by_topic": {"OOP Basics": "beginner"},
+        }
+        mock_build.return_value = ([{"question_id": "1"}], 0)
+        mock_persist.return_value = "ASM-QUICK"
+
+        result = create_quick_practice_assessment("E1001", "python")
+
+        self.assertEqual(result["assessment_id"], "ASM-QUICK")
+        self.assertEqual(result["questions_requested"], 10)
+        self.assertTrue(result["selected_topics"])
+
+
 if __name__ == "__main__":
     unittest.main()

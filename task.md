@@ -467,13 +467,12 @@
 
 ---
 
-## Stage 10 optional — LinkedIn sharing (backlog)
+## Stage 10 optional — LinkedIn sharing (superseded by Stage 12E)
 
-- [ ] **Share on LinkedIn?** button after certificate download (not v1)
-- [ ] Research: OAuth vs deep link to “Add license/certification” + public verification URL
-- [ ] Product/legal review before implementation
+- [x] Documented in plan (Stage 10 optional)
+- [ ] **Moved to Stage 12E** — implement LinkedIn + social share there
 
-**Acceptance:** Documented in plan only until certificate v1 ships.
+**Acceptance:** See Stage 12E.
 
 ---
 
@@ -584,6 +583,166 @@
 
 ---
 
+## Stage 12 — Interactive guided practice, inclusive UX & social sharing
+
+> **Goal:** Topic pickers on Skills Progress Report (heatmap, radar, unexplored, recommendations quick-start); selectable topics on improvement wizard; **75%** proficiency rules; no “weak” in participant UI; LinkedIn/social certificate share.  
+> **Depends on:** Stages 4B, 5–7, 10, 11B  
+> **Recommended order:** 12A → 12B + 12C (parallel) → 12D → 12E
+
+### Shared caps (enforce in API + UI)
+
+- [ ] Max **15** questions per practice session (`questions_requested` clamped 1–15)
+- [ ] Max **3** questions per topic (MCQ + coding combined) in one assessment
+- [ ] Max **5** topics per session (new-areas + step-up; focus path respects same per-topic cap)
+- [ ] Bank-only — never call LLM on client improvement paths
+- [ ] Unexplored / new topics always **beginner** difficulty
+
+### 12A — Inclusive language & 75% threshold
+
+**Frontend**
+
+- [ ] `EmployeeReportPage.jsx`: replace “weak” with **“need improvement”** (topic table, insights, empty states)
+- [ ] `ImprovementPage.jsx`: rename **“Improve my weak areas”** → inclusive label (e.g. **“Strengthen my focus areas”**)
+- [ ] Remove **“weak”** badge on topic rows; use **“need improvement”** or styling only
+- [ ] Update copy on `path=weak` screens (headings, buttons, helper text) — no “weak areas” phrasing
+- [ ] Report print/PDF strings: no “weak”
+
+**Backend**
+
+- [ ] Align focus-topic threshold to **75%** in `employee_profile_service` (was 70% in places)
+- [ ] Document `FOCUS_TOPIC_PERCENT_THRESHOLD` in `.env.example` (optional, default 75)
+- [ ] Step-up eligibility consistent with **≥ 75%** at current level
+
+**Tests**
+
+- [ ] CI or test: participant-facing JSX does not contain “weak” / “Weak areas” (allowlist internal vars if needed)
+
+**Acceptance:** `/client/my-report` and `/client/improve` show inclusive copy; focus topics use 75% cutoff.
+
+---
+
+### 12B — My Report: heatmap & radar topic picker
+
+**Frontend (`EmployeeReportPage.jsx`)**
+
+- [ ] Click handler on **heatmap cells** only → open modal **“Choose the topics you would like to practice more”**
+- [ ] Click handler on **radar chart** topics only → same modal (scoped to radar topics)
+- [ ] Per topic: show **Improve this topic** if &lt; 75%; **Step up difficulty** if ≥ 75%
+- [ ] Multi-select + question count (default 10, max 15) + **Start practice**
+- [ ] On success → navigate to `/client` with new `assessment_id`
+
+**Backend**
+
+- [ ] `POST /client/improvement/from-topics` (or extend improvement service):
+  - [ ] Body: `employee_id`, `language_code`, `topic_names[]`, optional `questions_requested`, per-topic intent derived from profile or explicit
+  - [ ] Bank-only assembly with 5/topic and 15 total caps
+- [ ] Pydantic schemas + `routers/client.py` route
+- [ ] OpenAPI: add to `EXPECTED_ROUTES` in `test_openapi.py`
+
+**Tests**
+
+- [ ] API: mixed intents (below/above 75%) → correct difficulty per topic
+- [ ] API: rejects &gt; 15 questions or &gt; 5 topics when applicable
+
+**Acceptance:** Heatmap/radar click → modal → practice assessment with correct difficulty rules.
+
+---
+
+### 12C — My Report: unexplored picker & “Ok, let’s do it!”
+
+**Frontend**
+
+- [ ] **Unexplored topics** section: button to open **“Choose the topics you would like to explore”** modal
+- [ ] Multi-select up to **5** topics; max **15** questions; beginner only
+- [ ] **Recommendations** heading: add **“Ok, let’s do it!”** button
+- [ ] Quick practice: default **10** questions from recommendation bullets (explore + momentum topics)
+
+**Backend**
+
+- [ ] Extend `POST /client/improvement/new-areas` with optional `topic_names[]` (client-selected unexplored topics)
+- [ ] `POST /client/improvement/quick-practice` — `employee_id`, `language_code`, optional `questions_requested` (default 10, max 15)
+  - [ ] Server builds topic plan from `get_employee_report` insights (explore vs focus vs step-up)
+- [ ] Schemas + routes + tests
+
+**Acceptance:** Unexplored multi-select works; one-click recommendations → 10-question assessment.
+
+---
+
+### 12D — Improvement wizard: topic selection & caps
+
+**Frontend (`ImprovementPage.jsx`)**
+
+**Focus path (`path=weak` → display as focus / strengthen)**
+
+- [ ] Checkbox list of topics **below 75%** (last 3 assessments)
+- [ ] User selects topics + question count (max 15) → **Start practice**
+- [ ] **“Help me improve all my focus areas”** — selects all eligible topics, still server-capped
+
+**New areas path (`path=new`)**
+
+- [ ] Checkbox list of unexplored topics; max **5** selections; max **15** questions; beginner only
+
+**Step-up path (`path=difficulty`)**
+
+- [ ] Checkbox list of topics eligible for step-up (≥ 75% at current level); max **5** topics; max **15** questions
+
+**Backend**
+
+- [ ] Extend `POST /client/improvement/weak-areas` with `topic_names?`, `questions_requested?` (max 15)
+- [ ] Extend `POST /client/improvement/new-areas` with `topic_names?`, `questions_requested?`
+- [ ] Extend `POST /client/improvement/difficulty` with `topic_names?`, `questions_requested?`
+- [ ] `improvement_assessment_service`: allocate questions across topics; enforce ≤ 5 per topic
+- [ ] Backward compatible when `topic_names` omitted (current auto-select behavior)
+
+**Tests**
+
+- [ ] Focus: subset of topics → only those in assessment
+- [ ] New: 6 topics selected → 400 or clamp to 5
+- [ ] Difficulty: only ≥ 75% topics offered
+- [ ] All paths: 16 questions requested → clamped to 15
+
+**Acceptance:** All three improvement paths support topic pickers and caps; inclusive labels throughout.
+
+---
+
+### 12E — Social certificate sharing (LinkedIn & other)
+
+> Promoted from Stage 10 optional.
+
+**Frontend**
+
+- [ ] After certificate download: **Share on LinkedIn** button
+- [ ] **Copy link** for verification / achievement URL
+- [ ] Optional: Web Share API or X intent URL on supported browsers
+
+**Backend**
+
+- [ ] `GET /client/certificate/{id}/share-metadata` — title, level, date, public URL
+- [ ] Stable share URL per issued certificate (document in README)
+
+**Product / legal**
+
+- [ ] LinkedIn button branding guidelines
+- [ ] No auto-post without explicit user action
+
+**Tests**
+
+- [ ] Share metadata endpoint returns expected fields for issued cert
+- [ ] Manual QA: deep link opens LinkedIn add-certification flow
+
+**Acceptance:** User can share earned certificate to LinkedIn and copy a shareable link.
+
+---
+
+### Stage 12 — Docs & regression
+
+- [ ] `README.md` — document new improvement/report interactions and caps
+- [ ] `plan.md` — mark Stage 12 complete when done
+- [ ] `tests/TEST_GUIDE.md` — new endpoints and copy rules
+- [ ] Full `pytest tests/ -q` green on Atlas `test_db`
+
+---
+
 ## Stage 8 — Future backlog (not scheduled)
 
 ### 4B report polish (optional)
@@ -599,7 +758,7 @@
 - [ ] Admin retire/archive bank question
 - [ ] `scripts/seed_question_bank.py` — bulk demo questions from catalog
 - [ ] Update [ARCHITECTURE.md](ARCHITECTURE.md) — MongoDB Atlas + question bank (Stage 11B)
-- [ ] **LinkedIn certificate share** — Stage 10 optional (after certificate v1)
+- [ ] **LinkedIn / social certificate share** — **Stage 12E**
 
 **Explicitly out of scope:** email delivery (`POST …/employee-report/send`).
 
@@ -635,6 +794,14 @@
 20. Re-run steps 1–15 on MongoDB-backed deploy (no local Postgres)
 21. If migrating: run `scripts/migrate_postgres_to_mongodb.py --dry-run` then live; verify row counts
 
+### After Stage 12
+
+22. My Report: click heatmap cell → modal → improve topic (&lt; 75%) or step up (≥ 75%)
+23. My Report: **Ok, let’s do it!** → 10-question quick practice from recommendations
+24. Improvement: focus path — select topics, max 15 questions, no “weak” copy
+25. Improvement: new areas — select up to 5 topics, beginner only
+26. Certificate: Share on LinkedIn + copy link
+
 ---
 
 ## Agent session quick-pick
@@ -657,5 +824,10 @@
 | LinkedIn share (future) | **10 optional** |
 | Grok vs Gemini generation picker | **11A** |
 | MongoDB Atlas migration | **11B** (split 11B-1…11B-6) |
+| Inclusive copy + 75% threshold | **12A** |
+| Report heatmap/radar topic picker | **12B** |
+| Report unexplored + quick practice | **12C** |
+| Improvement wizard topic selection | **12D** |
+| LinkedIn / social certificate share | **12E** |
 
 Copy the stage block + **Acceptance** line into the agent prompt as scope boundary.

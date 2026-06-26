@@ -23,6 +23,10 @@ from schemas.admin import (
 )
 from schemas.assessment import AssessmentResponse
 from schemas.certificate import AdminIssueCertificateBody
+from schemas.certificate import (
+    CertificateIssuerSettingsBody,
+    CertificateIssuerSettingsResponse,
+)
 from schemas.certificate_layout import (
     CertificateLayoutSavedResponse,
     CertificateTemplateListResponse,
@@ -35,6 +39,7 @@ from schemas.common import OkDeletedResponse
 from schemas.improvement import EmployeeReportResponse
 from services import assessment_service, audit_log, catalog_service, db_service, question_bank_service
 from services import certificate_service, employee_profile_service
+from services import platform_settings_service
 
 admin_router = APIRouter(
     prefix="/admin",
@@ -654,6 +659,45 @@ def patch_assessment_question(
     if not updated:
         raise HTTPException(status_code=404, detail="Question not found")
     return {"ok": True, "assessment_id": aid, "question_id": question_id.strip()}
+
+
+@admin_router.get(
+    "/certificate/issuer-settings",
+    summary="Certificate issuer organization and verification copy",
+    description="Return the issuing organization name and verification page intro shown on LinkedIn and public verify URLs.",
+    response_model=CertificateIssuerSettingsResponse,
+    dependencies=[Depends(require_admin)],
+)
+def get_certificate_issuer_settings() -> CertificateIssuerSettingsResponse:
+    data = platform_settings_service.get_certificate_issuer_settings()
+    return CertificateIssuerSettingsResponse.model_validate(data)
+
+
+@admin_router.put(
+    "/certificate/issuer-settings",
+    summary="Save certificate issuer organization and verification copy",
+    description="Update the issuing organization name (LinkedIn Issuing organization field) and verification page intro text.",
+    response_model=CertificateIssuerSettingsResponse,
+    dependencies=[Depends(require_admin)],
+)
+def save_certificate_issuer_settings(
+    request: Request,
+    body: CertificateIssuerSettingsBody,
+) -> CertificateIssuerSettingsResponse:
+    try:
+        data = platform_settings_service.save_certificate_issuer_settings(
+            organization_name=body.organization_name,
+            verification_intro=body.verification_intro,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    audit_log.admin_action(
+        request,
+        action="certificate.issuer.save",
+        resource="platform_settings",
+        resource_id="certificate_issuer",
+    )
+    return CertificateIssuerSettingsResponse.model_validate(data)
 
 
 @admin_router.get(

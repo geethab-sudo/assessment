@@ -30,6 +30,7 @@ COLLECTIONS = (
     "assessment_attempts",
     "submissions",
     "certificates_issued",
+    "platform_settings",
 )
 
 
@@ -152,6 +153,8 @@ def _ensure_indexes() -> None:
     db.certificates_issued.create_index([("employee_id", ASCENDING)])
     db.certificates_issued.create_index([("assessment_id", ASCENDING)])
 
+    db.platform_settings.create_index([("key", ASCENDING)], unique=True)
+
 
 def _backfill_question_bank_difficulty_labels() -> None:
     mapping = {
@@ -208,6 +211,12 @@ def init_db() -> None:
     """Create indexes and run one-time backfills (idempotent)."""
     _wait_for_mongo()
     _ensure_indexes()
+    from services.catalog_seed import ensure_default_catalog
+
+    ensure_default_catalog()
+    from services.platform_settings_service import ensure_default_certificate_issuer_settings
+
+    ensure_default_certificate_issuer_settings()
     _backfill_question_bank_difficulty_labels()
     _backfill_question_bank_from_assessment_questions_if_needed()
     _backfill_employee_question_mastery_if_empty()

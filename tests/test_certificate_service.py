@@ -132,5 +132,31 @@ class TestUncalibratedDetection(unittest.TestCase):
         )
 
 
+class TestCertificateShareBundle(unittest.TestCase):
+    def test_build_share_bundle_linkedin_and_verify_url(self) -> None:
+        from services.certificate_service import build_certificate_share_bundle
+
+        row = {
+            "id": 42,
+            "display_name": "Jane Doe",
+            "level": "intermediate",
+            "language_label": "Python",
+            "issued_at": "2026-06-26T10:00:00+00:00",
+            "score": 0.92,
+        }
+        bundle = build_certificate_share_bundle(row)
+        self.assertIn("/verify/certificate/42", bundle["verification_url"])
+        self.assertEqual(bundle["verification_url"], bundle["share_url"])
+        self.assertIn("issueYear=2026", bundle["linkedin_url"])
+        self.assertIn("issueMonth=6", bundle["linkedin_url"])
+        self.assertIn("certUrl=", bundle["linkedin_url"])
+        self.assertNotIn("expirationYear", bundle["linkedin_url"])
+        self.assertGreater(len(bundle["skills"]), 0)
+        self.assertIn("Jane Doe", bundle["media_title"])
+        self.assertIn("/api/public/certificate/42/image", bundle["image_url"])
+        self.assertIn("organizationName=", bundle["linkedin_url"])
+        self.assertIn("Wekan", bundle["organization_name"])
+
+
 if __name__ == "__main__":
     unittest.main()

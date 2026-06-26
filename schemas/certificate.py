@@ -71,6 +71,69 @@ class CertificateIssuedResponse(BaseModel):
     language_label: str | None = None
 
 
+class CertificateShareMetadataResponse(BaseModel):
+    certificate_id: int
+    title: str
+    display_name: str
+    level: str
+    issued_at: str | None = None
+    issue_year: int | None = None
+    issue_month: int | None = None
+    organization_name: str
+    verification_url: str
+    share_url: str
+    image_url: str
+    linkedin_url: str
+    skills: list[str] = Field(default_factory=list)
+    media_title: str
+    media_description: str
+
+
+class CertificateIssuerSettingsBody(BaseModel):
+    organization_name: str = Field(..., min_length=1, max_length=256)
+    verification_intro: str = Field(..., min_length=1, max_length=2000)
+
+    @field_validator("organization_name", "verification_intro", mode="before")
+    @classmethod
+    def strip_fields(cls, v: str) -> str:
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+
+class CertificateIssuerSettingsResponse(BaseModel):
+    organization_name: str
+    verification_intro: str
+
+
+class PublicCertificateSettingsResponse(BaseModel):
+    organization_name: str
+    verification_intro: str
+
+
+class CertificateVerificationResponse(BaseModel):
+    """Public credential verification (Coursera-style)."""
+
+    certificate_id: int
+    verified: bool = True
+    display_name: str
+    title: str
+    level: str
+    language_label: str
+    organization_name: str
+    issued_at: str | None = None
+    issue_year: int | None = None
+    issue_month: int | None = None
+    score_percent: int | None = None
+    verification_url: str
+    image_url: str
+    skills: list[str] = Field(default_factory=list)
+    media_title: str
+    media_description: str
+    verification_intro: str
+    verification_description: str
+
+
 class CertificateEarnedItem(BaseModel):
     """One certificate row earned by an employee."""
 

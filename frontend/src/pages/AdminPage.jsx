@@ -132,6 +132,9 @@ export default function AdminPage() {
 
   const tier1Presets = useMemo(() => getTier1Presets(), []);
 
+  const catalogTopicsReady =
+    !loadingLanguages && !loadingTopics && languageId !== "";
+
   const topicById = useMemo(
     () => Object.fromEntries(topics.map((t) => [String(t.id), t])),
     [topics]
@@ -186,6 +189,7 @@ export default function AdminPage() {
     }
     setLoadingTopics(true);
     setCatalogHint(null);
+    setPresetMissingTopics([]);
     setSelectedTopicIds([]);
     try {
       const data = await apiFetch(
@@ -245,8 +249,12 @@ export default function AdminPage() {
     (presetName) => {
       const preset = getPresetByName(presetName);
       if (!preset) return;
-      const applied = applyPreset(preset, topics);
       setSelectedPresetName(presetName);
+      if (!catalogTopicsReady) {
+        setPresetMissingTopics([]);
+        return;
+      }
+      const applied = applyPreset(preset, topics);
       setSelectedTopicIds(applied.selectedTopicIds);
       setPerTopicCounts(applied.perTopicCounts);
       setLevel(applied.level);
@@ -259,7 +267,7 @@ export default function AdminPage() {
       setPresetMissingTopics(applied.missingTopicNames);
       setError(null);
     },
-    [topics]
+    [topics, catalogTopicsReady]
   );
 
   // Re-match preset topic ids when catalog topics finish loading (or after seeding).
@@ -886,10 +894,31 @@ export default function AdminPage() {
                   </div>
                 )}
 
-                {presetMissingTopics.length > 0 && (
+                {presetMissingTopics.length > 0 && catalogTopicsReady && (
                   <div className="error" role="alert" style={{ marginTop: "0.75rem" }}>
-                    Missing catalog topics. Run{" "}
-                    <code>python3 scripts/seed_sample_catalog.py</code>
+                    {topics.length === 0 ? (
+                      <>
+                        The Python catalog could not be loaded from the database. Restart the
+                        API server (it auto-seeds the catalog on startup) and click{" "}
+                        <button
+                          type="button"
+                          className="link-button"
+                          onClick={() => {
+                            void loadLanguages();
+                            if (languageId) void loadTopicsForLanguage(languageId);
+                          }}
+                        >
+                          reload catalog
+                        </button>
+                        .
+                      </>
+                    ) : (
+                      <>
+                        Some preset topics are still missing from the catalog after sync.
+                        Restart the API server to repair automatically, or run{" "}
+                        <code>python3 scripts/seed_sample_catalog.py</code>.
+                      </>
+                    )}
                     <ul style={{ margin: "0.5rem 0 0 1rem" }}>
                       {presetMissingTopics.map((n) => (
                         <li key={n}>{n}</li>

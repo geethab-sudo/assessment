@@ -102,7 +102,12 @@ class RadarTopicItem(BaseModel):
 class WeakAreasImprovementRequest(BaseModel):
     employee_id: str = Field(..., min_length=1, max_length=64)
     language_code: str = Field(..., min_length=1, max_length=32)
-    questions_requested: int = Field(default=15, ge=1, le=50)
+    questions_requested: int = Field(default=15, ge=1, le=15)
+    topic_names: list[str] = Field(
+        default_factory=list,
+        max_length=5,
+        description="Optional focus topics (below proficiency threshold). Max 5.",
+    )
 
 
 class WeakAreasImprovementResponse(BaseModel):
@@ -114,17 +119,26 @@ class WeakAreasImprovementResponse(BaseModel):
     availability_message: str | None = None
     topic_summary: str | None = None
     weak_topics: list[str] = Field(default_factory=list)
+    focus_topics: list[str] = Field(
+        default_factory=list,
+        description="Same as weak_topics — inclusive label for UI.",
+    )
 
 
 class NewAreasImprovementRequest(BaseModel):
     employee_id: str = Field(..., min_length=1, max_length=64)
     language_code: str = Field(..., min_length=1, max_length=32)
-    questions_requested: int = Field(default=15, ge=1, le=50)
+    questions_requested: int = Field(default=15, ge=1, le=15)
     topics_count: int = Field(
         default=5,
         ge=1,
-        le=10,
-        description="How many unexplored topics to include (higher tiers preferred).",
+        le=5,
+        description="How many unexplored topics when topic_names omitted.",
+    )
+    topic_names: list[str] = Field(
+        default_factory=list,
+        max_length=5,
+        description="Optional unexplored topics to explore (beginner). Max 5.",
     )
 
 
@@ -142,12 +156,17 @@ class NewAreasImprovementResponse(BaseModel):
 class DifficultyImprovementRequest(BaseModel):
     employee_id: str = Field(..., min_length=1, max_length=64)
     language_code: str = Field(..., min_length=1, max_length=32)
-    questions_requested: int = Field(default=15, ge=1, le=50)
+    questions_requested: int = Field(default=15, ge=1, le=15)
     topics_count: int = Field(
         default=5,
         ge=1,
-        le=10,
-        description="How many step-up-ready topics to include.",
+        le=5,
+        description="How many step-up-ready topics when topic_names omitted.",
+    )
+    topic_names: list[str] = Field(
+        default_factory=list,
+        max_length=5,
+        description="Optional topics eligible for step-up. Max 5.",
     )
 
 
@@ -164,6 +183,31 @@ class DifficultyImprovementResponse(BaseModel):
         default_factory=dict,
         description="Target bank difficulty per selected topic (e.g. intermediate).",
     )
+
+
+class FromTopicsImprovementRequest(BaseModel):
+    employee_id: str = Field(..., min_length=1, max_length=64)
+    language_code: str = Field(..., min_length=1, max_length=32)
+    topic_names: list[str] = Field(..., min_length=1, max_length=5)
+    questions_requested: int = Field(default=10, ge=1, le=15)
+
+
+class QuickPracticeRequest(BaseModel):
+    employee_id: str = Field(..., min_length=1, max_length=64)
+    language_code: str = Field(..., min_length=1, max_length=32)
+    questions_requested: int = Field(default=10, ge=1, le=15)
+
+
+class ImprovementSessionResponse(BaseModel):
+    employee_id: str
+    language_code: str
+    questions_requested: int
+    questions_delivered: int
+    assessment_id: str | None = None
+    availability_message: str | None = None
+    topic_summary: str | None = None
+    selected_topics: list[str] = Field(default_factory=list)
+    target_difficulty_by_topic: dict[str, str] = Field(default_factory=dict)
 
 
 class EmployeeReportResponse(BaseModel):

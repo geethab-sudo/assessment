@@ -21,6 +21,14 @@ def unique_assessment_id(prefix: str = "ASM-TEST") -> str:
 
 def clear_all_collections() -> None:
     """Remove all documents from app collections (indexes remain)."""
+    from services.database import get_database_name
+
+    db_name = get_database_name()
+    if db_name != TEST_DB_NAME:
+        raise RuntimeError(
+            f"Refusing to clear MongoDB collections on database {db_name!r}. "
+            f"Tests may only wipe {TEST_DB_NAME!r}. Check MONGODB_DB_NAME and pytest conftest."
+        )
     for name in COLLECTIONS:
         coll(name).delete_many({})
 

@@ -1,0 +1,23 @@
+ssh -i assessment.pem ubuntu@ec2-54-226-73-84.compute-1.amazonaws.com
+
+uvicorn app:app --reload --host 0.0.0.0 --port 8000
+
+npm run dev -- --host 0.0.0.0
+
+Cuando importa cambios nuevos:
+
+after you git pull in the new code, run the commands below to restart the backend service and check if it's active
+
+sudo systemctl restart assessment-backend.service
+sudo systemctl status assessment-backend.service
+
+if it fails to restart, try the below to see the application logs
+
+journalctl -u assessment-backend.service -n 100 --no-pager
+
+For the frontend, npm run dev will not work, you'll need the production build
+
+npm install
+npm run build
+sudo nginx -t
+sudo systemctl reload nginx

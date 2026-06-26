@@ -569,6 +569,233 @@ def list_employee_certificates(employee_id: str) -> list[dict[str, Any]]:
     ]
 
 
+def _public_base_url() -> str:
+    import os
+
+    return (os.environ.get("APP_PUBLIC_URL") or "http://localhost:5173").rstrip("/")
+
+
+def _organization_name() -> str:
+    from services.platform_settings_service import get_certificate_issuer_settings
+
+    return get_certificate_issuer_settings()["organization_name"]
+
+
+def _verification_intro() -> str:
+    from services.platform_settings_service import get_certificate_issuer_settings
+
+    return get_certificate_issuer_settings()["verification_intro"]
+
+
+def build_verification_description(row: dict[str, Any]) -> str:
+    display = (row.get("display_name") or "The recipient").strip()
+    title = certificate_title_for_row(row)
+    org = _organization_name()
+    issue_date = _parse_issue_date(row.get("issued_at"))
+    date_label = format_issue_date(issue_date)
+    score = row.get("score")
+    cid = row.get("id")
+    score_txt = ""
+    if score is not None:
+        score_txt = f" with an assessment score of {int(round(float(score) * 100))}%"
+    return (
+        f"This credential confirms that {display} earned the {title} from {org} "
+        f"on {date_label}{score_txt}. Credential ID #{cid} is unique to this achievement "
+        f"and can be verified at any time using this page."
+    )
+
+
+def _parse_issue_date(issued_at: str | None) -> date:
+    if issued_at:
+        try:
+            return datetime.fromisoformat(issued_at.replace("Z", "+00:00")).date()
+        except ValueError:
+            pass
+    return datetime.now(timezone.utc).date()
+
+
+def _issue_year_month(issued_at: str | None) -> tuple[int, int]:
+    d = _parse_issue_date(issued_at)
+    return d.year, d.month
+
+
+def get_certificate_row(certificate_id: int) -> dict[str, Any] | None:
+    from services.database import coll
+
+    return coll("certificates_issued").find_one({"id": int(certificate_id)})
+
+
+def certificate_title_for_row(row: dict[str, Any]) -> str:
+    level = str(row.get("level") or "beginner").title()
+    lang = (row.get("language_label") or "Programming").strip()
+    return f"{lang} {level} Assessment Certificate"
+
+
+def verification_url_for_certificate(certificate_id: int) -> str:
+    return f"{_public_base_url()}/verify/certificate/{int(certificate_id)}"
+
+
+def certificate_image_api_url(certificate_id: int) -> str:
+    return f"{_public_base_url()}/api/public/certificate/{int(certificate_id)}/image"
+
+
+def suggest_certificate_skills(row: dict[str, Any]) -> list[str]:
+    level = str(row.get("level") or "beginner").lower()
+    lang = (row.get("language_label") or "Programming").strip().split()[0]
+    pools: dict[str, list[str]] = {
+        "beginner": [
+            lang,
+            "Programming Fundamentals",
+            "Problem Solving",
+            "Technical Literacy",
+            "Software Basics",
+        ],
+        "intermediate": [
+            lang,
+            "Object-Oriented Programming",
+            "Software Testing",
+            "Debugging",
+            "Code Quality",
+            "Technical Assessment",
+        ],
+        "advanced": [
+            lang,
+            "Advanced Programming",
+            "Software Engineering",
+            "System Design Basics",
+            "Performance Awareness",
+            "Technical Leadership",
+        ],
+    }
+    return pools.get(level, pools["beginner"])
+
+
+def certificate_media_copy(row: dict[str, Any], *, title: str, verification_url: str) -> tuple[str, str]:
+    display = (row.get("display_name") or "").strip() or "Participant"
+    lang = (row.get("language_label") or "Programming").strip()
+    level = str(row.get("level") or "beginner").title()
+    score = row.get("score")
+    score_txt = f" Score: {int(round(float(score) * 100))}%." if score is not None else ""
+    media_title = f"{title} — {display}"
+    media_description = (
+        f"Verified {lang} {level} skills certificate issued by {_organization_name()}.{score_txt} "
+        f"Credential ID #{row.get('id')}. Verify at {verification_url}"
+    )
+    return media_title, media_description
+
+
+def build_linkedin_certification_url(
+    *,
+    title: str,
+    verification_url: str,
+    certificate_id: int,
+    issue_year: int,
+    issue_month: int,
+) -> str:
+    from urllib.parse import urlencode
+
+    params = {
+        "startTask": "CERTIFICATION_NAME",
+        "name": title,
+        "organizationName": _organization_name(),
+        "issueYear": str(issue_year),
+        "issueMonth": str(issue_month),
+        "certUrl": verification_url,
+        "certId": str(certificate_id),
+    }
+    return "https://www.linkedin.com/profile/add?" + urlencode(params)
+
+
+def build_certificate_share_bundle(row: dict[str, Any]) -> dict[str, Any]:
+    cid = int(row["id"])
+    title = certificate_title_for_row(row)
+    issue_year, issue_month = _issue_year_month(row.get("issued_at"))
+    verification_url = verification_url_for_certificate(cid)
+    image_url = certificate_image_api_url(cid)
+    skills = suggest_certificate_skills(row)
+    media_title, media_description = certificate_media_copy(
+        row, title=title, verification_url=verification_url
+    )
+    linkedin_url = build_linkedin_certification_url(
+        title=title,
+        verification_url=verification_url,
+        certificate_id=cid,
+        issue_year=issue_year,
+        issue_month=issue_month,
+    )
+    return {
+        "certificate_id": cid,
+        "title": title,
+        "display_name": row.get("display_name") or "",
+        "level": row.get("level") or "beginner",
+        "issued_at": row.get("issued_at"),
+        "issue_year": issue_year,
+        "issue_month": issue_month,
+        "organization_name": _organization_name(),
+        "verification_url": verification_url,
+        "share_url": verification_url,
+        "image_url": image_url,
+        "linkedin_url": linkedin_url,
+        "skills": skills,
+        "media_title": media_title,
+        "media_description": media_description,
+    }
+
+
+def render_certificate_for_row(row: dict[str, Any]) -> CertificateRenderResult:
+    return render_certificate(
+        str(row.get("level") or "beginner"),
+        str(row.get("display_name") or "").strip(),
+        issue_date=_parse_issue_date(row.get("issued_at")),
+    )
+
+
+def get_public_certificate_verification(certificate_id: int) -> dict[str, Any]:
+    row = get_certificate_row(certificate_id)
+    if not row:
+        raise ValueError("Certificate not found")
+    bundle = build_certificate_share_bundle(row)
+    score = row.get("score")
+    score_percent = int(round(float(score) * 100)) if score is not None else None
+    return {
+        **bundle,
+        "verified": True,
+        "language_label": (row.get("language_label") or "Programming").strip(),
+        "score_percent": score_percent,
+        "verification_intro": _verification_intro(),
+        "verification_description": build_verification_description(row),
+    }
+
+
+def generate_verification_qr_png(verification_url: str) -> bytes:
+    import qrcode
+
+    qr = qrcode.QRCode(version=1, box_size=8, border=2)
+    qr.add_data(verification_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def get_certificate_share_metadata(
+    certificate_id: int,
+    employee_id: str,
+) -> dict[str, Any]:
+    """Share links for a certificate the employee owns."""
+    from services.attempt_service import normalize_employee_id
+
+    eid = normalize_employee_id(employee_id)
+    if not eid:
+        raise ValueError("employee_id is required")
+
+    row = get_certificate_row(certificate_id)
+    if not row or row.get("employee_id") != eid:
+        raise ValueError("Certificate not found")
+    return build_certificate_share_bundle(row)
+
+
 def record_certificate_issued(
     *,
     employee_id: str,
