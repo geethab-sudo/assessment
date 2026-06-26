@@ -16,12 +16,14 @@ from typing import Any, Literal
 from services import catalog_service, db_service, report_service
 from services.attempt_service import get_attempt_timing
 from services.question_bank_service import get_employee_mastered_bank_ids
+from services.improvement_constants import PROFICIENCY_THRESHOLD_PERCENT
 from services.report_service import _parse_participant_name
 
 Scope = Literal["last_3", "full_history"]
 Period = Literal["all_time", "last_90_days"]
 
-WEAK_THRESHOLD = 70.0
+FOCUS_TOPIC_THRESHOLD = PROFICIENCY_THRESHOLD_PERCENT
+WEAK_THRESHOLD = FOCUS_TOPIC_THRESHOLD  # legacy alias for profile fields
 STRENGTH_THRESHOLD = 80.0
 STRENGTH_MIN_QUESTIONS = 5
 SCORE_CORRECT_THRESHOLD = 70.0
@@ -800,7 +802,7 @@ def _build_insights(
     recommendations: list[str] = []
     for topic in focus_areas[:3]:
         recommendations.append(
-            f"Extra practice on {topic} — scores in your last 3 assessments are below {WEAK_THRESHOLD:.0f}%."
+            f"Extra practice on {topic} — scores in your last 3 assessments are below {FOCUS_TOPIC_THRESHOLD:.0f}%."
         )
     for topic in _pick_unexplored_for_recommendations(unexplored, limit=2):
         recommendations.append(
@@ -808,7 +810,7 @@ def _build_insights(
         )
     if strengths:
         recommendations.append(
-            f"Keep momentum in {', '.join(strengths[:2])} while addressing weaker areas."
+            f"Keep momentum in {', '.join(strengths[:2])} while strengthening focus areas."
         )
 
     return {

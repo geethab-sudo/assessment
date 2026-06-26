@@ -2,7 +2,7 @@
 
 Web application for generating and delivering technical assessments. Administrators use an LLM (Groq) to create question sets from a language/topic catalog; participants take tests in the browser with optional in-browser Python execution (Pyodide) or a downloadable Jupyter Notebook for topics that require a live runtime environment.
 
-Persistence is **PostgreSQL** (SQLAlchemy 2). The backend applies all schema migrations automatically on startup — no manual migration steps needed.
+Persistence is **MongoDB Atlas** (pymongo). The backend creates indexes and runs idempotent backfills on startup — no manual migration steps needed for a fresh Atlas database.
 
 ## Features
 
@@ -44,7 +44,7 @@ This section is for engineers who care about **token usage and API cost**, not U
 | Stage | What happens | LLM calls |
 |-------|----------------|-----------|
 | **Assessment generation** (admin) | Groq generates the question set from topic/level/counts. May be one call per catalog topic when using per-topic allocation. | **Yes** — proportional to topics × generation retries |
-| **Admin review** | Admin edits questions on `/admin/review`; confirm persists to PostgreSQL. | **No** |
+| **Admin review** | Admin edits questions on `/admin/review`; confirm persists to MongoDB. | **No** |
 | **Participant load** | Questions are read from the DB; shuffle is deterministic (no LLM). | **No** |
 | **Submit — MCQ** | Answer compared to stored `correct_answer` (case-insensitive string match). Wrong-answer “feedback” is the stored correct text, not a new model response. | **No** |
 | **Submit — coding / subjective** | Each answer is sent to Groq once for score + written feedback. | **Yes** — **one call per coding/subjective question** |
@@ -81,7 +81,7 @@ Implementation references: `_is_answer_correct` in `services/assessment_service.
 
 | Layer | Stack |
 |-------|--------|
-| Backend | FastAPI, SQLAlchemy 2, PostgreSQL, PyJWT, bcrypt |
+| Backend | FastAPI, pymongo, MongoDB Atlas, PyJWT, bcrypt |
 | Frontend | React 18, Vite 6, React Router |
 | LLM | Groq (OpenAI-compatible API) |
 | In-browser Python | Pyodide |
@@ -90,7 +90,7 @@ Implementation references: `_is_answer_correct` in `services/assessment_service.
 
 - Python 3.11+ (3.13 tested)
 - Node.js 18+
-- PostgreSQL (local install or Docker via `docker-compose.yml`)
+- MongoDB Atlas cluster ([free tier](https://www.mongodb.com/cloud/atlas/register) is fine)
 - [Groq API key](https://console.groq.com/keys)
 
 ## Quick start
@@ -105,10 +105,16 @@ Edit `.env` and set at minimum:
 
 | Variable | Purpose |
 |----------|---------|
-| `GROQ_API_KEY` | Groq API key |
+| `GROQ_API_KEY` | Groq API key (question generation with Groq and all answer grading) |
+| `GOOGLE_API_KEY1` | Optional — Google AI key for **Gemini** question generation (admin picker) |
+| `GEMINI_MODEL` | Optional — prepend one model id (default chain still used as fallbacks) |
+| `GEMINI_MODEL_CHAIN` | Optional comma-separated try order (default: `gemini-3.1-pro-preview`, `gemini-3.5-flash`, `gemini-3-flash-preview`, `gemini-2.5-flash`) |
 | `JWT_SECRET` | Long random string for JWT signing |
 | `ADMIN_PASSWORD` | Admin portal password — plain text or a bcrypt hash (recommended for production) |
-| `DATABASE_URL` | PostgreSQL URL, e.g. `postgresql+psycopg://postgres:postgres@127.0.0.1:5433/assesment` |
+| `MONGODB_URI` | MongoDB connection string — use `MONGODB_URI` (not `MONGODB_URL`). Example: `mongodb+srv://user:pass@cluster.mongodb.net/assesment?retryWrites=true&w=majority` |
+| `MONGODB_DB_NAME` | Optional database name (default: parsed from URI path, or `assesment`) |
+
+**Atlas network access:** In the Atlas UI → **Network Access**, add your current IP (or `0.0.0.0/0` for dev only). Without this, connections fail with an SSL handshake error.
 
 **Generating a bcrypt hash for `ADMIN_PASSWORD`** (recommended for production):
 
@@ -118,17 +124,17 @@ python3 -c "import bcrypt; print(bcrypt.hashpw(b'yourpassword', bcrypt.gensalt()
 
 Paste the output (`$2b$12$...`) as the value of `ADMIN_PASSWORD`. Plain-text values continue to work for local development.
 
-### 2. Database (Docker)
+### 2. MongoDB Atlas
 
-```bash
-docker compose up -d
-```
+No Docker or local database server is required. The app connects to Atlas using `MONGODB_URI`.
 
-Default host port is **5433** (see `POSTGRES_PORT` in `.env.example`) to avoid clashing with a local Postgres on 5432.
+1. Create a cluster and database user in [MongoDB Atlas](https://cloud.mongodb.com).
+2. Copy the connection string into `.env` as `MONGODB_URI` (include the database name in the path, e.g. `...mongodb.net/assesment?...`).
+3. Under **Network Access**, allow your IP address.
 
-Tables and all schema columns are created automatically on API startup (`init_db()`). Migrations are idempotent — safe to restart at any time.
+Collection indexes and idempotent backfills run automatically on API startup (`init_db()`).
 
-### 3. Seed catalog
+### 3. Python environment & seed catalog
 
 ```bash
 python3 -m venv .venv
@@ -219,7 +225,7 @@ See [docs/participant-experience.md](docs/participant-experience.md) for shuffle
 
 After an in-browser submit (`POST /submit-assessment`), the participant page:
 
-1. Fetches `GET /assessment/{id}/report?employee_id=…` (no LLM — reads submission rows from PostgreSQL).
+1. Fetches `GET /assessment/{id}/report?employee_id=…` (no LLM — reads submission rows from MongoDB).
 2. Displays a **topic summary** table: topic name, question count, total score, average %.
 3. Offers **Download report (PDF)** — `reportRenderer.js` builds print-friendly HTML and triggers `window.print()` via a hidden iframe (avoids pop-up blockers).
 
@@ -453,7 +459,7 @@ assessment/
 │   ├── attempt_service.py      # Timed attempts, deadlines, TimedAssessmentError
 │   ├── auth_service.py         # JWT + bcrypt-aware ADMIN_PASSWORD verification
 │   ├── catalog_service.py
-│   ├── db_service.py           # PostgreSQL persistence; routing_flag accepted as param (not re-derived)
+│   ├── db_service.py           # MongoDB persistence; routing_flag accepted as param (not re-derived)
 │   ├── database.py             # Engine, session factory, idempotent migrations
 │   ├── llm_service.py          # Groq wrappers for generation and grading
 │   ├── models.py               # ORM (modality, routing_flag, timed columns)
@@ -516,7 +522,6 @@ assessment/
 ├── scripts/seed_sample_catalog.py
 ├── scripts/seed_demo_students.py      # Demo C001–C003 + ASM-DEMO0001
 ├── scripts/demo_questions_snapshot.json  # Real Tier 1 questions for demo seed
-├── docker-compose.yml
 ├── requirements.txt
 └── .env.example
 ```
@@ -623,7 +628,7 @@ Full index: [tests/TEST_GUIDE.md](tests/TEST_GUIDE.md).
 | Employee authentication | Replace self-declared `employee_id` with SSO / users table |
 | Bank question retirement | Admin archive high-failure or low-discrimination items |
 | Bulk bank seed script | `scripts/seed_question_bank.py` for demo environments |
-| ARCHITECTURE.md update | Reflect PostgreSQL + question bank (currently describes CSV) |
+| ARCHITECTURE.md update | Reflect MongoDB Atlas + question bank |
 
 See [plan.md](plan.md) Stage 8 and [task.md](task.md) for the full backlog. Email/certificate delivery for the skills report is explicitly out of scope.
 

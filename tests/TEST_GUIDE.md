@@ -1,6 +1,11 @@
 # Test suite guide
 
-This folder contains automated tests for the assessment platform backend and related frontend data contracts. Tests are designed to run **without a live PostgreSQL database** in most cases — they mock DB sessions, patch service calls, or exercise pure functions only.
+This folder contains automated tests for the assessment platform backend and related frontend data contracts. Tests connect to **MongoDB Atlas** using database **`test_db`** (configured in `conftest.py`). Pure helpers and orchestration tests still mock the LLM or specific service calls where appropriate.
+
+## Prerequisites
+
+1. Copy `.env.example` to `.env` and set **`MONGODB_URI`** to your Atlas cluster (same cluster as dev is fine).
+2. Tests override the database name to **`test_db`** automatically — data may persist between runs for dev reuse; integration tests use unique ids to avoid collisions.
 
 ## How to run
 
@@ -40,7 +45,9 @@ python -m pytest tests/test_notebook_plan_service.py -v
 
 | File | Module under test | What we verify |
 |------|-------------------|----------------|
-| [`conftest.py`](conftest.py) | — | Pytest path setup for `services` imports |
+| [`conftest.py`](conftest.py) | — | Atlas `test_db` connection, `init_db` indexes |
+| [`mongo_helpers.py`](mongo_helpers.py) | — | Integration test seed/cleanup helpers |
+| [`test_mongodb_integration.py`](test_mongodb_integration.py) | `database`, `db_service`, `question_bank_service`, `report_service` | Real MongoDB read/write against Atlas `test_db` |
 
 ### IDs and low-level utilities
 
@@ -63,7 +70,7 @@ python -m pytest tests/test_notebook_plan_service.py -v
 
 | File | Module under test | What we verify |
 |------|-------------------|----------------|
-| [`test_question_bank_service.py`](test_question_bank_service.py) | `services.question_bank_service` | Difficulty normalization, tier→level inference, bank upsert, mastery detection, `find_bank_questions`, availability counts, employee mastery backfill |
+| [`test_question_bank_service.py`](test_question_bank_service.py) | `services.question_bank_service` | Difficulty normalization, tier→level inference, mastery detection rules (Mongo flows in `test_mongodb_integration.py`) |
 
 ### Employee analytics (Stage 4)
 
@@ -71,7 +78,7 @@ python -m pytest tests/test_notebook_plan_service.py -v
 |------|-------------------|----------------|
 | [`test_employee_profile_service.py`](test_employee_profile_service.py) | `services.employee_profile_service` | Profile scopes (`last_3` / `full_history`), weak topics, unexplored topics, level-aware progress labels |
 | [`test_employee_report_service.py`](test_employee_report_service.py) | `services.employee_profile_service.get_employee_report` | Shippable report shape: timeline order, time on platform, language rollup, empty employee |
-| [`test_report_service.py`](test_report_service.py) | `services.report_service` | Per-assessment participant report; Jupyter coding excluded from in-browser report |
+| [`test_report_service.py`](test_report_service.py) | `services.report_service` | Topic aggregation (pure); full `build_report` in `test_mongodb_integration.py` |
 
 ### Client improvement flows (Stages 5–6)
 
@@ -107,9 +114,9 @@ python -m pytest tests/test_notebook_plan_service.py -v
 | Timed assessments | `test_attempt_service.py` |
 | Grading / submit rules | `test_assessment_service_unit.py` |
 | Admin bank + LLM hybrid | `test_assessment_recycle.py` |
-| Question bank & mastery | `test_question_bank_service.py` |
+| Question bank & mastery | `test_question_bank_service.py`, `test_mongodb_integration.py` |
 | Jupyter notebook plans | `test_notebook_plan_service.py` |
-| Per-assessment report | `test_report_service.py` |
+| Per-assessment report | `test_report_service.py`, `test_mongodb_integration.py` |
 | Employee profile (weak / unexplored) | `test_employee_profile_service.py` |
 | Employee skills report | `test_employee_report_service.py` |
 | Help me improve — weak areas | `test_improvement_assessment_service.py` |
@@ -124,8 +131,8 @@ python -m pytest tests/test_notebook_plan_service.py -v
 
 ## Conventions
 
-- **unittest** is the default style; `test_notebook_plan_service.py` and `test_report_service.py` use **pytest** function tests.
-- API tests patch `init_db` / `ping_database` so the app boots without PostgreSQL.
+- **unittest** is the default style; `test_notebook_plan_service.py`, `test_report_service.py`, and `test_mongodb_integration.py` use **pytest** function tests.
+- API tests boot the real FastAPI app against Atlas **`test_db`** (`init_db` runs on startup).
 - `RATE_LIMIT_ENABLED=false` in tests avoids flaky 429s unless the test explicitly enables limiting.
 - Bank/improvement tests assert **no LLM** is called on client improvement paths (`generate_questions` never invoked).
 - Mastery = correct answer only; wrong answers may repeat (see `test_question_bank_service.py`).
@@ -139,4 +146,4 @@ python -m pytest tests/test_notebook_plan_service.py -v
 3. **New improvement flow** → extend `test_improvement_assessment_service.py` with mocked profile + bank rows.
 4. **New catalog/preset data** → extend `test_tier1_presets.py` or add a similar contract test.
 
-Keep tests fast: prefer mocks over integration unless the behavior truly needs a database.
+Keep tests fast where possible: mock LLM calls; use `test_mongodb_integration.py` for database behavior that must hit Atlas.

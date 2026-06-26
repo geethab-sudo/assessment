@@ -136,6 +136,11 @@ export default function AdminCertificateLayoutPage() {
   const [backgroundBlobUrl, setBackgroundBlobUrl] = useState(null);
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
+  const [issuerOrg, setIssuerOrg] = useState("");
+  const [issuerIntro, setIssuerIntro] = useState("");
+  const [issuerLoading, setIssuerLoading] = useState(true);
+  const [issuerSaving, setIssuerSaving] = useState(false);
+  const [issuerMessage, setIssuerMessage] = useState(null);
   const imgWrapRef = useRef(null);
 
   const selectedMeta = useMemo(
@@ -167,6 +172,50 @@ export default function AdminCertificateLayoutPage() {
   useEffect(() => {
     void loadTemplates();
   }, [loadTemplates]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setIssuerLoading(true);
+      try {
+        const data = await apiFetch("/admin/certificate/issuer-settings", { authRole: "admin" });
+        if (!cancelled) {
+          setIssuerOrg(data.organization_name || "");
+          setIssuerIntro(data.verification_intro || "");
+        }
+      } catch (e) {
+        if (!cancelled) setError(e.message);
+      } finally {
+        if (!cancelled) setIssuerLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleSaveIssuerSettings() {
+    setIssuerSaving(true);
+    setIssuerMessage(null);
+    setError(null);
+    try {
+      const data = await apiFetch("/admin/certificate/issuer-settings", {
+        method: "PUT",
+        authRole: "admin",
+        body: JSON.stringify({
+          organization_name: issuerOrg.trim(),
+          verification_intro: issuerIntro.trim(),
+        }),
+      });
+      setIssuerOrg(data.organization_name || "");
+      setIssuerIntro(data.verification_intro || "");
+      setIssuerMessage("Issuing organization saved. LinkedIn and verification pages will use this name.");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setIssuerSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (!selectedMeta) {
@@ -311,6 +360,56 @@ export default function AdminCertificateLayoutPage() {
           {message}
         </p>
       )}
+
+      <section className="card cert-layout-issuer">
+        <h2 className="cert-layout-sidebar-title">Issuing organization</h2>
+        <p className="muted small-print cert-layout-issuer-lead">
+          Used as the <strong>Issuing organization</strong> when learners share on LinkedIn and on
+          the public certificate verification page.
+        </p>
+        {issuerLoading ? (
+          <p className="muted">Loading issuer settings…</p>
+        ) : (
+          <>
+            <label className="review-field">
+              <span className="review-field-label">Organization name</span>
+              <input
+                type="text"
+                className="review-field-input"
+                value={issuerOrg}
+                onChange={(e) => setIssuerOrg(e.target.value)}
+                maxLength={256}
+                placeholder="Wekan Enterprise Solutions"
+              />
+            </label>
+            <label className="review-field">
+              <span className="review-field-label">Verification page intro</span>
+              <textarea
+                className="review-field-input cert-layout-issuer-intro"
+                value={issuerIntro}
+                onChange={(e) => setIssuerIntro(e.target.value)}
+                maxLength={2000}
+                rows={3}
+              />
+            </label>
+            <div className="cert-layout-editor-actions">
+              <button
+                type="button"
+                className="primary"
+                onClick={handleSaveIssuerSettings}
+                disabled={issuerSaving || !issuerOrg.trim() || !issuerIntro.trim()}
+              >
+                {issuerSaving ? "Saving…" : "Save organization"}
+              </button>
+            </div>
+            {issuerMessage && (
+              <p className="muted small-print" role="status">
+                {issuerMessage}
+              </p>
+            )}
+          </>
+        )}
+      </section>
 
       {loading ? (
         <p className="muted">Loading templates…</p>

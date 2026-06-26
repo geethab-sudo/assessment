@@ -7,10 +7,10 @@ students' submissions (same assessment id each time).
 
 Questions are loaded from ``demo_questions_snapshot.json`` — real Tier 1 beginner
 Python items captured from the question bank. Re-capture with ``--refresh-snapshot``
-after the bank has better content (requires DATABASE_URL).
+after the bank has better content (requires MONGODB_URI).
 
 Prerequisites:
-  - DATABASE_URL in .env
+  - MONGODB_URI in .env
   - Catalog seeded: ``python scripts/seed_sample_catalog.py``
   - Question bank populated (admin-generated assessments or prior seed run)
 
@@ -46,16 +46,12 @@ os.chdir(ROOT)
 
 from dotenv import load_dotenv  # noqa: E402
 
-load_dotenv(ROOT / ".env")
-load_dotenv(override=True)
-
-from sqlalchemy import delete, select  # noqa: E402
+load_dotenv(ROOT / ".env", override=True)
 
 from services import db_service, question_bank_service  # noqa: E402
 from services.assessment_service import SCORE_CORRECT_THRESHOLD, _is_answer_correct  # noqa: E402
 from services.attempt_service import normalize_employee_id  # noqa: E402
-from services.database import get_session_factory, init_db  # noqa: E402
-from services.models import EmployeeQuestionMastery, QuestionBank, Submission  # noqa: E402
+from services.database import coll, init_db  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixed demo identifiers (documented for QA / client UI)
@@ -258,37 +254,29 @@ def _clear_student_data(
     """Remove prior demo submissions and mastery rows for a clean re-run."""
     eid_norms = {normalize_employee_id(eid) for eid in employee_ids}
 
-    with get_session_factory()() as session:
-        subs = session.scalars(
-            select(Submission).where(Submission.assessment_id == assessment_id)
-        ).all()
-        for sub in subs:
-            uid = sub.user_id or ""
-            part = uid.split("|", 1)[0].strip().casefold()
-            if part in eid_norms:
-                session.delete(sub)
+    for sub in coll("submissions").find({"assessment_id": assessment_id}):
+        uid = sub.get("user_id") or ""
+        part = uid.split("|", 1)[0].strip().casefold()
+        if part in eid_norms:
+            coll("submissions").delete_one({"_id": sub["_id"]})
 
-        if bank_ids:
-            session.execute(
-                delete(EmployeeQuestionMastery).where(
-                    EmployeeQuestionMastery.employee_id.in_(list(eid_norms)),
-                    EmployeeQuestionMastery.bank_question_id.in_(list(bank_ids)),
-                )
-            )
-
-        session.commit()
+    if bank_ids:
+        coll("employee_question_mastery").delete_many(
+            {
+                "employee_id": {"$in": list(eid_norms)},
+                "bank_question_id": {"$in": list(bank_ids)},
+            }
+        )
 
 
 def _reset_bank_stats(bank_ids: set[int]) -> None:
     if not bank_ids:
         return
-    with get_session_factory()() as session:
-        for bank_id in bank_ids:
-            row = session.get(QuestionBank, bank_id)
-            if row:
-                row.times_correct = 0
-                row.times_wrong = 0
-        session.commit()
+    for bank_id in bank_ids:
+        coll("question_bank").update_one(
+            {"id": int(bank_id)},
+            {"$set": {"times_correct": 0, "times_wrong": 0}},
+        )
 
 
 def _seed_assessment(rows: list[dict[str, Any]], topic_names: list[str]) -> set[int]:

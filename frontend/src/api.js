@@ -136,5 +136,6 @@ export async function apiFetchBlob(path, options = {}) {
   const cd = res.headers.get("Content-Disposition") || "";
   const match = /filename="([^"]+)"/.exec(cd);
   const filename = match?.[1] || "download";
-  return { blob, filename };
+  const certificateId = res.headers.get("X-Certificate-Id");
+  return { blob, filename, certificateId };
 }

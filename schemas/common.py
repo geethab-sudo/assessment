@@ -78,7 +78,11 @@ class HealthResponse(BaseModel):
     database: bool = Field(..., description="Whether the database connection is reachable.")
     groq_configured: bool = Field(
         ...,
-        description="Whether `GROQ_API_KEY` is set for LLM question generation and grading.",
+        description="Whether `GROQ_API_KEY` is set (generation with Groq and all grading).",
+    )
+    gemini_configured: bool = Field(
+        ...,
+        description="Whether `GOOGLE_API_KEY1` is set for Gemini question generation.",
     )
     auth_configured: bool = Field(
         ...,
@@ -92,6 +96,7 @@ class HealthResponse(BaseModel):
                     "status": "ok",
                     "database": True,
                     "groq_configured": True,
+                    "gemini_configured": True,
                     "auth_configured": True,
                 }
             ]

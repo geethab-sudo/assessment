@@ -115,13 +115,26 @@ class TestMergeTopicPerformance(unittest.TestCase):
         self.assertEqual(perf[0]["attempts"], 2)
 
 
+_CATALOG_LANGS = [
+    {"id": 1, "code": "py", "name": "python"},
+    {"id": 2, "code": "java", "name": "java"},
+]
+
+
+@patch(
+    "services.employee_profile_service.catalog_service.list_languages",
+    return_value=_CATALOG_LANGS,
+)
 @patch("services.employee_profile_service._catalog_topic_names")
 @patch("services.employee_profile_service._load_assessment_records")
 class TestGetEmployeeProfile(unittest.TestCase):
     """End-to-end profile assembly with mocked history and catalog."""
 
     def test_last_3_scope_limits_assessments(
-        self, mock_load: unittest.mock.MagicMock, mock_catalog: unittest.mock.MagicMock
+        self,
+        mock_load: unittest.mock.MagicMock,
+        mock_catalog: unittest.mock.MagicMock,
+        mock_langs: unittest.mock.MagicMock,
     ) -> None:
         """scope=last_3 analyzes at most three most recent assessments."""
         mock_catalog.return_value = ["OOP", "Exceptions", "New Topic"]
@@ -136,7 +149,10 @@ class TestGetEmployeeProfile(unittest.TestCase):
         self.assertEqual(mock_load.call_count, 1)
 
     def test_full_history_explored_includes_old_assessment(
-        self, mock_load: unittest.mock.MagicMock, mock_catalog: unittest.mock.MagicMock
+        self,
+        mock_load: unittest.mock.MagicMock,
+        mock_catalog: unittest.mock.MagicMock,
+        mock_langs: unittest.mock.MagicMock,
     ) -> None:
         """full_history sees topics from older assessments outside last_3 window."""
         mock_catalog.return_value = ["Legacy Topic", "New Topic"]
@@ -154,7 +170,10 @@ class TestGetEmployeeProfile(unittest.TestCase):
         self.assertNotIn("Legacy Topic", profile["unexplored_topic_names"])
 
     def test_weakest_topics_below_threshold(
-        self, mock_load: unittest.mock.MagicMock, mock_catalog: unittest.mock.MagicMock
+        self,
+        mock_load: unittest.mock.MagicMock,
+        mock_catalog: unittest.mock.MagicMock,
+        mock_langs: unittest.mock.MagicMock,
     ) -> None:
         """Topics below weak threshold appear in weakest_topics; strong ones do not."""
         mock_catalog.return_value = []
@@ -168,7 +187,10 @@ class TestGetEmployeeProfile(unittest.TestCase):
         self.assertNotIn("Strong", profile["weakest_topics"])
 
     def test_unexplored_limited_to_evaluated_languages(
-        self, mock_load: unittest.mock.MagicMock, mock_catalog: unittest.mock.MagicMock
+        self,
+        mock_load: unittest.mock.MagicMock,
+        mock_catalog: unittest.mock.MagicMock,
+        mock_langs: unittest.mock.MagicMock,
     ) -> None:
         """Unexplored topics only from languages the employee has actually assessed."""
         def catalog_for_lang(lang: str | None) -> list[str]:

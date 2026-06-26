@@ -125,8 +125,15 @@ export default function AdminPage() {
   const [questionSource, setQuestionSource] = useState("generate_new");
   const [targetEmployeeId, setTargetEmployeeId] = useState("");
   const [bankAvailability, setBankAvailability] = useState(null);
+  const [generationProvider, setGenerationProvider] = useState("grok");
+  /** null = health check pending or unavailable; only disable radios when explicitly false */
+  const [groqConfigured, setGroqConfigured] = useState(null);
+  const [geminiConfigured, setGeminiConfigured] = useState(null);
 
   const tier1Presets = useMemo(() => getTier1Presets(), []);
+
+  const catalogTopicsReady =
+    !loadingLanguages && !loadingTopics && languageId !== "";
 
   const topicById = useMemo(
     () => Object.fromEntries(topics.map((t) => [String(t.id), t])),
@@ -182,6 +189,7 @@ export default function AdminPage() {
     }
     setLoadingTopics(true);
     setCatalogHint(null);
+    setPresetMissingTopics([]);
     setSelectedTopicIds([]);
     try {
       const data = await apiFetch(
@@ -208,6 +216,17 @@ export default function AdminPage() {
   }, [loadLanguages]);
 
   useEffect(() => {
+    apiFetch("/health")
+      .then((data) => {
+        setGroqConfigured(Boolean(data.groq_configured));
+        setGeminiConfigured(Boolean(data.gemini_configured));
+      })
+      .catch(() => {
+        /* Health unreachable — leave null; do not claim API keys are missing */
+      });
+  }, []);
+
+  useEffect(() => {
     if (languageId === "") {
       setTopics([]);
       if (!usePresetTier1) {
@@ -230,8 +249,12 @@ export default function AdminPage() {
     (presetName) => {
       const preset = getPresetByName(presetName);
       if (!preset) return;
-      const applied = applyPreset(preset, topics);
       setSelectedPresetName(presetName);
+      if (!catalogTopicsReady) {
+        setPresetMissingTopics([]);
+        return;
+      }
+      const applied = applyPreset(preset, topics);
       setSelectedTopicIds(applied.selectedTopicIds);
       setPerTopicCounts(applied.perTopicCounts);
       setLevel(applied.level);
@@ -244,7 +267,7 @@ export default function AdminPage() {
       setPresetMissingTopics(applied.missingTopicNames);
       setError(null);
     },
-    [topics]
+    [topics, catalogTopicsReady]
   );
 
   // Re-match preset topic ids when catalog topics finish loading (or after seeding).
@@ -540,6 +563,7 @@ export default function AdminPage() {
         include_beginner_coding_hints: includeBeginnerCodingHints,
         certificate_enabled: usePresetTier1 && certificateEnabled,
         question_source: questionSource,
+        generation_provider: generationProvider,
         ...(targetEmployeeId.trim()
           ? { target_employee_id: targetEmployeeId.trim() }
           : {}),
@@ -602,8 +626,14 @@ export default function AdminPage() {
     return typeMcq || typeCoding || typeSubjective;
   }, [topicMode, usePresetTier1, allocationMode, totalCounts, typeMcq, typeCoding, typeSubjective]);
 
+  const generationProviderReady =
+    generationProvider === "gemini"
+      ? geminiConfigured !== false
+      : groqConfigured !== false;
+
   const canGenerate =
     !loading &&
+    generationProviderReady &&
     (topicMode === "catalog" ? catalogReady : customTopic.trim().length > 0) &&
     hasAnyQuestions &&
     (!usePresetTier1 || (selectedPresetName && presetMissingTopics.length === 0));
@@ -631,9 +661,40 @@ export default function AdminPage() {
 
       <section className="card">
         <h2>Configuration</h2>
+        <div className="bank-source-block">
+          <h3 className="topic-preview-title">Generation model</h3>
+          <div className="radio-group" role="radiogroup" aria-label="Generation model">
+          <label className="radio-row">
+            <input
+              type="radio"
+              name="generationProvider"
+              value="grok"
+              checked={generationProvider === "grok"}
+              onChange={() => setGenerationProvider("grok")}
+              disabled={groqConfigured === false}
+            />
+            Groq (Grok) — default
+          </label>
+          <label className="radio-row">
+            <input
+              type="radio"
+              name="generationProvider"
+              value="gemini"
+              checked={generationProvider === "gemini"}
+              onChange={() => setGenerationProvider("gemini")}
+              disabled={geminiConfigured === false}
+            />
+            Gemini{geminiConfigured === false ? " (API key not configured)" : ""}
+          </label>
+          </div>
+          <p className="muted small-print" style={{ marginTop: "0.5rem" }}>
+            Used only when generating new questions. Answer grading always uses Groq.
+          </p>
+        </div>
         {topicMode === "catalog" && (
-          <div className="bank-source-block" style={{ marginBottom: "1.25rem" }}>
+          <div className="bank-source-block">
             <h3 className="topic-preview-title">Question source</h3>
+            <div className="radio-group" role="radiogroup" aria-label="Question source">
             <label className="radio-row">
               <input
                 type="radio"
@@ -654,6 +715,7 @@ export default function AdminPage() {
               />
               Recycle then generate (bank first, LLM for any shortfall)
             </label>
+            </div>
             {questionSource === "recycle_then_generate" && (
               <>
                 <label style={{ display: "block", marginTop: "0.75rem" }}>
@@ -832,10 +894,31 @@ export default function AdminPage() {
                   </div>
                 )}
 
-                {presetMissingTopics.length > 0 && (
+                {presetMissingTopics.length > 0 && catalogTopicsReady && (
                   <div className="error" role="alert" style={{ marginTop: "0.75rem" }}>
-                    Missing catalog topics. Run{" "}
-                    <code>python3 scripts/seed_sample_catalog.py</code>
+                    {topics.length === 0 ? (
+                      <>
+                        The Python catalog could not be loaded from the database. Restart the
+                        API server (it auto-seeds the catalog on startup) and click{" "}
+                        <button
+                          type="button"
+                          className="link-button"
+                          onClick={() => {
+                            void loadLanguages();
+                            if (languageId) void loadTopicsForLanguage(languageId);
+                          }}
+                        >
+                          reload catalog
+                        </button>
+                        .
+                      </>
+                    ) : (
+                      <>
+                        Some preset topics are still missing from the catalog after sync.
+                        Restart the API server to repair automatically, or run{" "}
+                        <code>python3 scripts/seed_sample_catalog.py</code>.
+                      </>
+                    )}
                     <ul style={{ margin: "0.5rem 0 0 1rem" }}>
                       {presetMissingTopics.map((n) => (
                         <li key={n}>{n}</li>

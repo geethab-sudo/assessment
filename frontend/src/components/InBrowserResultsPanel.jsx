@@ -1,4 +1,4 @@
-import { formatUnitScore } from "../lib/scoreDisplay.js";
+import { formatUnitScore, formatCorrectTotal, countCorrectResults } from "../lib/scoreDisplay.js";
 
 /**
  * Shown at the end of the participant test after in-browser submit (MCQ + Pyodide coding).
@@ -24,10 +24,10 @@ export default function InBrowserResultsPanel({
           <span className="result-score-label">Total score</span>
           <div className="result-score-row">
             <span className="result-score-value">
-              {formatUnitScore(result.achieved_total ?? result.score)}
-            </span>
-            <span className="result-score-suffix">
-              / {formatUnitScore(result.max_total ?? result.questions_graded)}
+              {formatCorrectTotal(
+                countCorrectResults(result.question_results),
+                result.questions_graded ?? result.question_results?.length
+              )}
             </span>
           </div>
           {result.max_total > 0 && (

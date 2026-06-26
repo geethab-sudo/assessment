@@ -20,10 +20,10 @@ _PRESETS_PATH = _ROOT / "frontend" / "src" / "data" / "tier1EvaluationPresets.js
 
 
 def _seed_tier1_topic_names() -> set[str]:
-    from scripts.seed_sample_catalog import SAMPLE
+    from services.catalog_seed_data import SAMPLE_CATALOG
 
     names: set[str] = set()
-    for block in SAMPLE:
+    for block in SAMPLE_CATALOG:
         if block.get("code") != "py":
             continue
         for t in block.get("topics") or []:

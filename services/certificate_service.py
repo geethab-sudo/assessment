@@ -481,25 +481,20 @@ def score_qualifies_for_certificate(score: float) -> bool:
 
 def employee_assessment_unit_score(assessment_id: str, employee_id: str) -> float | None:
     from services.attempt_service import normalize_employee_id
-    from services.models import Submission
-    from services.database import get_session_factory
-    from sqlalchemy import select
+    from services.database import coll
 
     eid = normalize_employee_id(employee_id)
     if not eid:
         return None
-    with get_session_factory()() as session:
-        rows = session.scalars(
-            select(Submission).where(Submission.assessment_id == assessment_id)
-        ).all()
+    rows = list(coll("submissions").find({"assessment_id": assessment_id.strip()}))
     scores: list[float] = []
     for r in rows:
-        uid = r.user_id or ""
+        uid = r.get("user_id") or ""
         part = uid.split("|", 1)[0].strip().casefold()
         if part != eid:
             continue
         try:
-            raw = float(r.score or 0)
+            raw = float(r.get("score") or 0)
         except (TypeError, ValueError):
             continue
         scores.append(max(0.0, min(1.0, raw / 100.0)))
@@ -548,33 +543,257 @@ def resolve_certificate_language(
 
 def list_employee_certificates(employee_id: str) -> list[dict[str, Any]]:
     from services.attempt_service import normalize_employee_id
-    from services.database import get_session_factory
-    from services.models import CertificateIssued
-    from sqlalchemy import select
+    from services.database import coll
 
     eid = normalize_employee_id(employee_id)
     if not eid:
         return []
-    with get_session_factory()() as session:
-        rows = session.scalars(
-            select(CertificateIssued)
-            .where(CertificateIssued.employee_id == eid)
-            .order_by(CertificateIssued.issued_at.desc())
-        ).all()
+    rows = list(
+        coll("certificates_issued")
+        .find({"employee_id": eid})
+        .sort("issued_at", -1)
+    )
     return [
         {
-            "id": int(r.id),
-            "display_name": r.display_name,
-            "level": r.level,
-            "language_code": (r.language_code or "").strip() or None,
-            "language_label": (r.language_label or "").strip() or None,
-            "assessment_id": r.assessment_id,
-            "score": float(r.score) if r.score is not None else None,
-            "issued_at": r.issued_at,
-            "issued_by": r.issued_by,
+            "id": int(r["id"]),
+            "display_name": r["display_name"],
+            "level": r["level"],
+            "language_code": (r.get("language_code") or "").strip() or None,
+            "language_label": (r.get("language_label") or "").strip() or None,
+            "assessment_id": r.get("assessment_id"),
+            "score": float(r["score"]) if r.get("score") is not None else None,
+            "issued_at": r.get("issued_at"),
+            "issued_by": r.get("issued_by"),
         }
         for r in rows
     ]
+
+
+def _public_base_url() -> str:
+    import os
+
+    return (os.environ.get("APP_PUBLIC_URL") or "http://localhost:5173").rstrip("/")
+
+
+def _organization_name() -> str:
+    from services.platform_settings_service import get_certificate_issuer_settings
+
+    return get_certificate_issuer_settings()["organization_name"]
+
+
+def _verification_intro() -> str:
+    from services.platform_settings_service import get_certificate_issuer_settings
+
+    return get_certificate_issuer_settings()["verification_intro"]
+
+
+def build_verification_description(row: dict[str, Any]) -> str:
+    display = (row.get("display_name") or "The recipient").strip()
+    title = certificate_title_for_row(row)
+    org = _organization_name()
+    issue_date = _parse_issue_date(row.get("issued_at"))
+    date_label = format_issue_date(issue_date)
+    score = row.get("score")
+    cid = row.get("id")
+    score_txt = ""
+    if score is not None:
+        score_txt = f" with an assessment score of {int(round(float(score) * 100))}%"
+    return (
+        f"This credential confirms that {display} earned the {title} from {org} "
+        f"on {date_label}{score_txt}. Credential ID #{cid} is unique to this achievement "
+        f"and can be verified at any time using this page."
+    )
+
+
+def _parse_issue_date(issued_at: str | None) -> date:
+    if issued_at:
+        try:
+            return datetime.fromisoformat(issued_at.replace("Z", "+00:00")).date()
+        except ValueError:
+            pass
+    return datetime.now(timezone.utc).date()
+
+
+def _issue_year_month(issued_at: str | None) -> tuple[int, int]:
+    d = _parse_issue_date(issued_at)
+    return d.year, d.month
+
+
+def get_certificate_row(certificate_id: int) -> dict[str, Any] | None:
+    from services.database import coll
+
+    return coll("certificates_issued").find_one({"id": int(certificate_id)})
+
+
+def certificate_title_for_row(row: dict[str, Any]) -> str:
+    level = str(row.get("level") or "beginner").title()
+    lang = (row.get("language_label") or "Programming").strip()
+    return f"{lang} {level} Assessment Certificate"
+
+
+def verification_url_for_certificate(certificate_id: int) -> str:
+    return f"{_public_base_url()}/verify/certificate/{int(certificate_id)}"
+
+
+def certificate_image_api_url(certificate_id: int) -> str:
+    return f"{_public_base_url()}/api/public/certificate/{int(certificate_id)}/image"
+
+
+def suggest_certificate_skills(row: dict[str, Any]) -> list[str]:
+    level = str(row.get("level") or "beginner").lower()
+    lang = (row.get("language_label") or "Programming").strip().split()[0]
+    pools: dict[str, list[str]] = {
+        "beginner": [
+            lang,
+            "Programming Fundamentals",
+            "Problem Solving",
+            "Technical Literacy",
+            "Software Basics",
+        ],
+        "intermediate": [
+            lang,
+            "Object-Oriented Programming",
+            "Software Testing",
+            "Debugging",
+            "Code Quality",
+            "Technical Assessment",
+        ],
+        "advanced": [
+            lang,
+            "Advanced Programming",
+            "Software Engineering",
+            "System Design Basics",
+            "Performance Awareness",
+            "Technical Leadership",
+        ],
+    }
+    return pools.get(level, pools["beginner"])
+
+
+def certificate_media_copy(row: dict[str, Any], *, title: str, verification_url: str) -> tuple[str, str]:
+    display = (row.get("display_name") or "").strip() or "Participant"
+    lang = (row.get("language_label") or "Programming").strip()
+    level = str(row.get("level") or "beginner").title()
+    score = row.get("score")
+    score_txt = f" Score: {int(round(float(score) * 100))}%." if score is not None else ""
+    media_title = f"{title} — {display}"
+    media_description = (
+        f"Verified {lang} {level} skills certificate issued by {_organization_name()}.{score_txt} "
+        f"Credential ID #{row.get('id')}. Verify at {verification_url}"
+    )
+    return media_title, media_description
+
+
+def build_linkedin_certification_url(
+    *,
+    title: str,
+    verification_url: str,
+    certificate_id: int,
+    issue_year: int,
+    issue_month: int,
+) -> str:
+    from urllib.parse import urlencode
+
+    params = {
+        "startTask": "CERTIFICATION_NAME",
+        "name": title,
+        "organizationName": _organization_name(),
+        "issueYear": str(issue_year),
+        "issueMonth": str(issue_month),
+        "certUrl": verification_url,
+        "certId": str(certificate_id),
+    }
+    return "https://www.linkedin.com/profile/add?" + urlencode(params)
+
+
+def build_certificate_share_bundle(row: dict[str, Any]) -> dict[str, Any]:
+    cid = int(row["id"])
+    title = certificate_title_for_row(row)
+    issue_year, issue_month = _issue_year_month(row.get("issued_at"))
+    verification_url = verification_url_for_certificate(cid)
+    image_url = certificate_image_api_url(cid)
+    skills = suggest_certificate_skills(row)
+    media_title, media_description = certificate_media_copy(
+        row, title=title, verification_url=verification_url
+    )
+    linkedin_url = build_linkedin_certification_url(
+        title=title,
+        verification_url=verification_url,
+        certificate_id=cid,
+        issue_year=issue_year,
+        issue_month=issue_month,
+    )
+    return {
+        "certificate_id": cid,
+        "title": title,
+        "display_name": row.get("display_name") or "",
+        "level": row.get("level") or "beginner",
+        "issued_at": row.get("issued_at"),
+        "issue_year": issue_year,
+        "issue_month": issue_month,
+        "organization_name": _organization_name(),
+        "verification_url": verification_url,
+        "share_url": verification_url,
+        "image_url": image_url,
+        "linkedin_url": linkedin_url,
+        "skills": skills,
+        "media_title": media_title,
+        "media_description": media_description,
+    }
+
+
+def render_certificate_for_row(row: dict[str, Any]) -> CertificateRenderResult:
+    return render_certificate(
+        str(row.get("level") or "beginner"),
+        str(row.get("display_name") or "").strip(),
+        issue_date=_parse_issue_date(row.get("issued_at")),
+    )
+
+
+def get_public_certificate_verification(certificate_id: int) -> dict[str, Any]:
+    row = get_certificate_row(certificate_id)
+    if not row:
+        raise ValueError("Certificate not found")
+    bundle = build_certificate_share_bundle(row)
+    score = row.get("score")
+    score_percent = int(round(float(score) * 100)) if score is not None else None
+    return {
+        **bundle,
+        "verified": True,
+        "language_label": (row.get("language_label") or "Programming").strip(),
+        "score_percent": score_percent,
+        "verification_intro": _verification_intro(),
+        "verification_description": build_verification_description(row),
+    }
+
+
+def generate_verification_qr_png(verification_url: str) -> bytes:
+    import qrcode
+
+    qr = qrcode.QRCode(version=1, box_size=8, border=2)
+    qr.add_data(verification_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def get_certificate_share_metadata(
+    certificate_id: int,
+    employee_id: str,
+) -> dict[str, Any]:
+    """Share links for a certificate the employee owns."""
+    from services.attempt_service import normalize_employee_id
+
+    eid = normalize_employee_id(employee_id)
+    if not eid:
+        raise ValueError("employee_id is required")
+
+    row = get_certificate_row(certificate_id)
+    if not row or row.get("employee_id") != eid:
+        raise ValueError("Certificate not found")
+    return build_certificate_share_bundle(row)
 
 
 def record_certificate_issued(
@@ -589,8 +808,7 @@ def record_certificate_issued(
     language_label: str | None = None,
 ) -> int:
     from services.attempt_service import normalize_employee_id
-    from services.database import get_session_factory
-    from services.models import CertificateIssued
+    from services.database import coll, next_id
 
     eid = normalize_employee_id(employee_id)
     if not eid:
@@ -601,22 +819,22 @@ def record_certificate_issued(
         language_code=language_code,
         language_label=language_label,
     )
-    with get_session_factory()() as session:
-        row = CertificateIssued(
-            employee_id=eid,
-            display_name=(display_name or "").strip(),
-            level=lv,
-            language_code=lang_code,
-            language_label=lang_label,
-            assessment_id=(assessment_id or "").strip() or None,
-            score=float(score) if score is not None else None,
-            issued_at=utc_now_iso(),
-            issued_by=(issued_by or "auto").strip() or "auto",
-        )
-        session.add(row)
-        session.commit()
-        session.refresh(row)
-        return int(row.id)
+    issued_id = next_id("certificates_issued")
+    coll("certificates_issued").insert_one(
+        {
+            "id": issued_id,
+            "employee_id": eid,
+            "display_name": (display_name or "").strip(),
+            "level": lv,
+            "language_code": lang_code,
+            "language_label": lang_label,
+            "assessment_id": (assessment_id or "").strip() or None,
+            "score": float(score) if score is not None else None,
+            "issued_at": utc_now_iso(),
+            "issued_by": (issued_by or "auto").strip() or "auto",
+        }
+    )
+    return issued_id
 
 
 def issue_certificate(

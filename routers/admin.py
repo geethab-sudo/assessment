@@ -23,6 +23,10 @@ from schemas.admin import (
 )
 from schemas.assessment import AssessmentResponse
 from schemas.certificate import AdminIssueCertificateBody
+from schemas.certificate import (
+    CertificateIssuerSettingsBody,
+    CertificateIssuerSettingsResponse,
+)
 from schemas.certificate_layout import (
     CertificateLayoutSavedResponse,
     CertificateTemplateListResponse,
@@ -35,6 +39,7 @@ from schemas.common import OkDeletedResponse
 from schemas.improvement import EmployeeReportResponse
 from services import assessment_service, audit_log, catalog_service, db_service, question_bank_service
 from services import certificate_service, employee_profile_service
+from services import platform_settings_service
 
 admin_router = APIRouter(
     prefix="/admin",
@@ -450,7 +455,7 @@ def generate_assessment(
     - `questions_per_type`: keys must match `types`; counts 1–30 each
     - `is_timed`: when `true`, `duration_minutes` is required
 
-    Returns HTTP 503 when `GROQ_API_KEY` is not configured.
+    Returns HTTP 503 when the selected generation provider API key is not configured.
     """
     try:
         result = assessment_service.create_assessment(
@@ -470,6 +475,7 @@ def generate_assessment(
             allow_pyodide_paste=body.allow_pyodide_paste,
             include_sample_test_cases=body.include_sample_test_cases,
             include_beginner_coding_hints=body.include_beginner_coding_hints,
+            generation_provider=body.generation_provider,
         )
         response = GenerateAssessmentResponse.model_validate(result)
     except RuntimeError as e:
@@ -515,6 +521,7 @@ def preview_questions(request: Request, body: GenerateAssessmentBody) -> dict:
             target_employee_id=body.target_employee_id,
             include_sample_test_cases=body.include_sample_test_cases,
             include_beginner_coding_hints=body.include_beginner_coding_hints,
+            generation_provider=body.generation_provider,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
@@ -655,8 +662,48 @@ def patch_assessment_question(
 
 
 @admin_router.get(
+    "/certificate/issuer-settings",
+    summary="Certificate issuer organization and verification copy",
+    description="Return the issuing organization name and verification page intro shown on LinkedIn and public verify URLs.",
+    response_model=CertificateIssuerSettingsResponse,
+    dependencies=[Depends(require_admin)],
+)
+def get_certificate_issuer_settings() -> CertificateIssuerSettingsResponse:
+    data = platform_settings_service.get_certificate_issuer_settings()
+    return CertificateIssuerSettingsResponse.model_validate(data)
+
+
+@admin_router.put(
+    "/certificate/issuer-settings",
+    summary="Save certificate issuer organization and verification copy",
+    description="Update the issuing organization name (LinkedIn Issuing organization field) and verification page intro text.",
+    response_model=CertificateIssuerSettingsResponse,
+    dependencies=[Depends(require_admin)],
+)
+def save_certificate_issuer_settings(
+    request: Request,
+    body: CertificateIssuerSettingsBody,
+) -> CertificateIssuerSettingsResponse:
+    try:
+        data = platform_settings_service.save_certificate_issuer_settings(
+            organization_name=body.organization_name,
+            verification_intro=body.verification_intro,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    audit_log.admin_action(
+        request,
+        action="certificate.issuer.save",
+        resource="platform_settings",
+        resource_id="certificate_issuer",
+    )
+    return CertificateIssuerSettingsResponse.model_validate(data)
+
+
+@admin_router.get(
     "/certificate/templates",
     summary="List certificate templates and calibration status",
+    description="Return JPG certificate templates, calibration flags, and mapped difficulty levels.",
     response_model=CertificateTemplateListResponse,
     dependencies=[Depends(require_admin)],
 )
@@ -696,6 +743,7 @@ def list_certificate_templates() -> CertificateTemplateListResponse:
 @admin_router.get(
     "/certificate/templates/{filename}/background",
     summary="Certificate template background image (for layout editor)",
+    description="Serve the raw template image for the admin layout calibration UI.",
     dependencies=[Depends(require_admin)],
     responses={404: {"description": "Template not found."}},
 )
@@ -713,6 +761,7 @@ def get_certificate_template_background(
 @admin_router.put(
     "/certificate/templates/{filename}/layout",
     summary="Save name/date/signature layout for one template",
+    description="Persist click-calibrated field positions for one certificate template.",
     response_model=CertificateLayoutSavedResponse,
     dependencies=[Depends(require_admin)],
 )
@@ -740,6 +789,7 @@ def save_certificate_template_layout(
 @admin_router.post(
     "/certificate/templates/{filename}/preview",
     summary="Preview certificate with draft or saved layout",
+    description="Render a JPEG preview using draft or saved layout coordinates.",
     dependencies=[Depends(require_admin)],
     responses={
         200: {"description": "JPEG preview.", "content": {"image/jpeg": {}}},
@@ -771,6 +821,7 @@ def preview_certificate_template(
 @admin_router.post(
     "/certificate/issue",
     summary="Manually issue a Tier 1 certificate",
+    description="Admin grant: render and record a certificate without a score gate.",
     dependencies=[Depends(require_admin)],
     responses={
         200: {"description": "JPEG certificate file.", "content": {"image/jpeg": {}}},

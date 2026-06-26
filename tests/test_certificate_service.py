@@ -6,6 +6,7 @@ import sys
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
@@ -90,17 +91,30 @@ class TestCertificateService(unittest.TestCase):
         self.assertNotEqual(small_img.image_bytes, large_img.image_bytes)
 
     def test_record_certificate_includes_language_and_level(self) -> None:
-        issued_id = record_certificate_issued(
-            employee_id="E-cert-test",
-            display_name="Language Test",
-            level="intermediate",
-            language_code="py",
-            language_label="Python",
-            score=0.91,
-            issued_by="auto",
-        )
-        self.assertGreater(issued_id, 0)
-        rows = list_employee_certificates("E-cert-test")
+        stored: list[dict] = []
+        certs = MagicMock()
+
+        def insert_one(doc: dict) -> None:
+            stored.append(doc)
+
+        certs.insert_one.side_effect = insert_one
+        certs.find.return_value.sort.return_value = stored
+
+        with (
+            patch("services.database.coll", return_value=certs),
+            patch("services.database.next_id", return_value=1),
+        ):
+            issued_id = record_certificate_issued(
+                employee_id="E-cert-test",
+                display_name="Language Test",
+                level="intermediate",
+                language_code="py",
+                language_label="Python",
+                score=0.91,
+                issued_by="auto",
+            )
+            self.assertGreater(issued_id, 0)
+            rows = list_employee_certificates("E-cert-test")
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["level"], "intermediate")
         self.assertEqual(rows[0]["language_code"], "py")
@@ -116,6 +130,32 @@ class TestUncalibratedDetection(unittest.TestCase):
                 {"templates": {"fake.jpg": {"display_name": {"x_ratio": 0.5}}}},
             )
         )
+
+
+class TestCertificateShareBundle(unittest.TestCase):
+    def test_build_share_bundle_linkedin_and_verify_url(self) -> None:
+        from services.certificate_service import build_certificate_share_bundle
+
+        row = {
+            "id": 42,
+            "display_name": "Jane Doe",
+            "level": "intermediate",
+            "language_label": "Python",
+            "issued_at": "2026-06-26T10:00:00+00:00",
+            "score": 0.92,
+        }
+        bundle = build_certificate_share_bundle(row)
+        self.assertIn("/verify/certificate/42", bundle["verification_url"])
+        self.assertEqual(bundle["verification_url"], bundle["share_url"])
+        self.assertIn("issueYear=2026", bundle["linkedin_url"])
+        self.assertIn("issueMonth=6", bundle["linkedin_url"])
+        self.assertIn("certUrl=", bundle["linkedin_url"])
+        self.assertNotIn("expirationYear", bundle["linkedin_url"])
+        self.assertGreater(len(bundle["skills"]), 0)
+        self.assertIn("Jane Doe", bundle["media_title"])
+        self.assertIn("/api/public/certificate/42/image", bundle["image_url"])
+        self.assertIn("organizationName=", bundle["linkedin_url"])
+        self.assertIn("Wekan", bundle["organization_name"])
 
 
 if __name__ == "__main__":

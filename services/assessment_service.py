@@ -14,9 +14,9 @@ from typing import Any
 from services import db_service
 from services import question_bank_service
 from services import attempt_service
-from services.database import get_session_factory
+from services.database import coll
 from services.llm_service import evaluate_answers, generate_questions
-from services.models import Assessment
+from services.models import as_document
 from services.notebook_plan_service import (
     derive_per_topic_config,
     jupyter_topic_names_from_list,
@@ -140,11 +140,13 @@ def _gen_kwargs(
     *,
     include_sample_test_cases: bool = False,
     include_beginner_coding_hints: bool = False,
+    generation_provider: str = "grok",
 ) -> dict[str, Any]:
     return {
         "admin_level": level.strip().lower(),
         "include_sample_test_cases": include_sample_test_cases,
         "include_beginner_coding_hints": include_beginner_coding_hints,
+        "generation_provider": generation_provider,
     }
 
 
@@ -358,9 +360,6 @@ def _generation_stats_fields(stats: dict[str, Any]) -> dict[str, Any]:
 
 def _build_per_topic_strings(topic_names: list[str]) -> dict[str, str]:
     """Return LLM topic strings for each catalog topic name (with reference docs)."""
-    from sqlalchemy import select
-    from services.models import Topic
-
     try:
         rows = db_service.get_topics_by_names(topic_names)
         by_name = {r.name: r for r in rows}
@@ -494,6 +493,7 @@ def preview_questions(
     target_employee_id: str | None = None,
     include_sample_test_cases: bool = False,
     include_beginner_coding_hints: bool = False,
+    generation_provider: str = "grok",
 ) -> dict[str, Any]:
     """Generate questions via LLM and return them for admin review — nothing is written to the DB.
 
@@ -533,6 +533,7 @@ def preview_questions(
             level,
             include_sample_test_cases=include_sample_test_cases,
             include_beginner_coding_hints=include_beginner_coding_hints,
+            generation_provider=generation_provider,
         ),
     )
 
@@ -568,6 +569,7 @@ def preview_questions(
             "difficulty": difficulty,
             "catalog_topic_names": catalog_topic_names,
             "routing_flag": routing_flag,
+            "generation_provider": generation_provider.strip().lower(),
             **_generation_stats_fields(gen_stats),
         },
     }
@@ -724,6 +726,7 @@ def create_assessment(
     allow_pyodide_paste: bool = False,
     include_sample_test_cases: bool = False,
     include_beginner_coding_hints: bool = False,
+    generation_provider: str = "grok",
 ) -> dict[str, Any]:
     """Generate questions via LLM and persist (shared assessment in PostgreSQL)."""
     difficulty = LEVEL_TO_DIFFICULTY.get(level.strip().lower())
@@ -764,6 +767,7 @@ def create_assessment(
             level,
             include_sample_test_cases=include_sample_test_cases,
             include_beginner_coding_hints=include_beginner_coding_hints,
+            generation_provider=generation_provider,
         ),
     )
 
@@ -1021,10 +1025,13 @@ def _apply_timed_state(
         out["questions"] = []
         return out
 
-    with get_session_factory()() as session:
-        assessment_row = session.get(Assessment, assessment_id)
-    if assessment_row and assessment_row.is_timed:
-        out["timer"] = attempt_service.get_or_create_attempt(assessment_row, employee_id)
+    assessment_row = coll("assessments").find_one(
+        {"assessment_id": assessment_id.strip()}
+    )
+    if assessment_row and assessment_row.get("is_timed"):
+        out["timer"] = attempt_service.get_or_create_attempt(
+            as_document(assessment_row), employee_id
+        )
     return out
 
 

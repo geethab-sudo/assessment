@@ -2,20 +2,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   createDifficultyImprovementAssessment,
+  createFocusAreasAssessment,
   createNewAreasAssessment,
-  createWeakAreasAssessment,
   fetchEmployeeProfile,
   fetchEmployeeReport,
 } from "../lib/employeeReportApi.js";
+import {
+  MAX_QUESTIONS,
+  MAX_TOPICS,
+  PROFICIENCY_THRESHOLD,
+} from "../lib/improvementConstants.js";
 
-const WEAK_THRESHOLD = 70;
-const NEW_AREAS_TOPIC_LIMIT = 5;
-const STEP_UP_TOPIC_LIMIT = 5;
+const NEW_AREAS_TOPIC_LIMIT = MAX_TOPICS;
+const STEP_UP_TOPIC_LIMIT = MAX_TOPICS;
 
 const DIFFICULTY_RANK = { beginner: 1, intermediate: 2, advanced: 3 };
 
-function topicRowClass(percent, isWeak, isStepUp) {
-  if (isWeak) return "improve-topic-row improve-topic-row--weak";
+function topicRowClass(percent, isFocus, isStepUp) {
+  if (isFocus) return "improve-topic-row improve-topic-row--weak";
   if (isStepUp) return "improve-topic-row improve-topic-row--step-up";
   return "improve-topic-row";
 }
@@ -65,6 +69,8 @@ export default function ImprovementPage() {
   const [creating, setCreating] = useState(false);
   const [createResult, setCreateResult] = useState(null);
   const [createError, setCreateError] = useState(null);
+  const [selectedTopics, setSelectedTopics] = useState(() => new Set());
+  const [questionsRequested, setQuestionsRequested] = useState(MAX_QUESTIONS);
 
   const profileFetchKey = useRef("");
 
@@ -186,8 +192,8 @@ export default function ImprovementPage() {
     }
   }, [selectedPath, employeeId, languageCode, loadProfile]);
 
-  const weakTopicSet = useMemo(() => {
-    return new Set(profile?.weakest_topics || []);
+  const focusTopicSet = useMemo(() => {
+    return new Set(profile?.weakest_topics || profile?.focus_topics || []);
   }, [profile]);
 
   const recommendedByTopic = profile?.recommended_difficulty_by_topic || {};
@@ -218,6 +224,8 @@ export default function ImprovementPage() {
     setProfile(null);
     setCreateResult(null);
     setCreateError(null);
+    setSelectedTopics(new Set());
+    setQuestionsRequested(MAX_QUESTIONS);
     setPath(path);
   };
 
@@ -231,34 +239,50 @@ export default function ImprovementPage() {
     setSearchParams(next, { replace: true });
   };
 
-  const handleStartPractice = async () => {
+  const toggleTopic = (name, max = MAX_TOPICS) => {
+    setSelectedTopics((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else if (next.size < max) next.add(name);
+      return next;
+    });
+  };
+
+  const handleStartPractice = async (topicOverride) => {
     const eid = employeeId.trim();
     const lang = languageCode.trim();
     if (!eid || !lang) {
       setCreateError("Employee ID and language are required.");
       return;
     }
+    const topics =
+      topicOverride ?? (selectedTopics.size > 0 ? [...selectedTopics] : undefined);
     setCreating(true);
     setCreateError(null);
     setCreateResult(null);
     try {
       let data;
+      const q = questionsRequested;
       if (selectedPath === "new") {
         data = await createNewAreasAssessment({
           employeeId: eid,
           languageCode: lang,
-          topicsCount: NEW_AREAS_TOPIC_LIMIT,
+          questionsRequested: q,
+          topicNames: topics,
         });
       } else if (selectedPath === "difficulty") {
         data = await createDifficultyImprovementAssessment({
           employeeId: eid,
           languageCode: lang,
-          topicsCount: STEP_UP_TOPIC_LIMIT,
+          questionsRequested: q,
+          topicNames: topics,
         });
       } else {
-        data = await createWeakAreasAssessment({
+        data = await createFocusAreasAssessment({
           employeeId: eid,
           languageCode: lang,
+          questionsRequested: q,
+          topicNames: topics,
         });
       }
       setCreateResult(data);
@@ -272,6 +296,12 @@ export default function ImprovementPage() {
     } finally {
       setCreating(false);
     }
+  };
+
+  const handleImproveAllFocus = () => {
+    const all = profile?.weakest_topics || profile?.focus_topics || [];
+    setSelectedTopics(new Set(all));
+    handleStartPractice([...all]);
   };
 
   const canStartWeak =
@@ -378,9 +408,9 @@ export default function ImprovementPage() {
               onClick={() => handleSelectPath("weak")}
               disabled={!employeeId.trim() || !languageCode.trim()}
             >
-              <h3>Improve my weak areas</h3>
+              <h3>Strengthen my focus areas</h3>
               <p className="muted">
-                Extra practice on topics below {WEAK_THRESHOLD}% in your last 3 assessments.
+                Extra practice on topics below {PROFICIENCY_THRESHOLD}% in your last 3 assessments.
               </p>
             </button>
             <button
@@ -413,7 +443,7 @@ export default function ImprovementPage() {
       {selectedPath === "weak" && (
         <section className="card">
           <div className="improve-section-header">
-            <h2>Improve my weak areas</h2>
+            <h2>Strengthen my focus areas</h2>
             <button
               type="button"
               className="link-button"
@@ -436,18 +466,27 @@ export default function ImprovementPage() {
             <>
               <p className="muted small-print">
                 Analyzing {profile.assessments_analyzed} recent assessment
-                {profile.assessments_analyzed === 1 ? "" : "s"} for {langLabel}. Weak topics
-                are below {WEAK_THRESHOLD}% average.
+                {profile.assessments_analyzed === 1 ? "" : "s"} for {langLabel}. Topics that
+                need improvement are below {PROFICIENCY_THRESHOLD}% average.
               </p>
 
               {profile.weakest_topics?.length > 0 && (
                 <div className="improve-topic-summary">
                   <p className="improve-topic-summary-lead">
-                    Based on your last 3 assessments, we recommend extra practice on:
+                    Select topics to practice (below {PROFICIENCY_THRESHOLD}%):
                   </p>
-                  <ul className="improve-weak-topic-list">
+                  <ul className="improve-topic-pick-list">
                     {profile.weakest_topics.map((t) => (
-                      <li key={t}>{t}</li>
+                      <li key={t}>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={selectedTopics.has(t)}
+                            onChange={() => toggleTopic(t)}
+                          />
+                          {t}
+                        </label>
+                      </li>
                     ))}
                   </ul>
                 </div>
@@ -470,14 +509,14 @@ export default function ImprovementPage() {
                         key={topic.topic_name}
                         className={topicRowClass(
                           topic.average_percent,
-                          weakTopicSet.has(topic.topic_name),
+                          focusTopicSet.has(topic.topic_name),
                           false
                         )}
                       >
                         <td>
                           {topic.topic_name}
-                          {weakTopicSet.has(topic.topic_name) && (
-                            <span className="improve-weak-badge"> weak</span>
+                          {focusTopicSet.has(topic.topic_name) && (
+                            <span className="improve-weak-badge"> need improvement</span>
                           )}
                         </td>
                         <td>{topic.questions_count}</td>
@@ -492,7 +531,7 @@ export default function ImprovementPage() {
 
               {!profile.weakest_topics?.length && profile.assessments_analyzed > 0 && (
                 <p className="muted">
-                  No topics scored below {WEAK_THRESHOLD}% in your last 3 assessments.
+                  No topics scored below {PROFICIENCY_THRESHOLD}% in your last 3 assessments.
                 </p>
               )}
 
@@ -510,15 +549,44 @@ export default function ImprovementPage() {
 
               {createError && <p className="error">{createError}</p>}
 
+              <label className="improve-questions-count">
+                Number of questions (max {MAX_QUESTIONS})
+                <input
+                  type="number"
+                  min={1}
+                  max={MAX_QUESTIONS}
+                  value={questionsRequested}
+                  onChange={(e) =>
+                    setQuestionsRequested(
+                      Math.min(MAX_QUESTIONS, Math.max(1, Number(e.target.value) || 1))
+                    )
+                  }
+                />
+              </label>
+
               <div className="improve-actions">
                 <button
                   type="button"
-                  onClick={handleStartPractice}
+                  className="secondary"
+                  onClick={handleImproveAllFocus}
                   disabled={
                     creating || !employeeId.trim() || !languageCode.trim() || !canStartWeak
                   }
                 >
-                  {creating ? "Creating…" : "Start practice assessment"}
+                  Help me improve all my focus areas
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleStartPractice()}
+                  disabled={
+                    creating ||
+                    !employeeId.trim() ||
+                    !languageCode.trim() ||
+                    !canStartWeak ||
+                    selectedTopics.size === 0
+                  }
+                >
+                  {creating ? "Creating…" : "Start practice on selected topics"}
                 </button>
               </div>
             </>
@@ -561,17 +629,26 @@ export default function ImprovementPage() {
               {unexploredTopics.length > 0 ? (
                 <div className="improve-topic-summary improve-topic-summary--new">
                   <p className="improve-topic-summary-lead">
-                    Topics you have not tried yet ({unexploredTopics.length} in catalog):
+                    Select topics to explore ({unexploredTopics.length} available):
                   </p>
-                  <ul className="improve-weak-topic-list">
+                  <ul className="improve-topic-pick-list">
                     {unexploredTopics.map((t) => (
-                      <li key={t}>{t}</li>
+                      <li key={t}>
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={selectedTopics.has(t)}
+                            onChange={() => toggleTopic(t)}
+                          />
+                          {t}
+                        </label>
+                      </li>
                     ))}
                   </ul>
                 </div>
               ) : (
                 <p className="muted">
-                  You have explored all catalog topics for this language. Try weak areas or
+                  You have explored all catalog topics for this language. Try focus areas or
                   step up difficulty when available.
                 </p>
               )}
@@ -595,15 +672,34 @@ export default function ImprovementPage() {
 
               {createError && <p className="error">{createError}</p>}
 
+              <label className="improve-questions-count">
+                Number of questions (max {MAX_QUESTIONS})
+                <input
+                  type="number"
+                  min={1}
+                  max={MAX_QUESTIONS}
+                  value={questionsRequested}
+                  onChange={(e) =>
+                    setQuestionsRequested(
+                      Math.min(MAX_QUESTIONS, Math.max(1, Number(e.target.value) || 1))
+                    )
+                  }
+                />
+              </label>
+
               <div className="improve-actions">
                 <button
                   type="button"
-                  onClick={handleStartPractice}
+                  onClick={() => handleStartPractice()}
                   disabled={
                     creating || !employeeId.trim() || !languageCode.trim() || !canStartNew
                   }
                 >
-                  {creating ? "Creating…" : "Start practice on new topics"}
+                  {creating
+                    ? "Creating…"
+                    : selectedTopics.size > 0
+                      ? "Start practice on selected topics"
+                      : "Start practice on new topics"}
                 </button>
               </div>
             </>
@@ -644,14 +740,20 @@ export default function ImprovementPage() {
               {stepUpTopics.length > 0 ? (
                 <div className="improve-topic-summary improve-topic-summary--step-up">
                   <p className="improve-topic-summary-lead">
-                    Ready to step up ({stepUpTopics.length} topic
-                    {stepUpTopics.length === 1 ? "" : "s"}):
+                    Select topics to step up ({stepUpTopics.length} eligible):
                   </p>
-                  <ul className="improve-weak-topic-list">
+                  <ul className="improve-topic-pick-list">
                     {stepUpTopics.map((t) => (
                       <li key={t.topic_name}>
-                        {t.topic_name} — {t.last_difficulty || "beginner"} →{" "}
-                        {recommendedByTopic[t.topic_name]}
+                        <label>
+                          <input
+                            type="checkbox"
+                            checked={selectedTopics.has(t.topic_name)}
+                            onChange={() => toggleTopic(t.topic_name)}
+                          />
+                          {t.topic_name} — {t.last_difficulty || "beginner"} →{" "}
+                          {recommendedByTopic[t.topic_name]}
+                        </label>
                       </li>
                     ))}
                   </ul>
@@ -722,10 +824,25 @@ export default function ImprovementPage() {
 
               {createError && <p className="error">{createError}</p>}
 
+              <label className="improve-questions-count">
+                Number of questions (max {MAX_QUESTIONS})
+                <input
+                  type="number"
+                  min={1}
+                  max={MAX_QUESTIONS}
+                  value={questionsRequested}
+                  onChange={(e) =>
+                    setQuestionsRequested(
+                      Math.min(MAX_QUESTIONS, Math.max(1, Number(e.target.value) || 1))
+                    )
+                  }
+                />
+              </label>
+
               <div className="improve-actions">
                 <button
                   type="button"
-                  onClick={handleStartPractice}
+                  onClick={() => handleStartPractice()}
                   disabled={
                     creating ||
                     !employeeId.trim() ||
@@ -733,7 +850,11 @@ export default function ImprovementPage() {
                     !canStartDifficulty
                   }
                 >
-                  {creating ? "Creating…" : "Start harder practice assessment"}
+                  {creating
+                    ? "Creating…"
+                    : selectedTopics.size > 0
+                      ? "Start practice on selected topics"
+                      : "Start harder practice assessment"}
                 </button>
               </div>
             </>

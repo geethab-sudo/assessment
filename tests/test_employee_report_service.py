@@ -45,6 +45,21 @@ def _fake_record(aid: str, submitted_at: str, score: float, *, is_timed: bool = 
     }
 
 
+@patch(
+    "services.employee_profile_service._catalog_topic_names",
+    return_value=[],
+)
+@patch(
+    "services.employee_profile_service._unexplored_topic_names",
+    return_value=[],
+)
+@patch(
+    "services.employee_profile_service.catalog_service.list_languages",
+    return_value=[
+        {"id": 1, "code": "py", "name": "python"},
+    ],
+)
+@patch("services.certificate_service.list_employee_certificates", return_value=[])
 @patch("services.employee_profile_service.db_service.count_employee_needs_practice_bank_questions")
 @patch("services.employee_profile_service.db_service.count_employee_mastered_by_topic")
 @patch("services.employee_profile_service.get_employee_mastered_bank_ids")
@@ -58,6 +73,10 @@ class TestGetEmployeeReport(unittest.TestCase):
         mock_mastered: unittest.mock.MagicMock,
         mock_by_topic: unittest.mock.MagicMock,
         mock_needs: unittest.mock.MagicMock,
+        mock_certs: unittest.mock.MagicMock,
+        mock_langs: unittest.mock.MagicMock,
+        mock_unexplored: unittest.mock.MagicMock,
+        mock_catalog: unittest.mock.MagicMock,
     ) -> None:
         """No submissions → zero counts but valid employee_id in response."""
         mock_load.return_value = []
@@ -77,6 +96,10 @@ class TestGetEmployeeReport(unittest.TestCase):
         mock_mastered: unittest.mock.MagicMock,
         mock_by_topic: unittest.mock.MagicMock,
         mock_needs: unittest.mock.MagicMock,
+        mock_certs: unittest.mock.MagicMock,
+        mock_langs: unittest.mock.MagicMock,
+        mock_unexplored: unittest.mock.MagicMock,
+        mock_catalog: unittest.mock.MagicMock,
     ) -> None:
         """score_timeline is oldest-first regardless of load order."""
         mock_load.return_value = [
@@ -100,6 +123,10 @@ class TestGetEmployeeReport(unittest.TestCase):
         mock_mastered: unittest.mock.MagicMock,
         mock_by_topic: unittest.mock.MagicMock,
         mock_needs: unittest.mock.MagicMock,
+        mock_certs: unittest.mock.MagicMock,
+        mock_langs: unittest.mock.MagicMock,
+        mock_unexplored: unittest.mock.MagicMock,
+        mock_catalog: unittest.mock.MagicMock,
     ) -> None:
         """Total and average duration sum timed assessment duration_seconds only."""
         mock_load.return_value = [
@@ -122,6 +149,10 @@ class TestGetEmployeeReport(unittest.TestCase):
         mock_mastered: unittest.mock.MagicMock,
         mock_by_topic: unittest.mock.MagicMock,
         mock_needs: unittest.mock.MagicMock,
+        mock_certs: unittest.mock.MagicMock,
+        mock_langs: unittest.mock.MagicMock,
+        mock_unexplored: unittest.mock.MagicMock,
+        mock_catalog: unittest.mock.MagicMock,
     ) -> None:
         """languages[] and mastery counts reflect DB helper rollups."""
         rec = _fake_record("A1", "2026-01-01T00:00:00+00:00", 75.0)

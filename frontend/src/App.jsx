@@ -9,7 +9,9 @@ import AdminCatalogPage from "./pages/AdminCatalogPage.jsx";
 import AdminCertificateLayoutPage from "./pages/AdminCertificateLayoutPage.jsx";
 import AdminQuestionBankPage from "./pages/AdminQuestionBankPage.jsx";
 import EmployeeReportPage from "./pages/EmployeeReportPage.jsx";
+import TopicPracticePage from "./pages/TopicPracticePage.jsx";
 import ImprovementPage from "./pages/ImprovementPage.jsx";
+import CertificateVerifyPage from "./pages/CertificateVerifyPage.jsx";
 import ClientPage from "./pages/ClientPage.jsx";
 import LoginAdminPage from "./pages/LoginAdminPage.jsx";
 import LoginClientPage from "./pages/LoginClientPage.jsx";
@@ -50,9 +52,24 @@ function HomePage() {
 
 function Layout() {
   return (
-    <>
-      <NavBar />
-      <Routes>
+    <Routes>
+      <Route path="/verify/certificate/:certificateId" element={<CertificateVerifyPage />} />
+      <Route
+        path="*"
+        element={
+          <>
+            <NavBar />
+            <AppRoutes />
+          </>
+        }
+      />
+    </Routes>
+  );
+}
+
+function AppRoutes() {
+  return (
+    <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/login/admin" element={<LoginAdminPage />} />
         <Route path="/login/client" element={<LoginClientPage />} />
@@ -123,9 +140,9 @@ function Layout() {
         <Route path="/client" element={<ClientPage />} />
         <Route path="/client/my-report" element={<EmployeeReportPage mode="client" />} />
         <Route path="/client/improve" element={<ImprovementPage />} />
+        <Route path="/client/topic-practice" element={<TopicPracticePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </>
+    </Routes>
   );
 }
 

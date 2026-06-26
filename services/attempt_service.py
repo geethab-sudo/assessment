@@ -7,14 +7,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select
-
-from services.database import get_session_factory
-from services.models import Assessment, AssessmentAttempt, Submission
-
-
-def _session():
-    return get_session_factory()()
+from services.database import coll, next_id
+from services.models import Document, as_document
 
 MIN_DURATION_MINUTES = 1
 MIN_NOTEBOOK_GRACE_MINUTES = 0
@@ -68,43 +62,30 @@ def user_has_submitted(assessment_id: str, employee_id: str) -> bool:
     eid = normalize_employee_id(employee_id)
     if not eid:
         return False
+    aid = assessment_id.strip()
     prefix = f"{employee_id.strip()} |"
-    with _session() as session:
-        row = session.scalar(
-            select(Submission.id)
-            .where(
-                Submission.assessment_id == assessment_id.strip(),
-                Submission.user_id.ilike(f"{prefix}%"),
-            )
-            .limit(1)
-        )
-        if row is not None:
+    if coll("submissions").find_one(
+        {"assessment_id": aid, "user_id": {"$regex": f"^{prefix}", "$options": "i"}},
+        projection={"_id": 1},
+    ):
+        return True
+    for doc in coll("submissions").find({"assessment_id": aid}, {"user_id": 1}):
+        uid = doc.get("user_id") or ""
+        part = uid.split("|", 1)[0].strip().casefold()
+        if part == eid:
             return True
-        # Case-insensitive employee id match on prefix
-        rows = session.scalars(
-            select(Submission.user_id).where(
-                Submission.assessment_id == assessment_id.strip(),
-            )
-        ).all()
-        for uid in rows:
-            part = (uid or "").split("|", 1)[0].strip().casefold()
-            if part == eid:
-                return True
     return False
 
 
-def _get_attempt_row(assessment_id: str, employee_id: str) -> AssessmentAttempt | None:
+def _get_attempt_row(assessment_id: str, employee_id: str) -> Document | None:
     eid = normalize_employee_id(employee_id)
-    with _session() as session:
-        return session.scalar(
-            select(AssessmentAttempt).where(
-                AssessmentAttempt.assessment_id == assessment_id.strip(),
-                AssessmentAttempt.employee_id == eid,
-            )
-        )
+    doc = coll("assessment_attempts").find_one(
+        {"assessment_id": assessment_id.strip(), "employee_id": eid}
+    )
+    return as_document(doc)
 
 
-def get_or_create_attempt(assessment: Assessment, employee_id: str) -> dict[str, Any]:
+def get_or_create_attempt(assessment: Any, employee_id: str) -> dict[str, Any]:
     """
     Return timer payload for a timed assessment. Creates attempt on first call.
     Raises ValueError if already submitted.
@@ -121,50 +102,43 @@ def get_or_create_attempt(assessment: Assessment, employee_id: str) -> dict[str,
     duration = assessment.duration_minutes or MIN_DURATION_MINUTES
     grace = assessment.notebook_grace_minutes or DEFAULT_NOTEBOOK_GRACE_MINUTES
 
-    with _session() as session:
-        row = session.scalar(
-            select(AssessmentAttempt).where(
-                AssessmentAttempt.assessment_id == aid,
-                AssessmentAttempt.employee_id == eid,
-            )
-        )
-        if not row:
-            started = now
-            expires = started + timedelta(minutes=duration)
-            notebook_expires = expires + timedelta(minutes=grace)
-            row = AssessmentAttempt(
-                assessment_id=aid,
-                employee_id=eid,
-                started_at=_iso(started),
-                expires_at=_iso(expires),
-                notebook_expires_at=_iso(notebook_expires),
-                submitted_at=None,
-            )
-            session.add(row)
-            session.commit()
-            session.refresh(row)
-
-        return {
-            "started_at": row.started_at,
-            "expires_at": row.expires_at,
-            "notebook_expires_at": row.notebook_expires_at,
-            "server_now": _iso(now),
-            "submitted_at": row.submitted_at,
+    row = coll("assessment_attempts").find_one(
+        {"assessment_id": aid, "employee_id": eid}
+    )
+    if not row:
+        started = now
+        expires = started + timedelta(minutes=duration)
+        notebook_expires = expires + timedelta(minutes=grace)
+        row = {
+            "id": next_id("assessment_attempts"),
+            "assessment_id": aid,
+            "employee_id": eid,
+            "started_at": _iso(started),
+            "expires_at": _iso(expires),
+            "notebook_expires_at": _iso(notebook_expires),
+            "submitted_at": None,
         }
+        coll("assessment_attempts").insert_one(row)
+
+    return {
+        "started_at": row["started_at"],
+        "expires_at": row["expires_at"],
+        "notebook_expires_at": row["notebook_expires_at"],
+        "server_now": _iso(now),
+        "submitted_at": row.get("submitted_at"),
+    }
 
 
 def mark_attempt_submitted(assessment_id: str, employee_id: str) -> None:
     eid = normalize_employee_id(employee_id)
-    with _session() as session:
-        row = session.scalar(
-            select(AssessmentAttempt).where(
-                AssessmentAttempt.assessment_id == assessment_id.strip(),
-                AssessmentAttempt.employee_id == eid,
-            )
-        )
-        if row and not row.submitted_at:
-            row.submitted_at = _iso(_utc_now())
-            session.commit()
+    coll("assessment_attempts").update_one(
+        {
+            "assessment_id": assessment_id.strip(),
+            "employee_id": eid,
+            "submitted_at": None,
+        },
+        {"$set": {"submitted_at": _iso(_utc_now())}},
+    )
 
 
 def _deadlines_for(assessment_id: str, employee_id: str) -> tuple[datetime, datetime] | None:

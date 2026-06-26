@@ -2,7 +2,7 @@
 
 > **Purpose:** Living roadmap for the question-bank, recycling, analytics, and “Help me improve” features.  
 > **Companion file:** [task.md](task.md) — checkbox tasks per stage for agentic implementation.  
-> **Last reviewed:** 2026-06-19
+> **Last reviewed:** 2026-06-23 (Phase 4 / Stage 12 added)
 
 ---
 
@@ -46,11 +46,13 @@ A participant who got the same coding question wrong three times **may receive i
 
 **Implementation:** mastered questions are stored per employee in `employee_question_mastery` (`employee_id` + `bank_question_id`). Updated on each correct submit; one-time backfill from historical submissions on first deploy.
 
-On `**/client`**, a **“Help me improve”** entry point will offer three guided paths:
+On `**/client`**, a **“Help me improve”** entry point offers three guided paths (Stages 5–7; **Stage 12** adds topic pickers and report-driven quick practice):
 
-1. **Improve my weak areas** — summarize **last 3 assessments only**; build a **bank-only** practice assessment on weakest topics.
-2. **Explore new areas** — use **full history** for explored topics; **bank-only** on catalog topics not yet covered.
-3. **Improve difficulty** — use **full history**; **bank-only** at stepped difficulty on familiar topics.
+1. **Strengthen focus areas** (was “weak areas”) — last **3** assessments; topics **below 75%**; bank-only at current difficulty.
+2. **Explore new areas** — full history; unexplored catalog topics; bank-only at **beginner**.
+3. **Step up difficulty** — full history; topics **≥ 75%** at current level; bank-only at next difficulty.
+
+**Stage 12 caps:** max **15** questions per session, max **3** per topic, max **5** topics (new/step-up paths).
 
 **Client rule:** improvement flows never call the LLM. If the bank cannot supply the target count, deliver what is available and explain the gap (e.g. *“You asked for 15 questions; based on availability, there are only 12 valid questions for you in our question bank.”*).
 
@@ -60,7 +62,9 @@ On `**/client`**, a **“Help me improve”** entry point will offer three guide
 
 ## 2. Deployment context
 
-This platform runs as a **single FastAPI app + React SPA + PostgreSQL** (see [README.md](README.md)). There is **no separate question-bank server**. All stages below extend the existing backend services and frontend pages — compatible with your current deploy model (API + DB, not a standalone bank microservice).
+This platform runs as a **single FastAPI app + React SPA + database** (see [README.md](README.md)). Today the database is **PostgreSQL** (local Docker or managed instance). **Phase 3 (Stage 11B)** migrates persistence to **MongoDB Atlas** so cloud deploys do not depend on a Postgres container on the app server.
+
+There is **no separate question-bank server**. All stages extend the existing backend services and frontend pages — compatible with a simple deploy model (API + Atlas, not a standalone bank microservice).
 
 ---
 
@@ -114,17 +118,16 @@ The first milestone — **persist questions in the database** — is implemented
 | Timed attempts keyed by employee    | `AssessmentAttempt`, `attempt_service.py`                               |
 
 
-### 3.5 Remaining work (as of Stages 0–7 complete)
+### 3.5 Remaining work (as of Phase 3)
 
-**Shipped:** Stages **0–7** — question bank persistence, admin recycle/hybrid, bank browser, employee profile + stats report (core 4B), and all three “Help me improve” flows (weak areas, new areas, step-up difficulty).
+**Shipped:** Stages **0–7** — question bank, admin recycle, bank browser, employee profile + stats report (4B), three improvement flows. **Phase 2 (9–10)** — coding quality, decimal scoring, certificates. **Phase 3 (11A–11B)** — Grok vs Gemini generation, MongoDB Atlas.
 
-**Next (Phase 2):** Stages **9–10** — coding-question quality, sample test cases, decimal scoring, beginner hints, Tier 1 certificates — see §Stage 9–10.
+**Next (Phase 4):** Stage **12** — interactive topic pickers on Skills Progress Report (heatmap, radar, unexplored, recommendations quick-start), selectable improvement wizard with session caps, inclusive copy (no “weak”), LinkedIn/social certificate share — see §Phase 4.
 
 **Optional / partial (not blocking “done”):**
 
-- **Stage 4B polish** — report API is shippable; some ambitious layout items from §4B below are enhancements only (see **4B optional polish**).
+- **Stage 4B polish** — QR code deferred (see **4B optional polish**).
 - **Stage 8** — employee auth, bank retirement, bulk seed script, `ARCHITECTURE.md` update (see §Stage 8).
-- **Stage 10 optional** — LinkedIn certificate sharing (backlog after certificate v1).
 
 **Explicitly out of scope (for now):** email delivery (`POST …/employee-report/send`).
 
@@ -712,26 +715,504 @@ On admin employee performance / report view:
 
 ---
 
-### Stage 10 optional — LinkedIn sharing (future backlog)
+### Stage 10 optional — LinkedIn sharing (superseded)
 
-**Not v1.** After download, optional **Share on LinkedIn?** button:
+> **Superseded by Stage 12E** — see Phase 4. Keep here as historical note only.
 
-- LinkedIn “Add license/certification” deep link or OAuth share with verification URL.
-- Requires product/legal review; implement after core certificate generation is stable.
+- LinkedIn / social share moved to **Stage 12E** with certificate v1 complete.
+
+---
+
+## Phase 3 — Multi-LLM generation & MongoDB Atlas (Stages 11A–11B)
+
+> **Goal:** (A) Let admins choose **Grok** or **Gemini** when generating assessment questions; (B) replace PostgreSQL with **MongoDB Atlas** for cloud deploys and future vector search on the question bank.  
+> **Tasks:** [task.md](task.md) §Stage 11A–11B.  
+> **Order:** **11A first** (small, independent) → **11B** (large; can be split across multiple agent sessions).
+
+### Why now
+
+
+| Driver             | Detail                                                                                                                                                                       |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Model choice**   | Compare Groq vs Google generation quality/cost without code changes per experiment                                                                                           |
+| **Cloud ops**      | Atlas removes the need to run Postgres in Docker on the production server                                                                                                    |
+| **Future vectors** | MongoDB Atlas Vector Search can index `question_bank` embeddings for “similar question” lookup — **not implemented in 11B**, but collection/index design should not block it |
+
+
+---
+
+### Stage 11A — Admin model picker: Grok vs Gemini (generation only)
+
+**Scope:** Question **generation** only (`generate_questions`). **Grading** (`evaluate_answers` for coding/subjective) stays on **Groq** in v1 — document in README; a follow-up could add provider choice for grading later.
+
+#### Provider abstraction
+
+Refactor `services/llm_service.py` into a thin facade + provider modules:
+
+```text
+services/llm/
+  __init__.py          # re-export generate_questions, evaluate_answers, *configured helpers
+  providers.py         # GenerationProvider protocol, resolve provider by name
+  groq_provider.py     # existing Groq OpenAI-compatible client (_chat_json_text)
+  gemini_provider.py   # Google Gemini API (JSON mode)
+```
+
+`generate_questions(..., generation_provider: str = "grok")` routes to the selected provider. Shared pieces stay centralized: prompt text, `_parse_strict_json`, `normalize_generated_question`, test-case/hint flags.
+
+#### Environment variables
+
+
+| Variable                      | Purpose                              | Default                   |
+| ----------------------------- | ------------------------------------ | ------------------------- |
+| `GROQ_API_KEY`                | Groq (existing)                      | —                         |
+| `GROQ_MODEL`                  | Groq model id                        | `llama-3.3-70b-versatile` |
+| `GROQ_GENERATION_TEMPERATURE` | Generation temperature               | `0.72`                    |
+| `GOOGLE_API_KEY1`             | Google AI API key (user-chosen name) | —                         |
+| `GEMINI_MODEL`                | Gemini model id                      | `gemini-3.5-flash`        |
+
+
+Use `**GOOGLE_API_KEY1**` exactly as in `.env` (not `GOOGLE_API_KEY`). Add `google-genai` (official SDK) to `requirements.txt`.
+
+**Gemini implementation notes:**
+
+- Model id: `**gemini-3.5-flash`** (user request; override via `GEMINI_MODEL`).
+- Request **JSON object** output (`response_mime_type: application/json` or SDK equivalent).
+- Reuse the same user prompt as Groq so question shape is identical.
+- Map Gemini auth/429 errors to clear `RuntimeError` messages (mirror `_groq_auth_hint` pattern).
+
+#### API & service wiring
+
+`**GenerateAssessmentBody`** (`schemas/admin.py`):
+
+```python
+generation_provider: Literal["grok", "gemini"] = "grok"
+```
+
+Pass through:
+
+- `assessment_service.preview_questions` / `create_assessment` / `_build_assessment_rows` / `_generate_rows_*`
+- `gen_kwargs` dict (already used for `admin_level`, test cases, hints) → add `generation_provider`
+
+**Validation:** If `generation_provider == "gemini"` and `GOOGLE_API_KEY1` is missing → HTTP **503** with actionable message. Same for `grok` + missing `GROQ_API_KEY` (existing behavior).
+
+**Health** (`GET /health`, `HealthResponse`):
+
+- Add `gemini_configured: bool` (non-empty `GOOGLE_API_KEY1`).
+- Keep `groq_configured` for grading + Grok generation.
+- Optional: `generation_providers_available: list[str]` for admin UI.
+
+**OpenAPI:** Update `ERROR_503` description to mention either provider key.
+
+#### Admin UI (`AdminPage.jsx`)
+
+In the **Generate assessment** section (near **Question source**):
+
+- Radio or select: **Grok (Groq)** | **Gemini**
+- Default: **Grok**
+- Helper text: *Grading still uses Groq.*
+- Disable Gemini option when `/health` reports `gemini_configured: false` (or show warning).
+- Include `generation_provider` in `previewPayload` / confirm body.
+
+#### Tests
+
+
+| Test       | Assert                                                                           |
+| ---------- | -------------------------------------------------------------------------------- |
+| Schema     | `generation_provider` defaults to `grok`; rejects unknown values                 |
+| Routing    | `generate_questions(..., generation_provider="gemini")` calls Gemini client mock |
+| API 503    | Preview with `gemini` and no key → 503                                           |
+| Regression | Existing recycle/hybrid tests still pass with default `grok`                     |
+
+
+**Exit criteria:** Admin selects Gemini on Generate → preview returns valid questions; Grok path unchanged; grading still works with Groq only.
+
+**Agent handoff:** “Implement 11A only. Do not start MongoDB migration.”
+
+---
+
+### Stage 11B — PostgreSQL → MongoDB Atlas
+
+**Goal:** All app persistence uses **MongoDB Atlas** via `MONGODB_URI`. Remove runtime dependency on PostgreSQL and Docker Postgres for production. Preserve all existing API behavior and data shapes returned to the frontend.
+
+#### Target architecture
+
+```mermaid
+flowchart TB
+  subgraph admin [Admin SPA]
+    AP[AdminPage — provider + generate]
+  end
+
+  subgraph api [FastAPI]
+    SVC[services layer]
+  end
+
+  subgraph atlas [MongoDB Atlas]
+    LANG[(languages)]
+    TOP[(topics)]
+    QB[(question_bank)]
+    ASM[(assessments)]
+    AQ[(assessment_questions)]
+    SUB[(submissions)]
+    ATT[(assessment_attempts)]
+    EQM[(employee_question_mastery)]
+    CERT[(certificates_issued)]
+    CTR[(counters)]
+  end
+
+  AP --> SVC
+  SVC --> atlas
+```
+
+
+
+#### Technology choices
+
+
+| Choice                           | Rationale                                                                                                                    |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **pymongo** (sync)               | Matches existing synchronous service style; minimal async refactor                                                           |
+| **Explicit integer `id` fields** | Keeps `bank_question_id` and join-style code recognizable; use a `counters` collection for `$inc` sequences                  |
+| **Separate collections**         | Mirror current normalized tables (not full embed of questions inside assessment) — simpler migration from SQLAlchemy queries |
+| **JSON-native fields**           | `topic_names`, `related_documents`, `sample_test_cases`, `raw_notebook` stored as BSON arrays/objects (no JSONB type)        |
+
+
+**Remove:** `sqlalchemy`, `psycopg`, PostgreSQL-specific `database.py` migrations (`information_schema`, `SERIAL`, `JSONB`).
+
+**Add:** `pymongo`, optional `dnspython` (SRV URIs for Atlas).
+
+#### Collection schema (v1)
+
+
+| Collection                  | Primary key              | Notes                                                                      |
+| --------------------------- | ------------------------ | -------------------------------------------------------------------------- |
+| `counters`                  | `_id` = collection name  | `{ seq: N }` for auto-increment                                            |
+| `languages`                 | `id` (int)               | `code` unique                                                              |
+| `topics`                    | `id` (int)               | `language_id` + `name` unique compound                                     |
+| `question_bank`             | `id` (int)               | `content_hash` unique; indexes on `topic_name+difficulty`, `language_code` |
+| `employee_question_mastery` | `id` (int)               | unique `(employee_id, bank_question_id)`                                   |
+| `assessments`               | `assessment_id` (string) | ASM-… ids unchanged                                                        |
+| `assessment_questions`      | `id` (int)               | unique `(assessment_id, question_id)`                                      |
+| `assessment_attempts`       | `id` (int)               | unique `(assessment_id, employee_id)`                                      |
+| `submissions`               | `id` (int)               | indexes on `(assessment_id, user_id)`, `timestamp`                         |
+| `certificates_issued`       | `id` (int)               | indexes on `employee_id`, `assessment_id`                                  |
+
+
+**Future vector field (do not implement now):** optional `embedding: list[float]` on `question_bank` + Atlas Vector Search index — document in README/ARCHITECTURE only.
+
+#### `services/database.py` rewrite
+
+Replace SQLAlchemy engine with:
+
+```python
+def get_mongo_client() -> MongoClient
+def get_database() -> Database
+def init_db() -> None  # create indexes, run one-time backfills
+def ping_database() -> bool
+```
+
+`init_db()` responsibilities (idempotent):
+
+1. Create all indexes (equivalent to current `_ensure_*` + model `__table_args__`).
+2. Run data backfills that today run on PG startup (`_backfill_question_bank_difficulty_labels`, mastery backfill if empty) — port logic to Mongo queries.
+3. No `information_schema` / `DO $$` blocks.
+
+#### Service migration map
+
+Rewrite persistence in place (keep function signatures in `db_service.py`, `catalog_service.py`, `question_bank_service.py`, etc.):
+
+
+| Module                                 | PG today                     | Mongo action                                                                   |
+| -------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------ |
+| `services/models.py`                   | SQLAlchemy ORM               | **Replace** with TypedDict / dataclass document shapes OR delete and use dicts |
+| `services/db_service.py`               | SQLAlchemy sessions          | `pymongo` CRUD                                                                 |
+| `services/catalog_service.py`          | ORM                          | `languages` / `topics` collections                                             |
+| `services/question_bank_service.py`    | ORM + joins                  | aggregation / `find` + `update_one` with `$inc` for stats                      |
+| `services/attempt_service.py`          | ORM                          | `assessment_attempts`                                                          |
+| `services/certificate_service.py`      | ORM                          | `certificates_issued`                                                          |
+| `services/employee_profile_service.py` | read submissions/assessments | same queries on Mongo                                                          |
+| `services/report_service.py`           | read submissions             | same                                                                           |
+| `scripts/seed_sample_catalog.py`       | SQLAlchemy                   | Mongo inserts                                                                  |
+| `scripts/seed_demo_students.py`        | SQLAlchemy                   | Mongo inserts                                                                  |
+
+
+**Delete or archive:** entire PostgreSQL migration section in old `database.py` (~600 lines of `ALTER TABLE`).
+
+#### Environment & deploy
+
+
+| Variable          | Example                                                                             |
+| ----------------- | ----------------------------------------------------------------------------------- |
+| `MONGODB_URI`     | `mongodb+srv://user:pass@cluster.mongodb.net/assesment?retryWrites=true&w=majority` |
+| `MONGODB_DB_NAME` | `assesment` (optional; default from URI path)                                       |
+
+
+Update `.env.example`, README:
+
+- **Quick start:** Atlas URI instead of `docker compose up` for DB (Docker Postgres optional for legacy local dev during transition, then remove).
+- Document Atlas IP allowlist (`0.0.0.0/0` for dev or app server IP for prod).
+- Remove `DATABASE_URL` / `POSTGRES_`* from required vars after cutover.
+
+`**docker-compose.yml`:** Remove `db` service (or mark deprecated in comment) once migration is complete.
+
+#### Data migration (existing Postgres → Atlas)
+
+One-shot script: `scripts/migrate_postgres_to_mongodb.py`
+
+1. Read `DATABASE_URL` (source) + `MONGODB_URI` (target).
+2. Export tables in FK order: languages → topics → question_bank → assessments → assessment_questions → submissions → attempts → mastery → certificates.
+3. Preserve integer `id` values and string `assessment_id`s.
+4. Seed `counters` collection to `max(id)` per collection.
+5. Dry-run mode (`--dry-run`) + row counts printed.
+
+**Cutover strategy:**
+
+1. Deploy code with Mongo support behind env flag **or** hard cutover (recommended: single PR, migrate script, update prod `.env`).
+2. Run migration script on staging; run full manual QA script.
+3. Point production to Atlas; retire Postgres container.
+
+#### Testing strategy
+
+
+| Area        | Approach                                                          |
+| ----------- | ----------------------------------------------------------------- |
+| Unit tests  | Keep mocks — most tests already patch `_session()`                |
+| Integration | Optional `MONGODB_URI` test DB; or `mongomock` for lightweight CI |
+| Regression  | Full `pytest tests/ -q` after migration                           |
+| Manual QA   | Re-run [task.md](task.md) manual QA script end-to-end on Atlas    |
+
+
+Update `tests/TEST_GUIDE.md`: “MongoDB (or mocked) instead of PostgreSQL”.
+
+#### Docs
+
+- `README.md` — Atlas setup, env vars, remove Postgres-first quick start
+- `ARCHITECTURE.md` — MongoDB + question bank (replace CSV/Postgres wording)
+- `plan.md` / `task.md` — mark 11B complete when done
+
+**Exit criteria:** App runs with only `MONGODB_URI` set; seed script works; admin generate/recycle, client submit, question bank, improvement flows, and employee report all work against Atlas; no Postgres container required on cloud server.
+
+**Suggested 11B sub-sessions (for agents):**
+
+```text
+11B-1  database.py + indexes + counters + ping/init
+11B-2  catalog_service + seed_sample_catalog.py
+11B-3  db_service (assessments, questions, submissions)
+11B-4  question_bank_service + mastery
+11B-5  attempt, certificate, profile, report services
+11B-6  migrate script + README + docker-compose cleanup + full test pass
+```
+
+**Agent handoff:** “Implement 11B-n sub-session only; do not change LLM providers unless fixing a regression.”
+
+---
+
+## Phase 4 — Interactive guided practice & inclusive UX (Stage 12)
+
+> **Goal:** Let participants **choose topics** from the Skills Progress Report and improvement wizard, with difficulty chosen automatically from proficiency; add a one-click **quick practice** from recommendations; replace discouraging “weak” copy; add **social certificate sharing**.  
+> **Tasks:** [task.md](task.md) §Stage 12.  
+> **Depends on:** Stages 4B (employee report), 5–7 (improvement flows), 10 (certificates), 11B (MongoDB — complete).  
+> **Order:** **12A** (copy + thresholds) → **12B** + **12C** (report interactions; parallel ok) → **12D** (improvement wizard) → **12E** (LinkedIn / social share).
+
+### Why now
+
+Stages 5–7 shipped **whole-path** improvement (one API call per path). The report heatmap, radar, and recommendations are **read-only**. Participants need to **pick topics** from analytics, get the right difficulty automatically, and start **sustainable** practice sessions (caps below). Certificate sharing moves from backlog to a product requirement.
+
+### Shared product rules (all Stage 12 practice flows)
+
+
+| Rule                          | Value                        | Notes                                                                           |
+| ----------------------------- | ---------------------------- | ------------------------------------------------------------------------------- |
+| **Proficiency threshold**     | **≥ 75%** average on a topic | Below → practice at **current** difficulty; at/above → eligible for **step up** |
+| **Max questions per session** | **15**                       | Sustainable study; never exceed in API or UI                                    |
+| **Max questions per topic**   | 3                            | MCQ + coding combined in one assessment                                         |
+| **Max topics per session**    | **5**                        | New-areas and step-up paths; need-improvement path may select fewer             |
+| **Question source**           | **Bank only**                | Same as Stages 5–7 — no LLM, no unreviewed questions                            |
+| **New / unexplored topics**   | Always **beginner**          | Student progresses by taking assessments and improving                          |
+| **Mastered exclusion**        | Unchanged                    | Exclude bank questions already answered correctly                               |
+
+
+**Terminology (12A — replace everywhere in participant UI):**
+
+
+| Avoid                     | Use instead                                                    |
+| ------------------------- | -------------------------------------------------------------- |
+| weak, weak areas, weakest | **need improvement**, **areas to strengthen**, **focus areas** |
+| Weak badge on topic rows  | **Need improvement** (or no badge + color only)                |
+
+
+Internal API names (`weakest_topics`, `/improvement/weak-areas`) may stay for backward compatibility; **display copy and new routes** should use inclusive language. Optional follow-up: alias endpoints (`/improvement/focus-areas`) with deprecation notes.
+
+---
+
+### Stage 12A — Inclusive language & 75% proficiency alignment
+
+**Goal:** Boss feedback — no “weak” in participant-facing UI; align focus/need-improvement detection with **75%** threshold.
+
+**Frontend**
+
+- `EmployeeReportPage.jsx`: topic table / insights — **“need improvement”** instead of “weak”; update empty-state copy.
+- `ImprovementPage.jsx`: rename path labels (e.g. **“Strengthen my focus areas”** instead of “Improve my weak areas”); update headings, badges, URL param `path=weak` may remain internally or migrate to `path=focus`.
+- Any report PDF/print strings that say “weak”.
+
+**Backend (optional but recommended)**
+
+- `employee_profile_service`: change focus-topic cutoff from 70% → **75%** (or make configurable `FOCUS_TOPIC_PERCENT_THRESHOLD=75`).
+- Ensure step-up eligibility uses **≥ 75%** consistently with Stage 7 rules.
+
+**Exit criteria:** `/client/my-report` and `/client/improve` show no “weak” wording; topics below 75% are labeled for improvement; step-up offered only when ≥ 75%.
+
+---
+
+### Stage 12B — My Report: interactive heatmap & radar topic picker
+
+**Page:** `/client/my-report?employee_id=…&period=all_time` (`EmployeeReportPage.jsx`).
+
+**Interaction model**
+
+- **Only** clicks on **heatmap cells** or **radar chart** topics open a modal/sheet (not clicks elsewhere on the page).
+- Modal title: **“Choose the topics you would like to practice more”**.
+- List topics from the clicked chart context (heatmap: filter by language/topic cell; radar: topics in chart).
+- Per topic, show eligibility:
+  - **< 75% proficiency** → action **“Improve this topic”** (bank at **current** difficulty for that topic).
+  - **≥ 75% proficiency** → action **“Step up difficulty for this topic”** (bank at **next** difficulty per Stage 7 rules).
+- Multi-select checkboxes; **Start practice** creates a bank-only assessment via new or extended API (see §12D backend).
+- Respect caps: max **5** topics, max **15** questions, max **3** per topic.
+
+**API**
+
+- `POST /client/improvement/from-topics` (or extend existing endpoints with `topic_names[]` + `intent: improve | step_up`):
+  - Body: `employee_id`, `language_code`, `topic_names`, optional `questions_requested` (default 10, max 15), `intent` per topic or derived server-side from profile.
+  - Returns same shape as existing improvement responses (`assessment_id`, `questions_delivered`, `availability_message`, …).
+
+**Exit criteria:** Click heatmap/radar topic → modal → select topics → assessment loads with correct difficulty split; no modal from other report sections.
+
+---
+
+### Stage 12C — My Report: unexplored topics picker & “Ok, let’s do it!”
+
+**Unexplored topics section** (`insights.unexplored_topics` / “Unexplored topics (your languages)”)
+
+- Add **“Explore selected topics”** (or similar) → same modal pattern: **“Choose the topics you would like to explore”**.
+- Free multi-select from unexplored list; **max 5 topics**; **beginner** difficulty only; max **15** questions total.
+- Reuse `POST /client/improvement/new-areas` with explicit `topic_names[]` (today server picks top K).
+
+**Recommendations section**
+
+- Add button **“Ok, let’s do it!”** next to **Recommendations**.
+- Parses recommendation bullets (explore X, keep momentum in Y, etc.) into a **default 10-question** quick-practice assessment:
+  - Unexplored topics in text → **beginner**, explore intent.
+  - “Keep momentum” / focus topics → current difficulty if < 75%, else step-up if ≥ 75%.
+  - Mixed recommendation → allocate question budget across topics (respect 3/topic, 15 total).
+- One click → create assessment → navigate to `/client` with `assessment_id` (same as existing improvement success path).
+
+**Backend**
+
+- `POST /client/improvement/quick-practice` — body: `employee_id`, `language_code`, optional `questions_requested` (default **10**, max 15); server reads latest `get_employee_report` insights and builds topic plan.
+- Or: client sends parsed `topic_plan[]` from displayed recommendations for transparency.
+
+**Exit criteria:** User selects unexplored topics from report → beginner assessment; user clicks **Ok, let’s do it!** → ~10 questions covering recommendation mix without manual topic picking.
+
+---
+
+### Stage 12D — Improvement wizard: topic selection & session caps
+
+**Pages**
+
+- `/client/improve?employee_id=…&path=focus` (today `path=weak`) — **Strengthen focus areas**
+- `/client/improve?…&path=new` — **Explore new areas**
+- `/client/improve?…&path=difficulty` — **Step up difficulty**
+
+**Path: need improvement / focus (was weak)**
+
+- Show checkboxes for topics **below 75%** (from profile `scope=last_3`).
+- User selects subset → chooses question count (**max 15**) → **Start practice**.
+- **“Help me improve all my focus areas”** — one click selects all eligible topics (still capped at 15 questions and 3 per topic server-side).
+- Never use “weak” in headings or buttons.
+
+**Path: new areas**
+
+- Checkboxes for unexplored catalog topics; user picks **up to 5** topics; question count up to **15**; always **beginner**.
+
+**Path: step up difficulty**
+
+- Checkboxes only for topics with **≥ 75%** at current level and eligible per `recommended_difficulty_by_topic`; max **5** topics; max **15** questions.
+
+**Backend changes (all three paths)**
+
+- Extend `POST /client/improvement/weak-areas`, `new-areas`, `difficulty` bodies with:
+  - `topic_names?: string[]` — if omitted, keep today’s auto-selection behavior.
+  - `questions_requested?: number` — clamp **1–15**.
+- Server enforces:
+  - ≤ **3** questions per topic in assembly.
+  - ≤ **5** topics when client sends explicit list (new + difficulty); focus path may allow all focus topics but still respect per-topic question cap.
+- Allocation algorithm: distribute requested count across selected topics (round-robin or weighted by shortage); document in `improvement_assessment_service.py`.
+
+**Exit criteria:** All three paths support multi-select topics + question count; caps enforced; inclusive copy throughout `ImprovementPage.jsx`.
+
+---
+
+### Stage 12E — Social certificate sharing (LinkedIn & other platforms)
+
+**Promoted from Stage 10 optional** — required for this phase.
+
+**UX**
+
+- After certificate download (client modal post-submit and/or certificate history), show:
+  - **Share on LinkedIn**
+
+**Implementation options (pick in implementation session)**
+
+
+| Approach                 | Pros                                          | Cons               |
+| ------------------------ | --------------------------------------------- | ------------------ |
+| **LinkedIn deep link**   | No OAuth; “Add license/certification” prefill | Limited branding   |
+| **LinkedIn OAuth share** | Richer post                                   | App review, tokens |
+| **Open Graph page**      | Nice preview when sharing URL                 | Needs public route |
+
+
+**Backend**
+
+- `GET /client/certificate/{id}/share-metadata` — title, issue date, level, verification URL for share dialogs.
+- Ensure issued certificates have stable `certificate_id` or slug for links.
+
+**Legal / product**
+
+- Confirm wording for third-party trademarks (LinkedIn logo button).
+- User consent before posting; no auto-post without click.
+
+**Exit criteria:** User downloads Tier 1 certificate → can share to LinkedIn (at minimum via deep link or official share flow) and copy a shareable verification link.
+
+---
+
+### Stage 12 — Testing & docs
+
+
+| Area        | Tests                                                                                                                 |
+| ----------- | --------------------------------------------------------------------------------------------------------------------- |
+| 12A         | Snapshot/copy tests or grep CI guard: no “weak” in `frontend/src/pages/EmployeeReportPage.jsx`, `ImprovementPage.jsx` |
+| 12B–12D     | API tests: topic selection, 15-q cap, 5-q/topic cap, beginner-only new areas                                          |
+| 12C         | Quick-practice builds 10 questions from mock insights                                                                 |
+| 12E         | Share metadata endpoint; optional E2E manual QA                                                                       |
+| Integration | Extend `test_mongodb_integration.py` or `test_improvement_assessment_service.py` for new body fields                  |
+
+
+Update `README.md`, `tests/TEST_GUIDE.md`, OpenAPI `EXPECTED_ROUTES` for new endpoints.
+
+**Phase 4 exit criteria:** Participant can start tailored practice from report charts, unexplored list, recommendations one-click, and improvement wizard with topic pickers; no “weak” in UI; certificates shareable to LinkedIn.
 
 ---
 
 ### Stage 8 — Future backlog (platform / ops)
 
 
-| Item                                       | Notes                                                              |
-| ------------------------------------------ | ------------------------------------------------------------------ |
-| **4B report polish**                       | QR code deferred — see **4B optional polish**                      |
-| Employee login                             | `employee_id` today is self-declared; later tie to SSO/users table |
-| Question retirement                        | Admin retires high-wrong or low-discrimination items               |
-| Seeding bank from `seed_sample_catalog.py` | Bulk import script for demo environments                           |
-| ARCHITECTURE.md update                     | Still describes CSV; should reflect PostgreSQL + bank              |
-| **LinkedIn certificate share**             | Stage 10 optional — after certificate v1                           |
+| Item                                       | Notes                                                                 |
+| ------------------------------------------ | --------------------------------------------------------------------- |
+| **4B report polish**                       | QR code deferred — see **4B optional polish**                         |
+| Employee login                             | `employee_id` today is self-declared; later tie to SSO/users table    |
+| Question retirement                        | Admin retires high-wrong or low-discrimination items                  |
+| Seeding bank from `seed_sample_catalog.py` | Bulk import script for demo environments                              |
+| ARCHITECTURE.md update                     | Reflect MongoDB Atlas + question bank (Stage 11B); was CSV/PostgreSQL |
+| **LinkedIn certificate share**             | **Stage 12E** (promoted from Stage 10 optional)                       |
 
 
 **Not scheduled:** email delivery (`POST /admin/employee-report/send`).
@@ -824,6 +1305,8 @@ if len(rows) == 0: no assessment created — explain why
 | 9C    | Submit response: decimal display mapping from stored scores               |
 | 9D    | Generation: beginner hints present only when flag on; never full solution |
 | 10    | Certificate issue: threshold, modal, admin grant, audit row               |
+| 11A   | `generation_provider` schema; Gemini provider; AdminPage picker; health   |
+| 11B   | Mongo collections + services; migrate script; README; full regression     |
 
 
 ---
@@ -851,8 +1334,14 @@ Stage 4 ✅ → Stage 5 ✅ → Stage 6 ✅ → Stage 7 ✅
          ↘
          4B optional polish (heatmap, cumulative, radar UI) — anytime after 4B core
 
-Phase 2 (next):
+Phase 2 (certificates & quality):
 Stage 9A → Stage 9B + 9D (parallel) → Stage 9C → Stage 10 → Stage 10 optional (LinkedIn)
+
+Phase 3 (infra):
+Stage 11A (Grok vs Gemini) → Stage 11B-1 … 11B-6 (MongoDB Atlas; multi-session)
+
+Phase 4 (interactive practice & social):
+Stage 12A (inclusive copy + 75% threshold) → 12B + 12C (report interactions) → 12D (improvement wizard) → 12E (LinkedIn / social share)
 ```
 
-Stages **0–7** are complete. **Phase 2 (9–10)** is the active roadmap. **4B optional polish** and **Stage 8** remain enhancements / backlog.
+Stages **0–7** are complete. **Phase 2 (9–10)** and **Phase 3 (11A–11B)** are largely complete. **Phase 4 (12)** is active next. **4B optional polish** and **Stage 8** remain enhancements / backlog.

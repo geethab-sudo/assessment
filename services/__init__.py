@@ -1,1 +1,1 @@
-# Service package for LLM, PostgreSQL storage, and assessment orchestration.
+# Service package for LLM, MongoDB storage, and assessment orchestration.
