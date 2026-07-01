@@ -12,6 +12,7 @@ import {
   PROFICIENCY_THRESHOLD,
 } from "../lib/improvementConstants.js";
 import { resolveVerificationUrl } from "../lib/certificateUrls.js";
+import { copyToClipboard } from "../lib/clipboard.js";
 
 const CERT_LEVELS = [
   { value: "beginner", label: "Beginner" },
@@ -1167,7 +1168,7 @@ export default function EmployeeReportPage({ mode = "client" }) {
         } else {
           const verifyUrl = resolveVerificationUrl(meta);
           if (!verifyUrl) throw new Error("Verification URL is not available.");
-          await navigator.clipboard.writeText(verifyUrl);
+          await copyToClipboard(verifyUrl);
           setCertShareMessage("Verification link copied to clipboard.");
         }
       } catch (e) {

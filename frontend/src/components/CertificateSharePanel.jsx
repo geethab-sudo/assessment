@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { copyToClipboard } from "../lib/clipboard.js";
 import { resolveVerificationUrl } from "../lib/certificateUrls.js";
 
 function formatIssueDate(year, month) {
@@ -18,7 +19,7 @@ export default function CertificateSharePanel({ meta, compact = false }) {
 
   const copyText = async (text, successMsg) => {
     try {
-      await navigator.clipboard.writeText(text);
+      await copyToClipboard(text);
       setMessage(successMsg);
     } catch {
       setMessage("Could not copy to clipboard.");
