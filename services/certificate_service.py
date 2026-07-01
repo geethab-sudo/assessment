@@ -471,6 +471,12 @@ def render_certificate(
     )
 
 
+def certificate_download_filename(issued_id: int, level: str, display_name: str) -> str:
+    lv = normalize_level(level)
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in display_name)[:48]
+    return f"certificate-{int(issued_id)}-{lv}-{safe or 'certificate'}.jpg"
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -569,10 +575,22 @@ def list_employee_certificates(employee_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def _public_base_url() -> str:
+def _public_base_url(request: Any | None = None) -> str:
+    """Public SPA base URL for verify/share links (not the API prefix)."""
     import os
 
-    return (os.environ.get("APP_PUBLIC_URL") or "http://localhost:5173").rstrip("/")
+    env = (os.environ.get("APP_PUBLIC_URL") or "").strip().rstrip("/")
+    if env:
+        return env
+    if request is not None:
+        forwarded_proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+        forwarded_host = (
+            request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+        ).split(",")[0].strip()
+        if forwarded_host:
+            scheme = forwarded_proto or getattr(request.url, "scheme", None) or "http"
+            return f"{scheme}://{forwarded_host}".rstrip("/")
+    return "http://localhost:5173"
 
 
 def _organization_name() -> str:
@@ -631,12 +649,12 @@ def certificate_title_for_row(row: dict[str, Any]) -> str:
     return f"{lang} {level} Assessment Certificate"
 
 
-def verification_url_for_certificate(certificate_id: int) -> str:
-    return f"{_public_base_url()}/verify/certificate/{int(certificate_id)}"
+def verification_url_for_certificate(certificate_id: int, request: Any | None = None) -> str:
+    return f"{_public_base_url(request)}/verify/certificate/{int(certificate_id)}"
 
 
-def certificate_image_api_url(certificate_id: int) -> str:
-    return f"{_public_base_url()}/api/public/certificate/{int(certificate_id)}/image"
+def certificate_image_api_url(certificate_id: int, request: Any | None = None) -> str:
+    return f"{_public_base_url(request)}/api/public/certificate/{int(certificate_id)}/image"
 
 
 def suggest_certificate_skills(row: dict[str, Any]) -> list[str]:
@@ -706,12 +724,12 @@ def build_linkedin_certification_url(
     return "https://www.linkedin.com/profile/add?" + urlencode(params)
 
 
-def build_certificate_share_bundle(row: dict[str, Any]) -> dict[str, Any]:
+def build_certificate_share_bundle(row: dict[str, Any], request: Any | None = None) -> dict[str, Any]:
     cid = int(row["id"])
     title = certificate_title_for_row(row)
     issue_year, issue_month = _issue_year_month(row.get("issued_at"))
-    verification_url = verification_url_for_certificate(cid)
-    image_url = certificate_image_api_url(cid)
+    verification_url = verification_url_for_certificate(cid, request)
+    image_url = certificate_image_api_url(cid, request)
     skills = suggest_certificate_skills(row)
     media_title, media_description = certificate_media_copy(
         row, title=title, verification_url=verification_url
@@ -750,11 +768,14 @@ def render_certificate_for_row(row: dict[str, Any]) -> CertificateRenderResult:
     )
 
 
-def get_public_certificate_verification(certificate_id: int) -> dict[str, Any]:
+def get_public_certificate_verification(
+    certificate_id: int,
+    request: Any | None = None,
+) -> dict[str, Any]:
     row = get_certificate_row(certificate_id)
     if not row:
         raise ValueError("Certificate not found")
-    bundle = build_certificate_share_bundle(row)
+    bundle = build_certificate_share_bundle(row, request)
     score = row.get("score")
     score_percent = int(round(float(score) * 100)) if score is not None else None
     return {
@@ -782,6 +803,7 @@ def generate_verification_qr_png(verification_url: str) -> bytes:
 def get_certificate_share_metadata(
     certificate_id: int,
     employee_id: str,
+    request: Any | None = None,
 ) -> dict[str, Any]:
     """Share links for a certificate the employee owns."""
     from services.attempt_service import normalize_employee_id
@@ -793,7 +815,32 @@ def get_certificate_share_metadata(
     row = get_certificate_row(certificate_id)
     if not row or row.get("employee_id") != eid:
         raise ValueError("Certificate not found")
-    return build_certificate_share_bundle(row)
+    return build_certificate_share_bundle(row, request)
+
+
+def get_certificate_share_metadata_by_assessment(
+    employee_id: str,
+    assessment_id: str,
+    request: Any | None = None,
+) -> dict[str, Any]:
+    """Share links for the latest certificate earned on a given assessment."""
+    from services.attempt_service import normalize_employee_id
+    from services.database import coll
+
+    eid = normalize_employee_id(employee_id)
+    if not eid:
+        raise ValueError("employee_id is required")
+    aid = (assessment_id or "").strip()
+    if not aid:
+        raise ValueError("assessment_id is required")
+
+    row = coll("certificates_issued").find_one(
+        {"employee_id": eid, "assessment_id": aid},
+        sort=[("issued_at", -1)],
+    )
+    if not row:
+        raise ValueError("Certificate not found")
+    return build_certificate_share_bundle(row, request)
 
 
 def record_certificate_issued(

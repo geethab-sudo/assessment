@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { apiFetch, apiFetchBlob } from "../api";
-import { fetchCertificateShareMetadata } from "../lib/certificateApi.js";
+import { fetchCertificateShareByAssessment, fetchCertificateShareMetadata } from "../lib/certificateApi.js";
 import CertificateSharePanel from "../components/CertificateSharePanel.jsx";
 import SimpleCodeEditor from "../components/SimpleCodeEditor.jsx";
 import QuestionStem from "../components/QuestionStem.jsx";
@@ -510,13 +510,29 @@ export default function ClientPage() {
       link.download = filename;
       link.click();
       URL.revokeObjectURL(url);
-      if (certificateId) {
+      if (certificateId || assessment?.assessment_id) {
         setCertificateShareLoading(true);
         try {
-          const meta = await fetchCertificateShareMetadata({
-            employeeId: employeeId.trim(),
-            certificateId: Number(certificateId),
-          });
+          let meta = null;
+          if (certificateId) {
+            try {
+              meta = await fetchCertificateShareMetadata({
+                employeeId: employeeId.trim(),
+                certificateId: Number(certificateId),
+              });
+            } catch {
+              meta = null;
+            }
+          }
+          if (!meta && assessment?.assessment_id) {
+            meta = await fetchCertificateShareByAssessment({
+              employeeId: employeeId.trim(),
+              assessmentId: assessment.assessment_id,
+            });
+          }
+          if (!meta) {
+            throw new Error("Share link could not be loaded.");
+          }
           setCertificateShareMeta(meta);
         } catch (shareErr) {
           setCertificateShareMessage(

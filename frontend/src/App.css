@@ -4243,6 +4243,15 @@ button.primary {
   background: rgba(34, 197, 94, 0.1);
 }
 
+.certificate-share-url-field {
+  display: block;
+  margin-top: 0.85rem;
+}
+
+.certificate-share-url-field .review-field-input {
+  font-size: 0.82rem;
+}
+
 .cert-layout-issuer {
   margin-bottom: 1.25rem;
 }

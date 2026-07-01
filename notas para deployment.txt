@@ -15,6 +15,11 @@ if it fails to restart, try the below to see the application logs
 
 journalctl -u assessment-backend.service -n 100 --no-pager
 
+Set APP_PUBLIC_URL in the backend .env to your public site root (no /client suffix), e.g.:
+APP_PUBLIC_URL=http://ec2-54-226-73-84.compute-1.amazonaws.com
+
+Ensure nginx forwards X-Forwarded-Host / X-Forwarded-Proto to uvicorn so share links work even without APP_PUBLIC_URL.
+
 For the frontend, npm run dev will not work, you'll need the production build
 
 npm install

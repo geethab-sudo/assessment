@@ -4,6 +4,7 @@ FastAPI application: AI assessment generation, retrieval, and graded submission.
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
@@ -101,6 +102,12 @@ app = FastAPI(
     swagger_ui_parameters={"docExpansion": "list", "defaultModelsExpandDepth": 2},
 )
 
+_cors_extra = [
+    origin.strip()
+    for origin in (os.environ.get("CORS_ALLOW_ORIGINS") or "").split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -110,10 +117,12 @@ app.add_middleware(
         "http://127.0.0.1:5174",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        *_cors_extra,
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Certificate-Id"],
 )
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RateLimitMiddleware)
@@ -740,7 +749,10 @@ def submit_assessment(body: SubmitAssessmentBody) -> SubmitAssessmentResponse:
         500: ERROR_500,
     },
 )
-def client_generate_certificate(body: ClientGenerateCertificateBody) -> Response:
+def client_generate_certificate(
+    request: Request,
+    body: ClientGenerateCertificateBody,
+) -> Response:
     """Render a certificate after a qualifying submit (>85%, certificate-enabled assessment)."""
     try:
         aid = _require_valid_assessment_id(body.assessment_id)
@@ -759,11 +771,16 @@ def client_generate_certificate(body: ClientGenerateCertificateBody) -> Response
             language_code=lang_code,
             language_label=lang_label,
         )
+        download_name = certificate_service.certificate_download_filename(
+            issued_id,
+            level,
+            body.display_name,
+        )
         return Response(
             content=result.image_bytes,
             media_type=result.media_type,
             headers={
-                "Content-Disposition": f'attachment; filename="{result.filename}"',
+                "Content-Disposition": f'attachment; filename="{download_name}"',
                 "X-Certificate-Id": str(issued_id),
             },
         )
@@ -783,13 +800,45 @@ def client_generate_certificate(body: ClientGenerateCertificateBody) -> Response
     responses={200: {}, 400: ERROR_400, 404: ERROR_400, 500: ERROR_500},
 )
 def client_certificate_share_metadata(
+    request: Request,
     certificate_id: Annotated[int, Path(ge=1)],
     employee_id: Annotated[str, Query(min_length=1, max_length=64)],
 ) -> CertificateShareMetadataResponse:
     """Return LinkedIn share URL and public verification link for an earned certificate."""
     try:
         data = certificate_service.get_certificate_share_metadata(
-            certificate_id, employee_id.strip()
+            certificate_id, employee_id.strip(), request=request
+        )
+        return CertificateShareMetadataResponse.model_validate(data)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get(
+    "/client/certificate/by-assessment/share-metadata",
+    tags=["client"],
+    summary="Share metadata for latest certificate on an assessment",
+    description=(
+        "Return share links for the most recently issued certificate tied to an assessment. "
+        "Useful when the client cannot read X-Certificate-Id from the generate response."
+    ),
+    response_model=CertificateShareMetadataResponse,
+    responses={200: {}, 400: ERROR_400, 404: ERROR_400, 500: ERROR_500},
+)
+def client_certificate_share_by_assessment(
+    request: Request,
+    assessment_id: Annotated[str, Query(min_length=1, max_length=36)],
+    employee_id: Annotated[str, Query(min_length=1, max_length=64)],
+) -> CertificateShareMetadataResponse:
+    """Share metadata for the latest certificate earned on a specific assessment."""
+    try:
+        aid = _require_valid_assessment_id(assessment_id)
+        data = certificate_service.get_certificate_share_metadata_by_assessment(
+            employee_id.strip(),
+            aid,
+            request=request,
         )
         return CertificateShareMetadataResponse.model_validate(data)
     except ValueError as e:
@@ -820,11 +869,14 @@ def public_certificate_settings() -> PublicCertificateSettingsResponse:
     responses={200: {}, 404: ERROR_400, 500: ERROR_500},
 )
 def public_certificate_verify(
+    request: Request,
     certificate_id: Annotated[int, Path(ge=1)],
 ) -> CertificateVerificationResponse:
     """Coursera-style public verification: anyone with the credential ID can confirm authenticity."""
     try:
-        data = certificate_service.get_public_certificate_verification(certificate_id)
+        data = certificate_service.get_public_certificate_verification(
+            certificate_id, request=request
+        )
         return CertificateVerificationResponse.model_validate(data)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
@@ -870,13 +922,16 @@ def public_certificate_image(certificate_id: Annotated[int, Path(ge=1)]) -> Resp
         500: ERROR_500,
     },
 )
-def public_certificate_qr(certificate_id: Annotated[int, Path(ge=1)]) -> Response:
+def public_certificate_qr(
+    request: Request,
+    certificate_id: Annotated[int, Path(ge=1)],
+) -> Response:
     """PNG QR code encoding the public verification page URL."""
     try:
         row = certificate_service.get_certificate_row(certificate_id)
         if not row:
             raise ValueError("Certificate not found")
-        url = certificate_service.verification_url_for_certificate(certificate_id)
+        url = certificate_service.verification_url_for_certificate(certificate_id, request)
         png = certificate_service.generate_verification_qr_png(url)
         return Response(content=png, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
     except ValueError as e:

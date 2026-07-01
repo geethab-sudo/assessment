@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { resolveVerificationUrl } from "../lib/certificateUrls.js";
 
 function formatIssueDate(year, month) {
   if (!year || !month) return null;
@@ -11,6 +12,7 @@ export default function CertificateSharePanel({ meta, compact = false }) {
 
   if (!meta) return null;
 
+  const verificationUrl = resolveVerificationUrl(meta);
   const issueLabel = formatIssueDate(meta.issue_year, meta.issue_month);
   const skills = meta.skills || [];
 
@@ -50,9 +52,8 @@ export default function CertificateSharePanel({ meta, compact = false }) {
           <button
             type="button"
             className="secondary"
-            onClick={() =>
-              copyText(meta.verification_url || meta.share_url, "Verification link copied.")
-            }
+            onClick={() => copyText(verificationUrl, "Verification link copied.")}
+            disabled={!verificationUrl}
           >
             Copy verification link
           </button>
@@ -68,6 +69,18 @@ export default function CertificateSharePanel({ meta, compact = false }) {
             </a>
           )}
         </div>
+        {verificationUrl && (
+          <label className="certificate-share-url-field">
+            <span className="review-field-label">Verification URL</span>
+            <input
+              type="text"
+              className="review-field-input"
+              value={verificationUrl}
+              readOnly
+              onFocus={(e) => e.target.select()}
+            />
+          </label>
+        )}
       </div>
 
       {skills.length > 0 && (

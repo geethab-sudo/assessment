@@ -11,6 +11,7 @@ import {
   practiceIntentLabel,
   PROFICIENCY_THRESHOLD,
 } from "../lib/improvementConstants.js";
+import { resolveVerificationUrl } from "../lib/certificateUrls.js";
 
 const CERT_LEVELS = [
   { value: "beginner", label: "Beginner" },
@@ -1159,10 +1160,14 @@ export default function EmployeeReportPage({ mode = "client" }) {
           window.open(meta.linkedin_url, "_blank", "noopener,noreferrer");
           setCertShareMessage("Opened LinkedIn share dialog.");
         } else if (action === "verify") {
-          window.open(meta.verification_url || meta.share_url, "_blank", "noopener,noreferrer");
+          const verifyUrl = resolveVerificationUrl(meta);
+          if (!verifyUrl) throw new Error("Verification URL is not available.");
+          window.open(verifyUrl, "_blank", "noopener,noreferrer");
           setCertShareMessage("Opened public verification page.");
         } else {
-          await navigator.clipboard.writeText(meta.verification_url || meta.share_url);
+          const verifyUrl = resolveVerificationUrl(meta);
+          if (!verifyUrl) throw new Error("Verification URL is not available.");
+          await navigator.clipboard.writeText(verifyUrl);
           setCertShareMessage("Verification link copied to clipboard.");
         }
       } catch (e) {
