@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   isBankQuestion,
   partitionReviewQuestions,
 } from "../lib/assessmentConfirm.js";
 import {
+  clearPendingReviewSession,
   createReviewDraft,
   deleteReviewQuestion,
   loadReviewBundle,
@@ -12,8 +13,10 @@ import {
   metadataFromConfirmPayload,
   patchAssessmentAlias,
   publishReview,
+  readPendingReviewSession,
   regenerateReviewQuestion,
   saveReviewQuestion,
+  stashPendingReviewSession,
 } from "../lib/assessmentReviewApi.js";
 import { applyTabIndent } from "../lib/tabIndent.js";
 import { mentionsExternalFile } from "../lib/scoreDisplay.js";
@@ -486,9 +489,27 @@ export default function AdminReviewPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const initialQuestions = location.state?.questions ?? [];
-  const confirmPayload = location.state?.confirmPayload ?? null;
-  const previewMeta = location.state?.previewMeta ?? null;
+  const pendingSessionRef = useRef(null);
+  if (pendingSessionRef.current === null) {
+    if (location.state?.confirmPayload && location.state?.questions?.length) {
+      pendingSessionRef.current = {
+        confirmPayload: location.state.confirmPayload,
+        questions: location.state.questions,
+        previewMeta: location.state.previewMeta ?? null,
+      };
+      stashPendingReviewSession(pendingSessionRef.current);
+    } else {
+      pendingSessionRef.current = readPendingReviewSession();
+    }
+  }
+
+  const pendingSession = pendingSessionRef.current;
+  const initialQuestions =
+    pendingSession?.questions ?? location.state?.questions ?? [];
+  const confirmPayload =
+    pendingSession?.confirmPayload ?? location.state?.confirmPayload ?? null;
+  const previewMeta =
+    pendingSession?.previewMeta ?? location.state?.previewMeta ?? null;
   const recycledOnly = Boolean(location.state?.recycledOnly);
 
   const [assessmentId, setAssessmentId] = useState(
@@ -571,13 +592,43 @@ export default function AdminReviewPage() {
       setAssessmentId(urlId);
     }
 
-    // Fresh generate flow: questions live in navigation state until individually
-    // saved. After createReviewDraft adds ?assessmentId= to the URL, do not reload
-    // from the API — the draft row exists but has no questions yet.
-    const isFreshGenerateDraft =
-      Boolean(confirmPayload) && initialQuestions.length > 0;
+    const pending = pendingSessionRef.current;
 
-    if (urlId && !isFreshGenerateDraft) {
+    if (pending?.questions?.length && pending?.confirmPayload && !assessmentId) {
+      let cancelled = false;
+      setInitLoading(true);
+      setInitError(null);
+      const meta = metadataFromConfirmPayload(pending.confirmPayload, pending.confirmPayload.alias);
+      createReviewDraft(meta, pending.questions)
+        .then((draft) => {
+          if (cancelled) return;
+          pendingSessionRef.current = null;
+          clearPendingReviewSession();
+          setAssessmentId(draft.assessment_id);
+          setSearchParams({ assessmentId: draft.assessment_id }, { replace: true });
+          setReviewMetadata(meta);
+          if (pending.confirmPayload.alias) setAlias(pending.confirmPayload.alias);
+          const seeded = draft.questions?.length ? draft.questions : pending.questions;
+          setQuestions(
+            seeded.map((q) => ({
+              ...q,
+              saved_at: q.saved_at ?? null,
+              is_dirty: false,
+            }))
+          );
+        })
+        .catch((e) => {
+          if (!cancelled) setInitError(e.message);
+        })
+        .finally(() => {
+          if (!cancelled) setInitLoading(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (urlId && questions.length === 0 && !pending) {
       let cancelled = false;
       setInitLoading(true);
       setInitError(null);
@@ -596,36 +647,13 @@ export default function AdminReviewPage() {
       };
     }
 
-    if (confirmPayload && initialQuestions.length > 0 && !assessmentId) {
-      let cancelled = false;
-      setInitLoading(true);
-      setInitError(null);
-      const meta = metadataFromConfirmPayload(confirmPayload, confirmPayload.alias);
-      createReviewDraft(meta)
-        .then((draft) => {
-          if (cancelled) return;
-          setAssessmentId(draft.assessment_id);
-          setSearchParams({ assessmentId: draft.assessment_id }, { replace: true });
-          setReviewMetadata(meta);
-          if (confirmPayload.alias) setAlias(confirmPayload.alias);
-        })
-        .catch((e) => {
-          if (!cancelled) setInitError(e.message);
-        })
-        .finally(() => {
-          if (!cancelled) setInitLoading(false);
-        });
-      return () => {
-        cancelled = true;
-      };
-    }
-
     return undefined;
   }, [
     applyBundle,
     assessmentId,
     confirmPayload,
     initialQuestions.length,
+    questions.length,
     savedId,
     searchParams,
     setSearchParams,
@@ -713,6 +741,8 @@ export default function AdminReviewPage() {
     try {
       const meta = reviewMetadata || metadataFromConfirmPayload(confirmPayload, alias.trim() || null);
       const result = await publishReview(assessmentId, questions, meta);
+      pendingSessionRef.current = null;
+      clearPendingReviewSession();
       setSavedId(result.assessment_id);
       setSavedStats({ question_count: result.question_count });
     } catch (e) {

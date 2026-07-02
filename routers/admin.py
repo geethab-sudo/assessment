@@ -196,7 +196,12 @@ def admin_create_review_draft(
 ) -> DraftAssessmentResponse:
     """Mint assessment_id early so per-question saves can persist before publish."""
     try:
-        result = assessment_review_service.create_review_draft(body.model_dump())
+        payload = body.model_dump()
+        questions = payload.pop("questions", [])
+        result = assessment_review_service.create_review_draft(
+            payload,
+            questions=questions,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     audit_log.admin_action(

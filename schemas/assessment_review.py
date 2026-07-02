@@ -55,10 +55,17 @@ class ReviewAssessmentMetadata(BaseModel):
 class DraftAssessmentBody(ReviewAssessmentMetadata):
     """Create a draft assessment shell for incremental review saves."""
 
+    questions: list[ReviewQuestionItem] = Field(
+        default_factory=list,
+        description="Preview questions to persist immediately so review survives URL reloads.",
+    )
+
 
 class DraftAssessmentResponse(BaseModel):
     assessment_id: str
     review_status: ReviewStatus = "draft"
+    questions: list[ReviewQuestionItemExtended] = Field(default_factory=list)
+    question_count: int = 0
 
 
 class ReviewQuestionItemExtended(ReviewQuestionItem):

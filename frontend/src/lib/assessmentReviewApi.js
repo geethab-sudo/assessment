@@ -1,6 +1,33 @@
 import { apiFetch } from "../api";
 import { buildConfirmQuestions } from "./assessmentConfirm.js";
 
+const PENDING_REVIEW_KEY = "admin_review_pending_v1";
+
+/** Persist generate→review handoff across URL updates and full reloads. */
+export function stashPendingReviewSession(session) {
+  if (!session?.confirmPayload || !session?.questions?.length) {
+    sessionStorage.removeItem(PENDING_REVIEW_KEY);
+    return;
+  }
+  sessionStorage.setItem(PENDING_REVIEW_KEY, JSON.stringify(session));
+}
+
+export function readPendingReviewSession() {
+  try {
+    const raw = sessionStorage.getItem(PENDING_REVIEW_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.confirmPayload || !parsed?.questions?.length) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingReviewSession() {
+  sessionStorage.removeItem(PENDING_REVIEW_KEY);
+}
+
 /** Build metadata payload for draft creation from generate/preview confirm payload. */
 export function metadataFromConfirmPayload(confirmPayload, alias = null) {
   if (!confirmPayload) return null;
@@ -24,11 +51,14 @@ export function loadReviewBundle(assessmentId) {
   });
 }
 
-export function createReviewDraft(metadata) {
+export function createReviewDraft(metadata, questions = []) {
   return apiFetch("/admin/assessment/review/draft", {
     method: "POST",
     authRole: "admin",
-    body: JSON.stringify(metadata),
+    body: JSON.stringify({
+      ...metadata,
+      questions: buildConfirmQuestions(questions),
+    }),
   });
 }
 

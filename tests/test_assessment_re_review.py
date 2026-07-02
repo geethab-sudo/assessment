@@ -41,6 +41,7 @@ def test_create_review_draft_and_block_participant() -> None:
     )
     aid = draft["assessment_id"]
     assert draft["review_status"] == "draft"
+    assert draft["question_count"] == 0
 
     with pytest.raises(ValueError, match="not published"):
         assert_participant_may_load(aid)
@@ -50,6 +51,26 @@ def test_create_review_draft_and_block_participant() -> None:
 
     admin_out = assessment_service.get_assessment_for_user(aid, allow_draft=True)
     assert admin_out["found"] is False
+
+
+def test_create_review_draft_seeds_preview_questions() -> None:
+    q = _sample_question()
+    draft = create_review_draft(
+        {
+            "topic": "Python basics",
+            "level": "beginner",
+            "language_code": "python",
+            "topic_names": ["Math"],
+        },
+        questions=[q],
+    )
+    assert draft["question_count"] == 1
+    assert draft["questions"][0]["question"] == q["question"]
+    assert draft["questions"][0].get("saved_at") is None
+
+    bundle = load_review_bundle(draft["assessment_id"])
+    assert bundle["question_count"] == 1
+    assert bundle["questions"][0]["question"] == q["question"]
 
 
 def test_save_review_question_and_publish() -> None:

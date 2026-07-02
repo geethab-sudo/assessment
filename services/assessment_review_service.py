@@ -188,7 +188,34 @@ def load_review_bundle(assessment_id: str) -> dict[str, Any]:
     }
 
 
-def create_review_draft(metadata: dict[str, Any]) -> dict[str, Any]:
+def _insert_pending_review_questions(
+    assessment_id: str,
+    questions: list[dict[str, Any]],
+    *,
+    level: str,
+) -> list[dict[str, Any]]:
+    """Persist preview questions on draft creation (no saved_at until admin confirms each)."""
+    seeded: list[dict[str, Any]] = []
+    for i, q in enumerate(questions):
+        qid = str(q.get("question_id") or (i + 1)).strip()
+        row = _row_from_review_item({**q, "question_id": qid}, level=level)
+        row.pop("bank_question_id", None)
+        coll("assessment_questions").insert_one(
+            {
+                "id": next_id("assessment_questions"),
+                "assessment_id": assessment_id,
+                **row,
+            }
+        )
+        seeded.append(_review_item_from_row(row))
+    return seeded
+
+
+def create_review_draft(
+    metadata: dict[str, Any],
+    *,
+    questions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     aid = generate_assessment_id()
     level = metadata["level"].strip().lower()
     if level not in LEVEL_TO_DIFFICULTY:
@@ -235,7 +262,14 @@ def create_review_draft(metadata: dict[str, Any]) -> dict[str, Any]:
         "updated_at": now,
     }
     coll("assessments").insert_one(doc)
-    return {"assessment_id": aid, "review_status": "draft"}
+
+    seeded = _insert_pending_review_questions(aid, questions or [], level=level)
+    return {
+        "assessment_id": aid,
+        "review_status": "draft",
+        "questions": seeded,
+        "question_count": len(seeded),
+    }
 
 
 def update_assessment_alias(assessment_id: str, alias: str | None) -> dict[str, Any]:
