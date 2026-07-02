@@ -679,6 +679,10 @@ def confirm_assessment(
         allow_pyodide_paste=allow_pyodide_paste,
         certificate_enabled=certificate_enabled,
         certificate_level=cert_level,
+        topic=topic,
+        level=level_norm,
+        review_status="published",
+        per_topic_config=effective_per_topic,
     )
 
     _upsert_to_bank(assessment_id, rows, level.strip().lower(), language_code)
@@ -887,15 +891,17 @@ def get_assessment_for_user(
     assessment_id: str,
     *,
     employee_id: str | None = None,
+    allow_draft: bool = False,
 ) -> dict[str, Any]:
     """
     Return assessment metadata and questions without revealing correct answers.
 
     When ``employee_id`` is provided, question order and MCQ option order are
     shuffled deterministically for that participant (assessment_id + employee_id).
+
+    Set ``allow_draft=True`` for admin preview of unpublished assessments.
     """
     meta = db_service.get_assessment_metadata(assessment_id)
-    rows = db_service.read_questions_by_assessment(assessment_id)
     plan = notebook_plan_for_assessment(assessment_id)
     notebook_fields = {
         "notebook_expected": plan["notebook_expected"],
@@ -918,6 +924,13 @@ def get_assessment_for_user(
         "timer": None,
         **notebook_fields,
     }
+
+    if not allow_draft:
+        status = (meta.get("review_status") or "published").strip() or "published"
+        if status != "published":
+            return {**base_out, "questions": [], "found": False}
+
+    rows = db_service.read_questions_by_assessment(assessment_id)
 
     if not rows:
         return {**base_out, "questions": [], "found": False}

@@ -2,7 +2,7 @@
 
 > **Purpose:** Living roadmap for the question-bank, recycling, analytics, and “Help me improve” features.  
 > **Companion file:** [task.md](task.md) — checkbox tasks per stage for agentic implementation.  
-> **Last reviewed:** 2026-06-23 (Phase 4 / Stage 12 added)
+> **Last reviewed:** 2026-06-23 (Phase 5 / Stage 13 added — admin assessment lifecycle)
 
 ---
 
@@ -122,7 +122,7 @@ The first milestone — **persist questions in the database** — is implemented
 
 **Shipped:** Stages **0–7** — question bank, admin recycle, bank browser, employee profile + stats report (4B), three improvement flows. **Phase 2 (9–10)** — coding quality, decimal scoring, certificates. **Phase 3 (11A–11B)** — Grok vs Gemini generation, MongoDB Atlas.
 
-**Next (Phase 4):** Stage **12** — interactive topic pickers on Skills Progress Report (heatmap, radar, unexplored, recommendations quick-start), selectable improvement wizard with session caps, inclusive copy (no “weak”), LinkedIn/social certificate share — see §Phase 4.
+**Next (Phase 5):** Stage **13** — re-review saved assessments, **incremental per-question save**, aliases, delete/regenerate questions in review — see §Phase 5.
 
 **Optional / partial (not blocking “done”):**
 
@@ -1193,12 +1193,186 @@ Internal API names (`weakest_topics`, `/improvement/weak-areas`) may stay for ba
 | 12B–12D     | API tests: topic selection, 15-q cap, 5-q/topic cap, beginner-only new areas                                          |
 | 12C         | Quick-practice builds 10 questions from mock insights                                                                 |
 | 12E         | Share metadata endpoint; optional E2E manual QA                                                                       |
+| 13A–13E     | Re-review, incremental per-question save, alias, delete/regenerate (see Phase 5)                                      |
 | Integration | Extend `test_mongodb_integration.py` or `test_improvement_assessment_service.py` for new body fields                  |
 
 
 Update `README.md`, `tests/TEST_GUIDE.md`, OpenAPI `EXPECTED_ROUTES` for new endpoints.
 
 **Phase 4 exit criteria:** Participant can start tailored practice from report charts, unexplored list, recommendations one-click, and improvement wizard with topic pickers; no “weak” in UI; certificates shareable to LinkedIn.
+
+---
+
+## Phase 5 — Admin assessment lifecycle (Stage 13)
+
+> **Goal:** Fix “my edits didn’t show up for participants” confusion; let admins **re-open** saved assessments in the full review UI; add human-readable **aliases**; support **delete** and **single-question regenerate** during review; **persist each approved question immediately** so a crash or disconnect does not lose progress.  
+> **Tasks:** [task.md](task.md) §Stage 13.  
+> **Depends on:** Stages 2 (review/confirm), 9B/9D (test cases + hints in review), 11B (MongoDB).  
+> **Order:** **13A** (diagnosis + re-review) → **13E** (incremental per-question save) → **13B** (alias + search) → **13C** (delete in review) → **13D** (regenerate one question).
+
+### Why now (reported glitch)
+
+Admins edited many questions but participants still saw the **old** content. Investigation of the current codebase shows this is **expected with today’s UX**, not a silent DB corruption:
+
+| Symptom | Likely cause in current system |
+| ------- | ------------------------------ |
+| Edits in `/admin/review` not visible to participants | Review state lives in **React `location.state` only** until **Save assessment** (`POST /admin/confirm-assessment`). Refresh, back navigation, or closing the tab **drops edits**. |
+| Edits on an **already saved** assessment (`ASM-…`) not applied | `/admin/review` only accepts a **new** draft from Generate/Preview (`confirmPayload` in navigation state). There is **no “Re-review”** entry point from `/admin/assessments`. |
+| PATCH exists but rarely helps | `PATCH /admin/assessment/{id}/question/{qid}` updates `assessment_questions` **in place** and does **not** update `sample_test_cases`, `coding_hint`, or the question bank. **No admin UI** calls this endpoint today (`AdminAssessmentsPage` is preview-only). |
+| Bank vs assessment drift | `confirm_assessment` upserts **new** bank rows for LLM questions. In-place PATCH does **not** fork a new `bank_question_id`, so future recycle can still serve the **old** bank revision. |
+| Recycled questions look “uneditable” | In recycle mode, bank-sourced rows are hidden unless “Show recycled questions” is toggled; admins may edit only the LLM subset and assume the whole assessment was saved. |
+| Reviewer pauses mid-session (crash, tab close, network drop) | No **per-question** persistence — only a bulk **Save assessment** at the end commits anything; partial progress is lost. |
+
+**Product fix:** Treat review as the **canonical editor** for both new and existing assessments. Saving must **persist to the same `assessment_id`** when re-reviewing, and **material edits** must create a **new assessment question row** (new `question_id`) plus a **new bank entry** when applicable. Each question the reviewer approves should be **committed immediately** via **“This question is good, save it”** so work survives interruptions.
+
+---
+
+### Stage 13A — Re-review existing assessment
+
+**Admin UX**
+
+- `/admin/assessments`: add **Re-review** button per row (next to Delete).
+- Loads full `AdminReviewPage` for that `assessment_id` with all questions (MCQ options, coding snippet, test cases, hints).
+- Banner: *“Re-reviewing ASM-… — changes apply to this assessment when you save.”*
+- **Save** updates the **existing** assessment (same ID participants already have) — do **not** mint a new `assessment_id` on re-review save.
+
+**API**
+
+- `GET /admin/assessment/{assessment_id}/review` — return questions in `ReviewQuestionItem` shape + metadata (`level`, `topic_names`, `language_*`, timed/cert flags, `question_source` summary).
+- `PUT /admin/assessment/{assessment_id}/review` (or `POST …/review/save`) — atomically replace question set on that assessment:
+  - Questions **unchanged** (by content hash or explicit `unchanged: true` flag) → keep same `question_id` + `bank_question_id`.
+  - Questions **edited** → assign **new** `question_id` within assessment; insert **new** `assessment_questions` doc; optionally mark old row `superseded: true` or delete if no submissions reference it.
+  - **New bank row** for materially changed content (`add_questions_to_bank`); link new `bank_question_id`; do **not** mutate old bank row in place.
+  - Questions **removed** → delete row (or soft-delete if submissions exist).
+  - Re-run `_upsert_to_bank` only for new/changed rows.
+- Block save or warn if assessment has submissions and deletion would orphan graded answers (configurable: warn vs hard block).
+
+**Regression / safeguards**
+
+- After save, `GET /assessment/{id}` (participant) must return updated text for all changed questions.
+- Audit log: `assessment.review.save` with counts `{unchanged, revised, added, removed}`.
+
+**Exit criteria:** Admin can reopen ASM-… from assessments list, edit questions, save, and participant view matches within one refresh.
+
+---
+
+### Stage 13E — Incremental per-question save (“This question is good, save it”)
+
+**Problem:** Long review sessions are vulnerable to browser crashes, lost connectivity, or accidental navigation. Bulk save-at-the-end is not enough.
+
+**Admin UX (`AdminReviewPage.jsx`)**
+
+- On the **right side** of each question card (review header actions row): primary button **“This question is good, save it”**.
+- After successful save:
+  - Card shows **Saved** badge (e.g. green check + “Saved — safe on server”).
+  - Button becomes disabled or changes to **“Saved”** until the question is edited again (then badge clears → *“Unsaved changes”*).
+- Progress summary at top: *“7 / 12 questions saved”* with optional link to filter unsaved only.
+- **First** incremental save on a **new** draft (post-preview, pre-confirm):
+  - Creates assessment shell in DB (`status: draft` or `review_in_progress`) and returns **`assessment_id`** (ASM-…) shown in banner so admin can resume later via Re-review.
+- On **re-review** (13A): incremental save updates that question on the **existing** `assessment_id` immediately (same revision rules as 13A — new `question_id` + bank row if content changed).
+- Regenerate (13D) or edit after save clears “saved” state until clicked again.
+- Delete (13C) on an already-saved question calls remove API immediately (with submission warnings).
+
+**API**
+
+- `POST /admin/assessment/{assessment_id}/review/questions/{question_id}/save` — persist **one** `ReviewQuestionItem`:
+  - Upsert `assessment_questions` row; upsert bank if new/changed content.
+  - Response: `{ ok, assessment_id, question_id, bank_question_id?, saved_at }`.
+- `POST /admin/assessment/review/draft` — first-time only when no `assessment_id` yet:
+  - Body: assessment metadata from `confirmPayload` (topic, level, language, timed/cert flags, alias).
+  - Creates `assessments` row + empty or partial question set; returns `assessment_id` for subsequent per-question saves.
+- `GET /admin/assessment/{assessment_id}/review` — include per-question `saved_at` / `is_dirty` so UI restores state after reload.
+- Optional: `assessments.review_status` enum `draft | in_review | published` — participant `GET /assessment/{id}` returns **404 or “not ready”** while `draft` unless admin explicitly publishes (final **Save assessment** sets `published`).
+
+**Publish vs incremental save**
+
+| Action | Effect |
+| ------ | ------ |
+| **This question is good, save it** | That question persisted; safe if browser crashes |
+| **Save assessment** (footer, all questions saved) | Marks assessment **published** / ready for participants; validates all questions saved or prompts to save remaining |
+
+**Exit criteria:** Admin saves 3 of 10 questions individually, refreshes page (or re-opens Re-review), sees 3 marked saved with correct content; remaining 7 still editable; after finishing and **Save assessment**, participant can take the test.
+
+---
+
+### Stage 13B — Assessment alias & search
+
+**Data model**
+
+- `assessments.alias` — optional string, max ~120 chars, e.g. `Python beginner exam for Maria June 25th`.
+- Unique optional index **not** required (aliases may repeat across clients); search is substring match.
+- `assessments.updated_at` — bump on re-review save (display in list).
+
+**API**
+
+- Include `alias` in `GET /admin/assessments`, `GET /admin/assessment/{id}`, confirm/re-review save bodies.
+- `PATCH /admin/assessment/{id}` — update alias only (quick rename from list).
+- List filter: search matches `assessment_id` **or** `alias` (case-insensitive).
+
+**Admin UX**
+
+- Optional **Alias** field on Generate confirm payload (default empty).
+- `/admin/assessments`: **Alias** column; search box placeholder *“Search ID or alias…”*; inline edit or modal for alias on existing rows.
+- Participant `/client` assessment ID field: show alias as hint when admin copies link (optional nice-to-have).
+
+**Exit criteria:** Admin can set alias at create or later; assessments list search finds `Maria June` and `ASM-…`.
+
+---
+
+### Stage 13C — Delete question during review
+
+**Admin UX (`AdminReviewPage.jsx`)**
+
+- Trash icon (🗑 / `aria-label="Remove question"`) on each question card in review.
+- Confirm dialog: *“Remove this question from the assessment?”*
+- Removed questions drop from local state immediately; persisted on Save (13A save endpoint) **or immediately if already individually saved (13E)**.
+- Enforce `min_length=1` — cannot save empty assessment; show error if all removed.
+- In **recycle mode**, allow removing bank-sourced rows too (not only LLM subset).
+
+**Exit criteria:** Admin removes a bad question in review, saves, participant assessment has one fewer question.
+
+---
+
+### Stage 13D — Regenerate single question (similar topic)
+
+**Admin UX**
+
+- Per-question **Regenerate** control (♻️ recycling arrows icon) on review cards.
+- Click → modal:
+  - Title: *“Regenerate this question”*
+  - Optional textarea: *“Any preference on what to ask or specific focus?”* (passed to LLM as admin hint)
+  - Buttons: **Cancel** | **Regenerate**
+- On success: replace question card content in review state (same slot index); mark as LLM-sourced; clear stale `bank_question_id` until save creates new bank row.
+- Show loading spinner on that card during generation; surface LLM/503 errors inline.
+
+**API**
+
+- `POST /admin/assessment/review/regenerate-question`
+  - Body: `level`, `language_code`, `topic_name`, `question_type`, `reference_question` (current text + options + snippet + test cases), optional `admin_preference` string, optional `generation_provider`, flags `include_sample_test_cases`, `include_beginner_coding_hints` from parent assessment metadata.
+  - Returns one `ReviewQuestionItem` (new `question_id` temporary client id ok until save).
+- Reuse `llm_service.generate_questions` with **count=1** and a prompt that says: same topic, same difficulty, same type, similar learning objective; incorporate `admin_preference` if provided; include hints/test cases per assessment flags.
+
+**Exit criteria:** Admin regenerates one MCQ and one coding question with a preference string; review shows new stem/options/hint/test cases; after save, participant sees new content.
+
+---
+
+### Stage 13 — Testing & docs
+
+
+| Area | Tests |
+| ---- | ----- |
+| 13A | Re-review load/save round-trip; edited question gets new `question_id`; participant GET reflects change |
+| 13A | Save with submissions + deleted question → expected warn/block behavior |
+| 13E | Per-question save → reload review → saved badge + content intact; draft assessment resumable |
+| 13E | New draft: first per-question save mints `assessment_id`; participant blocked until publish |
+| 13B | Alias CRUD + list filter |
+| 13C | Delete in review → save → question count decreases |
+| 13D | Regenerate endpoint returns valid `ReviewQuestionItem`; preference string in prompt fixture |
+| OpenAPI | `EXPECTED_ROUTES` updated for new admin routes |
+
+Update `README.md` admin section; `tests/TEST_GUIDE.md` re-review workflow.
+
+**Phase 5 exit criteria:** Admins can re-review saved assessments, **incrementally save approved questions**, search by alias, delete bad questions, and regenerate single questions with optional guidance; participant-facing assessments reflect saved edits reliably and are not exposed mid-review until published.
 
 ---
 
@@ -1342,6 +1516,9 @@ Stage 11A (Grok vs Gemini) → Stage 11B-1 … 11B-6 (MongoDB Atlas; multi-sessi
 
 Phase 4 (interactive practice & social):
 Stage 12A (inclusive copy + 75% threshold) → 12B + 12C (report interactions) → 12D (improvement wizard) → 12E (LinkedIn / social share)
+
+Phase 5 (admin assessment lifecycle):
+Stage 13A (re-review + save semantics) → 13E (incremental per-question save) → 13B (alias + search) → 13C (delete in review) → 13D (regenerate one question)
 ```
 
-Stages **0–7** are complete. **Phase 2 (9–10)** and **Phase 3 (11A–11B)** are largely complete. **Phase 4 (12)** is active next. **4B optional polish** and **Stage 8** remain enhancements / backlog.
+Stages **0–7** are complete. **Phase 2 (9–10)** and **Phase 3 (11A–11B)** are largely complete. **Phase 4 (12)** is largely complete. **Phase 5 (13)** is **active next**. **4B optional polish** and **Stage 8** remain enhancements / backlog.

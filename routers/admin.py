@@ -34,10 +34,22 @@ from schemas.certificate_layout import (
     CertificateTemplatePreviewBody,
     TemplateLayoutBody,
 )
+from schemas.assessment_review import (
+    DraftAssessmentBody,
+    DraftAssessmentResponse,
+    PatchAssessmentAliasBody,
+    PublishReviewBody,
+    PublishReviewResponse,
+    RegenerateReviewQuestionBody,
+    ReviewBundleResponse,
+    ReviewQuestionItemExtended,
+    SaveReviewQuestionResponse,
+)
 from schemas.catalog import LanguageResponse, LanguagesResponse, TopicResponse, TopicsResponse
 from schemas.common import OkDeletedResponse
 from schemas.improvement import EmployeeReportResponse
 from services import assessment_service, audit_log, catalog_service, db_service, question_bank_service
+from services import assessment_review_service
 from services import certificate_service, employee_profile_service
 from services import platform_settings_service
 
@@ -111,9 +123,11 @@ def admin_get_bank_availability(
         **admin_crud_errors(include_404=False, include_auth=False),
     },
 )
-def admin_list_assessments() -> AssessmentsListResponse:
+def admin_list_assessments(
+    q: str | None = Query(default=None, description="Search by assessment ID or alias."),
+) -> AssessmentsListResponse:
     """Return metadata for every assessment (shared and client-scoped)."""
-    return AssessmentsListResponse(assessments=db_service.list_assessments_summary())
+    return AssessmentsListResponse(assessments=db_service.list_assessments_summary(search=q))
 
 
 @admin_router.get(
@@ -140,10 +154,218 @@ def admin_get_assessment_preview(
     Does not require `employee_id`; questions are in canonical (unshuffled) order.
     """
     aid = assessment_id.strip()
-    data = assessment_service.get_assessment_for_user(aid)
+    data = assessment_service.get_assessment_for_user(aid, allow_draft=True)
     if not data.get("found"):
         raise HTTPException(status_code=404, detail="Assessment not found")
     return AssessmentResponse.model_validate(data)
+
+
+@admin_router.get(
+    "/assessment/{assessment_id}/review",
+    summary="Load assessment for admin re-review",
+    response_model=ReviewBundleResponse,
+    responses={
+        200: {"description": "Questions with correct answers and per-question save state."},
+        **admin_crud_errors(include_auth=False),
+    },
+)
+def admin_get_assessment_review(
+    assessment_id: Annotated[str, Path(description="Assessment UUID.")],
+) -> ReviewBundleResponse:
+    """Return full review bundle for re-review or resuming a draft."""
+    try:
+        data = assessment_review_service.load_review_bundle(assessment_id.strip())
+        return ReviewBundleResponse.model_validate(data)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@admin_router.post(
+    "/assessment/review/draft",
+    summary="Create draft assessment for incremental review",
+    response_model=DraftAssessmentResponse,
+    dependencies=[Depends(require_admin)],
+    responses={
+        200: {"description": "New draft assessment shell with review_status=draft."},
+        **admin_crud_errors(include_404=False),
+    },
+)
+def admin_create_review_draft(
+    request: Request,
+    body: DraftAssessmentBody,
+) -> DraftAssessmentResponse:
+    """Mint assessment_id early so per-question saves can persist before publish."""
+    try:
+        result = assessment_review_service.create_review_draft(body.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    audit_log.admin_action(
+        request,
+        action="assessment.review_draft",
+        resource="assessment",
+        resource_id=result["assessment_id"],
+    )
+    return DraftAssessmentResponse.model_validate(result)
+
+
+@admin_router.post(
+    "/assessment/{assessment_id}/review/questions/{question_id}/save",
+    summary="Save one reviewed question",
+    response_model=SaveReviewQuestionResponse,
+    dependencies=[Depends(require_admin)],
+    responses={
+        200: {"description": "Question persisted; may return revised question_id."},
+        **admin_crud_errors(),
+    },
+)
+def admin_save_review_question(
+    request: Request,
+    assessment_id: Annotated[str, Path(description="Assessment UUID.")],
+    question_id: Annotated[str, Path(description="Question id within the assessment.")],
+    body: ReviewQuestionItemExtended,
+) -> SaveReviewQuestionResponse:
+    """Incrementally persist a single question during admin review."""
+    try:
+        result = assessment_review_service.save_review_question(
+            assessment_id.strip(),
+            question_id.strip(),
+            body.model_dump(),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    audit_log.admin_action(
+        request,
+        action="assessment.review_save_question",
+        resource="assessment",
+        resource_id=assessment_id.strip(),
+    )
+    return SaveReviewQuestionResponse.model_validate(result)
+
+
+@admin_router.delete(
+    "/assessment/{assessment_id}/review/questions/{question_id}",
+    summary="Remove a question during review",
+    response_model=OkDeletedResponse,
+    dependencies=[Depends(require_admin)],
+    responses={
+        200: {"description": "Question removed from the assessment."},
+        **admin_crud_errors(),
+    },
+)
+def admin_delete_review_question(
+    request: Request,
+    assessment_id: Annotated[str, Path(description="Assessment UUID.")],
+    question_id: Annotated[str, Path(description="Question id to remove.")],
+) -> OkDeletedResponse:
+    """Delete a question from an in-review assessment (blocked if submissions exist)."""
+    try:
+        assessment_review_service.delete_review_question(
+            assessment_id.strip(),
+            question_id.strip(),
+        )
+    except ValueError as e:
+        msg = str(e)
+        status = 409 if "submitted" in msg.lower() else 400
+        raise HTTPException(status_code=status, detail=msg) from e
+    audit_log.admin_action(
+        request,
+        action="assessment.review_delete_question",
+        resource="assessment",
+        resource_id=assessment_id.strip(),
+    )
+    return OkDeletedResponse(ok=True, deleted=question_id.strip())
+
+
+@admin_router.post(
+    "/assessment/{assessment_id}/review/publish",
+    summary="Publish reviewed assessment",
+    response_model=PublishReviewResponse,
+    dependencies=[Depends(require_admin)],
+    responses={
+        200: {"description": "Assessment marked published and visible to participants."},
+        **admin_crud_errors(),
+    },
+)
+def admin_publish_review(
+    request: Request,
+    assessment_id: Annotated[str, Path(description="Assessment UUID.")],
+    body: PublishReviewBody,
+) -> PublishReviewResponse:
+    """Save any remaining questions and set review_status=published."""
+    try:
+        questions = [q.model_dump() for q in body.questions]
+        metadata = body.metadata.model_dump() if body.metadata else None
+        result = assessment_review_service.publish_review(
+            assessment_id.strip(),
+            questions,
+            metadata,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    audit_log.admin_action(
+        request,
+        action="assessment.review_publish",
+        resource="assessment",
+        resource_id=result["assessment_id"],
+    )
+    return PublishReviewResponse.model_validate(result)
+
+
+@admin_router.post(
+    "/assessment/review/regenerate-question",
+    summary="Regenerate a single review question via LLM",
+    dependencies=[Depends(require_admin)],
+    responses={
+        200: {"description": "Replacement question (not persisted until saved)."},
+        **admin_crud_errors(include_404=False),
+        503: ERROR_503,
+    },
+)
+def admin_regenerate_review_question(
+    request: Request,
+    body: RegenerateReviewQuestionBody,
+) -> ReviewQuestionItemExtended:
+    """Replace one question in the review UI using the LLM."""
+    try:
+        item = assessment_review_service.regenerate_review_question(body.model_dump())
+        return ReviewQuestionItemExtended.model_validate(item)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Regenerate failed: {e}") from e
+
+
+@admin_router.patch(
+    "/assessment/{assessment_id}/alias",
+    summary="Set or clear assessment alias",
+    dependencies=[Depends(require_admin)],
+    responses={
+        200: {"description": "Alias updated."},
+        **admin_crud_errors(),
+    },
+)
+def admin_patch_assessment_alias(
+    request: Request,
+    assessment_id: Annotated[str, Path(description="Assessment UUID.")],
+    body: PatchAssessmentAliasBody,
+) -> dict:
+    """Human-friendly label for search (e.g. Python exam for Maria June 25th)."""
+    try:
+        result = assessment_review_service.update_assessment_alias(
+            assessment_id.strip(),
+            body.alias,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    audit_log.admin_action(
+        request,
+        action="assessment.patch_alias",
+        resource="assessment",
+        resource_id=assessment_id.strip(),
+    )
+    return result
 
 
 @admin_router.delete(

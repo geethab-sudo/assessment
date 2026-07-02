@@ -325,6 +325,9 @@ class AssessmentSummary(BaseModel):
     is_timed: bool = False
     duration_minutes: int | None = None
     notebook_grace_minutes: int | None = None
+    alias: str | None = None
+    review_status: Literal["draft", "in_review", "published"] = "published"
+    updated_at: str | None = None
 
 
 class AssessmentsListResponse(BaseModel):

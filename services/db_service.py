@@ -373,6 +373,15 @@ def save_shared_assessment_rows(
     allow_pyodide_paste: bool = False,
     certificate_enabled: bool = False,
     certificate_level: str | None = None,
+    topic: str | None = None,
+    level: str | None = None,
+    review_status: str = "published",
+    alias: str | None = None,
+    per_topic_config: dict[str, dict[str, int]] | None = None,
+    question_source: str | None = None,
+    include_sample_test_cases: bool = False,
+    include_beginner_coding_hints: bool = False,
+    generation_provider: str | None = None,
 ) -> None:
     """
     Persist a **shared** assessment (``owner_client_id=None``) and its questions.
@@ -408,7 +417,23 @@ def save_shared_assessment_rows(
         "allow_pyodide_paste": allow_pyodide_paste,
         "certificate_enabled": certificate_enabled,
         "certificate_level": cert_level,
+        "review_status": (review_status or "published").strip() or "published",
     }
+    if topic is not None:
+        doc["topic"] = topic.strip()
+    if level is not None:
+        doc["level"] = level.strip().lower()
+    if alias is not None:
+        doc["alias"] = (alias or "").strip()[:120] or None
+    if per_topic_config is not None:
+        doc["per_topic_config"] = per_topic_config
+    if question_source is not None:
+        doc["question_source"] = question_source
+    doc["include_sample_test_cases"] = include_sample_test_cases
+    doc["include_beginner_coding_hints"] = include_beginner_coding_hints
+    if generation_provider is not None:
+        doc["generation_provider"] = generation_provider.strip().lower()
+    doc["updated_at"] = _utc_now_iso()
     if language_code is not None:
         doc["language_code"] = lang
     if language_label is not None:
@@ -449,7 +474,7 @@ def read_questions_by_assessment(assessment_id: str) -> list[dict[str, Any]]:
     aid = assessment_id.strip()
     rows = list(
         coll("assessment_questions")
-        .find({"assessment_id": aid})
+        .find({"assessment_id": aid, "superseded_by": {"$exists": False}})
         .sort("id", 1)
     )
     return [
@@ -466,6 +491,7 @@ def read_questions_by_assessment(assessment_id: str) -> list[dict[str, Any]]:
             "difficulty": r.get("difficulty") or "",
             "sample_test_cases": r.get("sample_test_cases"),
             "coding_hint": r.get("coding_hint") or "",
+            "saved_at": r.get("saved_at"),
         }
         for r in rows
     ]
@@ -565,6 +591,8 @@ def get_assessment_metadata(assessment_id: str) -> dict[str, Any]:
             "certificate_enabled": False,
             "certificate_level": None,
             "language_label": None,
+            "review_status": "published",
+            "alias": None,
         }
     topic_names = _coerce_stored_topic_names(row.get("topic_names"))
     jupyter_topic_names: list[str] = []
@@ -588,10 +616,12 @@ def get_assessment_metadata(assessment_id: str) -> dict[str, Any]:
         "certificate_enabled": bool(row.get("certificate_enabled")),
         "certificate_level": (row.get("certificate_level") or "").strip() or None,
         "language_label": (row.get("language_label") or "").strip() or None,
+        "review_status": (row.get("review_status") or "published").strip() or "published",
+        "alias": (row.get("alias") or "").strip() or None,
     }
 
 
-def list_assessments_summary() -> list[dict[str, Any]]:
+def list_assessments_summary(*, search: str | None = None) -> list[dict[str, Any]]:
     """
     Admin dashboard list: every assessment with counts and display labels.
 
@@ -639,12 +669,23 @@ def list_assessments_summary() -> list[dict[str, Any]]:
                 "language_name": language_name,
                 "topic_names": topics,
                 "created_at": (a.get("created_at") or "").strip() or None,
+                "updated_at": (a.get("updated_at") or "").strip() or None,
                 "routing_flag": a.get("routing_flag"),
                 "is_timed": bool(a.get("is_timed")),
                 "duration_minutes": a.get("duration_minutes"),
                 "notebook_grace_minutes": a.get("notebook_grace_minutes"),
+                "alias": (a.get("alias") or "").strip() or None,
+                "review_status": (a.get("review_status") or "published").strip() or "published",
             }
         )
+    if search and search.strip():
+        q = search.strip().lower()
+        result = [
+            r
+            for r in result
+            if q in r["assessment_id"].lower()
+            or (r.get("alias") and q in r["alias"].lower())
+        ]
     return sorted(
         result,
         key=lambda x: (_created_at_sort_key(x), x["assessment_id"]),

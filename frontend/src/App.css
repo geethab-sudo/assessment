@@ -2953,6 +2953,99 @@ button.primary {
   margin-top: 0.4rem;
 }
 
+.review-card-toolbar {
+  margin-left: auto;
+  display: flex;
+  gap: 0.25rem;
+}
+
+.review-icon-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.review-icon-btn:hover:not(:disabled) {
+  background: #f1f5f9;
+}
+
+.review-icon-btn--danger:hover:not(:disabled) {
+  background: #fee2e2;
+}
+
+.review-card-saved-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.review-card-dirty-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+.review-card-save-row {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.review-alias-field {
+  display: block;
+  max-width: 32rem;
+  margin-top: 0.75rem;
+}
+
+.review-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 1rem;
+}
+
+.review-modal {
+  width: min(100%, 28rem);
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.review-modal-actions {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
+.review-status-pill--draft {
+  background: #fef9c3;
+  color: #854d0e;
+}
+
+.review-status-pill--in_review {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.review-status-pill--published {
+  background: #dcfce7;
+  color: #15803d;
+}
+
 /* Saved-state action buttons */
 .review-saved-actions {
   display: flex;

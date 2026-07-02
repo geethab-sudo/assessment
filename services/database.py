@@ -220,6 +220,9 @@ def init_db() -> None:
     _backfill_question_bank_difficulty_labels()
     _backfill_question_bank_from_assessment_questions_if_needed()
     _backfill_employee_question_mastery_if_empty()
+    from services.assessment_review_service import ensure_assessment_review_defaults
+
+    ensure_assessment_review_defaults()
 
 
 def ping_database() -> bool:

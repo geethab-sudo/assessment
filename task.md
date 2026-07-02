@@ -734,6 +734,159 @@
 
 ---
 
+## Stage 13 — Admin assessment lifecycle (re-review, alias, delete, regenerate, incremental save)
+
+> **Goal:** Fix “edits didn’t reach participants”; re-open saved assessments in full review UI; human-readable aliases; delete/regenerate individual questions; **save each approved question immediately** so crashes don’t lose work.  
+> **Plan:** [plan.md](plan.md) §Phase 5.  
+> **Depends on:** Stages 2, 9B, 9D, 11B.  
+> **Order:** **13A → 13E → 13B → 13C → 13D** (13C/13D can parallel after 13A + 13E save paths exist).
+
+### Root cause checklist (investigate before coding)
+
+- [ ] Confirm: edits lost when admin leaves `/admin/review` without clicking **Save assessment** (state-only draft).
+- [ ] Confirm: no path from `/admin/assessments` to `/admin/review` for existing `ASM-…` IDs.
+- [ ] Confirm: `PATCH /admin/assessment/…/question/…` not wired in UI; missing `sample_test_cases` / `coding_hint`.
+- [ ] Confirm: in-place PATCH does not fork `bank_question_id` (recycle can serve old bank text).
+- [ ] Confirm: no per-question save — crash/tab close loses partial review progress.
+- [ ] Document findings in PR / commit message when 13A ships.
+
+---
+
+### Stage 13A — Re-review existing assessment
+
+**Backend**
+
+- [ ] `GET /admin/assessment/{assessment_id}/review` → `ReviewQuestionItem[]` + assessment metadata
+- [ ] `PUT /admin/assessment/{assessment_id}/review` (or `POST …/review/save`) — save to **same** `assessment_id`
+- [ ] Edited questions → new `question_id`; new `assessment_questions` row; new bank row + `bank_question_id`
+- [ ] Unchanged questions → preserve `question_id` + `bank_question_id`
+- [ ] Removed questions → delete or soft-delete; handle submissions gracefully (warn/block)
+- [ ] Audit log `assessment.review.save`
+- [ ] OpenAPI summary + description; `tests/test_openapi.py` routes
+
+**Frontend**
+
+- [ ] `AdminAssessmentsPage`: **Re-review** button → navigate to `/admin/review` with loaded payload
+- [ ] `AdminReviewPage`: support **existing** assessment mode (`assessmentId` + `isReReview` flag)
+- [ ] Save calls re-review endpoint (not `confirm-assessment` that mints new ID)
+- [ ] Success screen shows same assessment ID
+
+**Tests**
+
+- [ ] `tests/test_assessment_re_review.py` — load, edit one question, save, participant GET matches
+- [ ] Edited question `question_id` changes; `bank_question_id` updated for new content
+
+**Acceptance:** Re-open ASM-…, edit a question, save, participant sees new text on reload.
+
+---
+
+### Stage 13E — Incremental per-question save (“This question is good, save it”)
+
+**Backend**
+
+- [ ] `POST /admin/assessment/review/draft` — create draft assessment shell on first save (new review flow); return `assessment_id`
+- [ ] `POST /admin/assessment/{assessment_id}/review/questions/{question_id}/save` — persist one `ReviewQuestionItem` + bank upsert
+- [ ] `GET …/review` returns `saved_at` per question (and `review_status` on assessment)
+- [ ] `assessments.review_status`: `draft` | `in_review` | `published`; participant GET blocked until `published`
+- [ ] Final **Save assessment** sets `published` when all questions individually saved (or saves remainder + publish)
+- [ ] Audit log `assessment.review.question_save`
+
+**Frontend**
+
+- [ ] Per-question button on the **right** of each card: **“This question is good, save it”**
+- [ ] After save: **Saved** badge; button disabled until question edited again
+- [ ] Top progress: *“N / M questions saved”*
+- [ ] Banner shows `assessment_id` after first incremental save on new draft
+- [ ] Reload / Re-review restores saved vs unsaved state from API
+
+**Tests**
+
+- [ ] Save 2 questions → reload review → 2 saved, content matches DB
+- [ ] Draft assessment not visible to participant until publish
+- [ ] Edit after save clears saved state until re-saved
+
+**Acceptance:** Reviewer saves 3 questions, simulates refresh, work is intact; publish when done; participant can take assessment.
+
+---
+
+### Stage 13B — Assessment alias & search
+
+**Backend**
+
+- [ ] `assessments.alias` field (optional string); persist on create + re-review save
+- [ ] `PATCH /admin/assessment/{id}` body `{ alias }` for quick rename
+- [ ] `GET /admin/assessments` — include `alias`; filter param `q` matches ID or alias (case-insensitive)
+- [ ] Schema: `alias` on confirm/re-review bodies + list response items
+
+**Frontend**
+
+- [ ] Optional alias on generate → review flow (`AdminPage` / confirm payload)
+- [ ] `/admin/assessments`: Alias column; search box *ID or alias*; edit alias inline or modal
+- [ ] Show alias in re-review banner
+
+**Tests**
+
+- [ ] Create with alias → list search finds by alias substring
+- [ ] PATCH alias → list reflects change
+
+**Acceptance:** Search `Maria June` finds assessment; ID sharing unchanged.
+
+---
+
+### Stage 13C — Delete question in review
+
+**Frontend**
+
+- [ ] Trash icon on each `QuestionCard` in `AdminReviewPage.jsx`
+- [ ] Confirm dialog before remove
+- [ ] Block save when zero questions remain
+- [ ] Works for bank-sourced and LLM questions (recycle mode)
+
+**Backend**
+
+- [ ] Re-review save handles `removed_question_ids` or infers from submitted question set
+- [ ] If submissions exist for removed `question_id`, warn or block per 13A rules
+
+**Tests**
+
+- [ ] Remove one of five questions → save → `question_count` = 4
+
+**Acceptance:** Admin discards a question during review; it disappears for participants after save.
+
+---
+
+### Stage 13D — Regenerate single question (similar topic)
+
+**Backend**
+
+- [ ] `POST /admin/assessment/review/regenerate-question`
+- [ ] Body: topic, type, level, language, reference question snapshot, optional `admin_preference`, generation flags
+- [ ] LLM `count=1`; return `ReviewQuestionItem` with hints/test cases per flags
+- [ ] Rate-limit / auth same as other admin generate routes
+
+**Frontend**
+
+- [ ] ♻️ button per question card → modal with optional preference textarea
+- [ ] Loading + error states on card
+- [ ] Replace question in local review state (clear `bank_question_id` until save)
+
+**Tests**
+
+- [ ] Mock LLM: regenerate returns one valid MCQ + one coding item
+- [ ] `admin_preference` appears in prompt fixture
+
+**Acceptance:** Admin regenerates one question with preference; review shows new content; save persists for participants.
+
+---
+
+### Stage 13 — Docs
+
+- [ ] `README.md` — re-review, incremental save, alias, delete, regenerate
+- [ ] `plan.md` — mark Phase 5 complete when done
+- [ ] `tests/TEST_GUIDE.md` — new admin routes
+
+---
+
 ### Stage 12 — Docs & regression
 
 - [ ] `README.md` — document new improvement/report interactions and caps
@@ -800,7 +953,15 @@
 23. My Report: **Ok, let’s do it!** → 10-question quick practice from recommendations
 24. Improvement: focus path — select topics, max 15 questions, no “weak” copy
 25. Improvement: new areas — select up to 5 topics, beginner only
-26. Certificate: Share on LinkedIn + copy link
+27. Certificate: Share on LinkedIn + copy link
+
+### After Stage 13
+
+28. Admin: create assessment → confirm → participant takes → **Re-review** same ASM-ID → edit Q3 → save → participant reload sees edit
+29. Admin: set alias `Python beginner Maria Jun 25` → assessments search finds it
+30. Admin: re-review → delete one question → save → participant question count drops
+31. Admin: re-review → regenerate one coding question with preference → save → new hint/test cases visible
+32. Admin: review 10 questions → **save 4 individually** → refresh browser → 4 still marked saved → finish + publish → participant can start
 
 ---
 
@@ -829,5 +990,10 @@
 | Report unexplored + quick practice | **12C** |
 | Improvement wizard topic selection | **12D** |
 | LinkedIn / social certificate share | **12E** |
+| Re-review saved assessment | **13A** |
+| Incremental per-question save | **13E** |
+| Assessment alias + search | **13B** |
+| Delete question in review | **13C** |
+| Regenerate one question in review | **13D** |
 
 Copy the stage block + **Acceptance** line into the agent prompt as scope boundary.

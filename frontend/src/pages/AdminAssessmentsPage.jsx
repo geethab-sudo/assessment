@@ -116,7 +116,6 @@ export default function AdminAssessmentsPage() {
   const [actionError, setActionError] = useState(null);
   const [deletingId, setDeletingId] = useState(null);
 
-  // Filters & sort
   const [idFilter, setIdFilter] = useState("");
   const [langFilter, setLangFilter] = useState("");
   const [dateSort, setDateSort] = useState("desc"); // "asc" | "desc"
@@ -139,7 +138,11 @@ export default function AdminAssessmentsPage() {
     let filtered = rows;
     if (idFilter.trim()) {
       const q = idFilter.trim().toLowerCase();
-      filtered = filtered.filter((r) => r.assessment_id.toLowerCase().includes(q));
+      filtered = filtered.filter(
+        (r) =>
+          r.assessment_id.toLowerCase().includes(q) ||
+          (r.alias && r.alias.toLowerCase().includes(q))
+      );
     }
     if (langFilter) {
       filtered = filtered.filter((r) => {
@@ -233,11 +236,11 @@ export default function AdminAssessmentsPage() {
           <>
           <div className="submissions-toolbar">
             <label className="submissions-toolbar-field">
-              <span className="submissions-toolbar-label">Assessment ID</span>
+              <span className="submissions-toolbar-label">Search</span>
               <input
                 className="submissions-toolbar-input"
                 type="search"
-                placeholder="Search by ID…"
+                placeholder="ID or alias…"
                 value={idFilter}
                 onChange={(e) => setIdFilter(e.target.value)}
               />
@@ -283,6 +286,8 @@ export default function AdminAssessmentsPage() {
               <thead>
                 <tr>
                   <th>Assessment ID</th>
+                  <th>Alias</th>
+                  <th>Status</th>
                   <th>Scope</th>
                   <th>Added</th>
                   <th>Language</th>
@@ -295,7 +300,7 @@ export default function AdminAssessmentsPage() {
               <tbody>
                 {visibleRows.length === 0 ? (
                   <tr>
-                    <td colSpan={8}>
+                    <td colSpan={10}>
                       <div className="empty-state">
                         {rows.length === 0 ? "No assessments yet." : "No assessments match the filters."}
                       </div>
@@ -307,6 +312,14 @@ export default function AdminAssessmentsPage() {
                       <tr>
                         <td>
                           <code className="cell-id">{r.assessment_id}</code>
+                        </td>
+                        <td>{r.alias ? r.alias : <span className="muted">—</span>}</td>
+                        <td>
+                          <span
+                            className={`pill review-status-pill review-status-pill--${r.review_status || "published"}`}
+                          >
+                            {r.review_status || "published"}
+                          </span>
                         </td>
                         <td>{r.client_id}</td>
                         <td className="cell-nowrap">{formatAddedAt(r.created_at)}</td>
@@ -340,6 +353,12 @@ export default function AdminAssessmentsPage() {
                         <td>{r.source}</td>
                         <td className="cell-actions">
                           <div className="cell-actions-btns">
+                            <Link
+                              to={`/admin/review?assessmentId=${encodeURIComponent(r.assessment_id)}`}
+                              className="button button--compact"
+                            >
+                              Re-review
+                            </Link>
                             <button
                               type="button"
                               className="btn-table-danger"
@@ -352,7 +371,7 @@ export default function AdminAssessmentsPage() {
                         </td>
                       </tr>
                       <tr className="admin-assessment-detail">
-                        <td colSpan={8}>
+                        <td colSpan={10}>
                           <AssessmentQuestionPreview
                             assessmentId={r.assessment_id}
                             questionCount={r.question_count}
