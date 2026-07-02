@@ -571,7 +571,13 @@ export default function AdminReviewPage() {
       setAssessmentId(urlId);
     }
 
-    if (urlId) {
+    // Fresh generate flow: questions live in navigation state until individually
+    // saved. After createReviewDraft adds ?assessmentId= to the URL, do not reload
+    // from the API — the draft row exists but has no questions yet.
+    const isFreshGenerateDraft =
+      Boolean(confirmPayload) && initialQuestions.length > 0;
+
+    if (urlId && !isFreshGenerateDraft) {
       let cancelled = false;
       setInitLoading(true);
       setInitError(null);
